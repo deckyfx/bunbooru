@@ -28,3 +28,6 @@ logs/
 
 # Bun
 .bun/
+
+# Local scratch (assistant-generated; not part of the project)
+TODOS.md

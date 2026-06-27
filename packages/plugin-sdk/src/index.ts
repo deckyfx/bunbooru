@@ -1,7 +1,3 @@
-import { AUTH_PACKAGE } from "@bunbooru/auth";
-import { CORE_DEPENDENCIES } from "@bunbooru/core";
-import { EVENTS_PACKAGE } from "@bunbooru/events";
-import { SEARCH_PACKAGE } from "@bunbooru/search";
 import type { StorageProvider } from "@bunbooru/storage";
 
 /**
@@ -19,10 +15,25 @@ export const PLUGIN_SDK_VERSION = "0.1.0" as const;
 /** Storage contract re-exported for plugins that register storage providers. */
 export type { StorageProvider };
 
-/** Core capabilities a plugin may integrate with, exposed through the SDK only. */
-export const SDK_CAPABILITIES = {
-  core: CORE_DEPENDENCIES,
-  auth: AUTH_PACKAGE,
-  events: EVENTS_PACKAGE,
-  search: SEARCH_PACKAGE,
-} as const;
+/**
+ * The integration points a plugin may register through this SDK.
+ *
+ * This vocabulary is SDK-owned and part of the public contract — intentionally
+ * decoupled from internal package identifiers, so refactors inside
+ * `core`/`auth`/`events`/`search` never become breaking SDK changes.
+ */
+export const SDK_CAPABILITIES = [
+  "routes",
+  "tables",
+  "events",
+  "search-providers",
+  "storage-providers",
+  "permissions",
+  "jobs",
+  "admin-pages",
+  "navigation-items",
+  "commands",
+] as const;
+
+/** A single capability a plugin may register through the SDK. */
+export type SdkCapability = (typeof SDK_CAPABILITIES)[number];

@@ -1,4 +1,4 @@
-import { CORE_DEPENDENCIES } from "@bunbooru/core";
+import { CORE_PACKAGE } from "@bunbooru/core";
 import { DB_PACKAGE } from "@bunbooru/db";
 
 /**
@@ -10,5 +10,5 @@ import { DB_PACKAGE } from "@bunbooru/db";
  */
 export const AUTH_PACKAGE = "@bunbooru/auth" as const;
 
-/** Internal packages auth composes over. */
-export const AUTH_DEPENDENCIES = [...CORE_DEPENDENCIES, DB_PACKAGE] as const;
+/** Internal packages auth composes over — mirrors this package's dependencies. */
+export const AUTH_DEPENDENCIES = [CORE_PACKAGE, DB_PACKAGE] as const;

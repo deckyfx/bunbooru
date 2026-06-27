@@ -10,6 +10,8 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "build:api": "bun run apps/api/build.ts",
+    "docker:build": "docker build -t bunbooru:latest .",
     "services:up": "docker compose up -d",
     "services:up:redis": "docker compose --profile redis up -d",
     "services:down": "docker compose down",

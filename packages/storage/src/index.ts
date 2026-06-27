@@ -5,6 +5,8 @@
  * implementations must all satisfy this interface, so new providers require
  * zero Core changes. Concrete implementations land in later PRs.
  */
+export const STORAGE_PACKAGE = "@bunbooru/storage" as const;
+
 export interface StorageProvider {
   /** Persist `data` under `key`. */
   store(key: string, data: ReadableStream<Uint8Array> | Uint8Array): Promise<void>;
@@ -18,6 +20,10 @@ export interface StorageProvider {
   copy(from: string, to: string): Promise<void>;
   /** Move `from` to `to` within the provider. */
   move(from: string, to: string): Promise<void>;
-  /** Public URL for the object at `key`, if the provider exposes one. */
-  getPublicUrl(key: string): string;
+  /**
+   * Public URL for the object at `key`, or `null` when the provider exposes
+   * none (e.g. a private filesystem backend). Async so providers can mint
+   * signed/expiring URLs without breaking `plugin-sdk` consumers.
+   */
+  getPublicUrl(key: string): Promise<string | null>;
 }
