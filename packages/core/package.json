@@ -1,0 +1,16 @@
+{
+  "name": "@bunbooru/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@bunbooru/db": "workspace:*",
+    "@bunbooru/events": "workspace:*",
+    "@bunbooru/search": "workspace:*",
+    "@bunbooru/storage": "workspace:*"
+  }
+}

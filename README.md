@@ -85,6 +85,24 @@ plugins/
 docs/
 ```
 
+## Getting Started
+
+Requires [Bun](https://bun.sh) and Docker.
+
+```bash
+cp .env.example .env       # configure local environment
+bun install                # install workspace dependencies
+bun run services:up        # start Postgres (the required service)
+bun run typecheck          # verify the workspace compiles
+```
+
+Redis is optional — Core never requires it. Start it only when needed:
+
+```bash
+bun run services:up:redis  # Postgres + Redis
+bun run services:down      # stop services (add -v in compose to drop data)
+```
+
 ## Current Status
 
 🚧 Early Development

@@ -1,0 +1,119 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "bunbooru",
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "^6",
+      },
+    },
+    "apps/api": {
+      "name": "@bunbooru/api",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/auth": "workspace:*",
+        "@bunbooru/core": "workspace:*",
+        "@bunbooru/plugin-sdk": "workspace:*",
+      },
+    },
+    "apps/web": {
+      "name": "@bunbooru/web",
+      "version": "0.1.0",
+    },
+    "apps/worker": {
+      "name": "@bunbooru/worker",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/core": "workspace:*",
+        "@bunbooru/events": "workspace:*",
+      },
+    },
+    "packages/auth": {
+      "name": "@bunbooru/auth",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/core": "workspace:*",
+        "@bunbooru/db": "workspace:*",
+      },
+    },
+    "packages/core": {
+      "name": "@bunbooru/core",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/db": "workspace:*",
+        "@bunbooru/events": "workspace:*",
+        "@bunbooru/search": "workspace:*",
+        "@bunbooru/storage": "workspace:*",
+      },
+    },
+    "packages/db": {
+      "name": "@bunbooru/db",
+      "version": "0.1.0",
+    },
+    "packages/events": {
+      "name": "@bunbooru/events",
+      "version": "0.1.0",
+    },
+    "packages/plugin-sdk": {
+      "name": "@bunbooru/plugin-sdk",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/auth": "workspace:*",
+        "@bunbooru/core": "workspace:*",
+        "@bunbooru/events": "workspace:*",
+        "@bunbooru/search": "workspace:*",
+        "@bunbooru/storage": "workspace:*",
+      },
+    },
+    "packages/search": {
+      "name": "@bunbooru/search",
+      "version": "0.1.0",
+    },
+    "packages/storage": {
+      "name": "@bunbooru/storage",
+      "version": "0.1.0",
+    },
+    "plugins/example": {
+      "name": "@bunbooru/plugin-example",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/plugin-sdk": "workspace:*",
+      },
+    },
+  },
+  "packages": {
+    "@bunbooru/api": ["@bunbooru/api@workspace:apps/api"],
+
+    "@bunbooru/auth": ["@bunbooru/auth@workspace:packages/auth"],
+
+    "@bunbooru/core": ["@bunbooru/core@workspace:packages/core"],
+
+    "@bunbooru/db": ["@bunbooru/db@workspace:packages/db"],
+
+    "@bunbooru/events": ["@bunbooru/events@workspace:packages/events"],
+
+    "@bunbooru/plugin-example": ["@bunbooru/plugin-example@workspace:plugins/example"],
+
+    "@bunbooru/plugin-sdk": ["@bunbooru/plugin-sdk@workspace:packages/plugin-sdk"],
+
+    "@bunbooru/search": ["@bunbooru/search@workspace:packages/search"],
+
+    "@bunbooru/storage": ["@bunbooru/storage@workspace:packages/storage"],
+
+    "@bunbooru/web": ["@bunbooru/web@workspace:apps/web"],
+
+    "@bunbooru/worker": ["@bunbooru/worker@workspace:apps/worker"],
+
+    "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
+
+    "@types/node": ["@types/node@26.0.1", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-fc3KiUoBt6kie0N9bIW3E47vZsuaMf0PM2AaUpLCLT0s/LvX1nxAim6Fc049cNxODPpGm6qRAuUOB86SkRuPQw=="],
+
+    "bun-types": ["bun-types@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
+
+    "typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
+
+    "undici-types": ["undici-types@8.3.0", "", {}, "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ=="],
+  }
+}
