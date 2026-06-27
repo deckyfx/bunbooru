@@ -42,6 +42,26 @@ describe("request id", () => {
     const b = await request("/health");
     expect(a.headers.get("x-request-id")).not.toBe(b.headers.get("x-request-id"));
   });
+
+  it("propagates a caller-supplied x-request-id", async () => {
+    const res = await app.handle(
+      new Request("http://localhost/health", {
+        headers: { "x-request-id": "trace-abc-123" },
+      }),
+    );
+    expect(res.headers.get("x-request-id")).toBe("trace-abc-123");
+  });
+
+  it("generates an id when the incoming one is implausibly long", async () => {
+    const res = await app.handle(
+      new Request("http://localhost/health", {
+        headers: { "x-request-id": "x".repeat(200) },
+      }),
+    );
+    const id = res.headers.get("x-request-id");
+    expect(id).toBeString();
+    expect(id).not.toBe("x".repeat(200));
+  });
 });
 
 describe("error handling", () => {

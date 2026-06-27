@@ -19,10 +19,18 @@ app.listen(envConfig.SERVER_PORT, (server) => {
 /** Stop the server cleanly so `docker stop` (SIGTERM) drains in-flight requests. */
 const shutdown = async (): Promise<void> => {
   logger.info("server_stopping", {});
-  await app.stop();
-  process.exit(0);
+  try {
+    await app.stop();
+    process.exit(0);
+  } catch (error) {
+    logger.error("server_stop_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    process.exit(1);
+  }
 };
-process.on("SIGTERM", () => void shutdown());
-process.on("SIGINT", () => void shutdown());
+// `once` so a repeated/second signal can't launch a duplicate shutdown.
+process.once("SIGTERM", () => void shutdown());
+process.once("SIGINT", () => void shutdown());
 
 export type { App } from "./server";

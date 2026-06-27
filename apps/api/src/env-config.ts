@@ -31,12 +31,22 @@ class EnvConfig {
     return port;
   }
 
-  /** Runtime environment mode (default "development"). */
-  get NODE_ENV(): string {
-    return Bun.env.NODE_ENV ?? "development";
+  /**
+   * Runtime environment mode. Fails closed: an unset value defaults to
+   * "production" so a missing variable never accidentally enables dev-only
+   * behavior (e.g. leaking 5xx detail). Unsupported values are rejected.
+   */
+  get NODE_ENV(): "development" | "production" | "test" {
+    const env = Bun.env.NODE_ENV ?? "production";
+    if (env !== "development" && env !== "production" && env !== "test") {
+      throw new Error(
+        `NODE_ENV must be one of "development", "production", "test", got "${env}"`,
+      );
+    }
+    return env;
   }
 
-  /** Whether the API is running in development mode. */
+  /** Whether the API is running in development mode (only when explicitly set). */
   get isDevelopment(): boolean {
     return this.NODE_ENV === "development";
   }

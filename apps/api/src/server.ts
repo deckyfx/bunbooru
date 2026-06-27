@@ -21,9 +21,15 @@ import { readRequestId, safeMessage, statusFor } from "./lib/http";
  */
 export const app = new Elysia()
   // Stamp every request (matched or not, so 404s are covered too) with an id,
-  // echoed back as `x-request-id`.
-  .onRequest(({ set }) => {
-    set.headers["x-request-id"] = crypto.randomUUID();
+  // echoed back as `x-request-id`. Propagate a caller/proxy-supplied id when it
+  // looks sane (so traces correlate end-to-end); otherwise generate one. The
+  // length cap bounds untrusted input flowing into logs/headers.
+  .onRequest(({ request, set }) => {
+    const incoming = request.headers.get("x-request-id");
+    set.headers["x-request-id"] =
+      incoming && incoming.length > 0 && incoming.length <= 128
+        ? incoming
+        : crypto.randomUUID();
   })
   // Expose the id + a start time to handlers on matched routes.
   .derive(({ set }) => ({
