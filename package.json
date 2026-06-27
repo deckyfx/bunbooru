@@ -10,6 +10,8 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "NODE_ENV=test bun test",
+    "dev": "bun run --cwd apps/api dev",
     "build:api": "bun run apps/api/build.ts",
     "docker:build": "docker build -t bunbooru:latest .",
     "services:up": "docker compose up -d",

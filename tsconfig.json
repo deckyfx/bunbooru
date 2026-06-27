@@ -4,7 +4,10 @@
     "apps/*/src/**/*.ts",
     "apps/*/src/**/*.tsx",
     "apps/*/build.ts",
+    "apps/*/test/**/*.ts",
     "packages/*/src/**/*.ts",
-    "plugins/*/src/**/*.ts"
+    "packages/*/test/**/*.ts",
+    "plugins/*/src/**/*.ts",
+    "plugins/*/test/**/*.ts"
   ]
 }
