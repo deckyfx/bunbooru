@@ -1,0 +1,12 @@
+{
+  "name": "@bunbooru/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "module": "src/index.ts",
+  "dependencies": {
+    "@bunbooru/auth": "workspace:*",
+    "@bunbooru/core": "workspace:*",
+    "@bunbooru/plugin-sdk": "workspace:*"
+  }
+}

@@ -1,0 +1,55 @@
+# Local development services for Bunbooru.
+#
+#   docker compose up -d                  # Postgres only (the required service)
+#   docker compose --profile redis up -d  # Postgres + Redis (optional accelerator)
+#   docker compose down                   # stop; add -v to also drop data volumes
+#
+# Image tags are pinned for reproducibility; bump deliberately.
+
+name: bunbooru
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: bunbooru-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bunbooru}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bunbooru}
+      POSTGRES_DB: ${POSTGRES_DB:-bunbooru}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-bunbooru} -d ${POSTGRES_DB:-bunbooru}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Optional accelerator — Core never requires it. The durable job queue lives
+  # in Postgres. Enable only when a plugin or deployment opts in:
+  #   docker compose --profile redis up -d
+  redis:
+    image: redis:8-alpine
+    container_name: bunbooru-redis
+    restart: unless-stopped
+    profiles: ["redis"]
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
+  redis-data:
