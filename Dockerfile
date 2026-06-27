@@ -7,18 +7,33 @@
 FROM oven/bun:1 AS builder
 WORKDIR /app
 
-# Manifests first for layer caching; workspace members are needed before install.
+# Manifests only, first — so the install layer is cached and only re-runs when a
+# package.json or the lockfile changes, not on every source edit.
 COPY package.json bun.lock tsconfig.base.json tsconfig.json ./
+COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
+COPY apps/worker/package.json apps/worker/
+COPY packages/core/package.json packages/core/
+COPY packages/db/package.json packages/db/
+COPY packages/auth/package.json packages/auth/
+COPY packages/events/package.json packages/events/
+COPY packages/storage/package.json packages/storage/
+COPY packages/search/package.json packages/search/
+COPY packages/plugin-sdk/package.json packages/plugin-sdk/
+COPY plugins/example/package.json plugins/example/
+
+RUN bun install --frozen-lockfile
+
+# Now the source, then build the API binary.
 COPY apps ./apps
 COPY packages ./packages
 COPY plugins ./plugins
-
-RUN bun install --frozen-lockfile
 RUN bun run build:api
 
 # ── Stage 2: minimal runtime ──────────────────────────────────────────────────
-# Distroless: no shell, no package manager — just glibc + the binary.
-FROM gcr.io/distroless/base-debian12 AS runtime
+# Distroless `nonroot` runs as UID 65532 (no shell, no package manager) so the
+# bunbooru process never runs as root.
+FROM gcr.io/distroless/base-debian12:nonroot AS runtime
 WORKDIR /app
 
 COPY --from=builder /app/apps/api/dist/bunbooru /app/bunbooru
