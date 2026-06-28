@@ -31,3 +31,7 @@ logs/
 
 # Local scratch (assistant-generated; not part of the project)
 TODOS.md
+
+# Claude Code local session artifacts
+.claude/scheduled_tasks.*
+.claude/settings.local.json

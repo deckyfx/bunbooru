@@ -1,8 +1,24 @@
+import { serve } from "bun";
+
+import index from "./index.html";
+
+/** Web dev/serve port (default 3001 so it can run alongside the API on 3000). */
+const port = Number(Bun.env.WEB_PORT ?? "3001") || 3001;
+/** Bind all interfaces by default so the dev server is reachable on the LAN. */
+const hostname = Bun.env.WEB_HOST ?? "0.0.0.0";
+
 /**
- * `@bunbooru/web` — the React client (React + TanStack Router + TanStack Query).
- *
- * Consumes the public API over HTTP only; never touches the database or any
- * backend package directly. The React app, routing, and Eden Treaty API client
- * land in a later PR — this entrypoint is intentionally inert.
+ * Serve the single-page app. Every route returns `index.html`; the client
+ * router takes over, and Bun bundles `index.tsx` + assets (Tailwind via
+ * bun-plugin-tailwind from bunfig.toml).
  */
-export const WEB_APP = "@bunbooru/web" as const;
+const server = serve({
+  port,
+  hostname,
+  development: true,
+  routes: {
+    "/*": index,
+  },
+});
+
+console.log(`🐇 Bunbooru web on ${server.url}`);
