@@ -13,8 +13,8 @@ function asset(id: number): Asset {
     width: 1,
     height: 1,
     sizeBytes: 1,
-    sha256: `sha256-${id}`,
-    md5: `md5-${id}`,
+    sha256: String(id).padStart(64, "0"), // 64-char lowercase hex
+    md5: String(id).padStart(32, "0"), // 32-char lowercase hex
     rating: "questionable",
     source: null,
     uploaderId: null,

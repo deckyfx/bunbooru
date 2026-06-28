@@ -85,6 +85,10 @@ export const assets = pgTable(
     check("assets_width_nonneg", sql`${table.width} >= 0`),
     check("assets_height_nonneg", sql`${table.height} >= 0`),
     check("assets_size_bytes_nonneg", sql`${table.sizeBytes} >= 0`),
+    // Digests must be canonical lowercase hex of the right length, so a malformed
+    // or mixed-case value can never alias or break dedupe lookups.
+    check("assets_sha256_hex", sql`${table.sha256} ~ '^[0-9a-f]{64}$'`),
+    check("assets_md5_hex", sql`${table.md5} ~ '^[0-9a-f]{32}$'`),
   ],
 );
 

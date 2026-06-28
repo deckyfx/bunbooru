@@ -25,7 +25,9 @@ CREATE TABLE "assets" (
 	CONSTRAINT "assets_sha256_unique" UNIQUE("sha256"),
 	CONSTRAINT "assets_width_nonneg" CHECK ("assets"."width" >= 0),
 	CONSTRAINT "assets_height_nonneg" CHECK ("assets"."height" >= 0),
-	CONSTRAINT "assets_size_bytes_nonneg" CHECK ("assets"."size_bytes" >= 0)
+	CONSTRAINT "assets_size_bytes_nonneg" CHECK ("assets"."size_bytes" >= 0),
+	CONSTRAINT "assets_sha256_hex" CHECK ("assets"."sha256" ~ '^[0-9a-f]{64}$'),
+	CONSTRAINT "assets_md5_hex" CHECK ("assets"."md5" ~ '^[0-9a-f]{32}$')
 );
 --> statement-breakpoint
 CREATE TABLE "tags" (

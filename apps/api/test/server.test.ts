@@ -12,8 +12,8 @@ const sampleAsset: Asset = {
   width: 800,
   height: 600,
   sizeBytes: 123_456,
-  sha256: "sha256-abcd",
-  md5: "abcd",
+  sha256: "a1b2c3d4".repeat(8), // 64-char lowercase hex
+  md5: "a1b2c3d4".repeat(4), // 32-char lowercase hex
   rating: "safe",
   source: null,
   uploaderId: null,

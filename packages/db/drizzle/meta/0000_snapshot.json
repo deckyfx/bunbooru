@@ -1,5 +1,5 @@
 {
-  "id": "b79363b7-c6d1-48b7-8003-132574094817",
+  "id": "c9a37b37-b9f7-4dd3-906c-744efceecb49",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -213,6 +213,14 @@
         "assets_size_bytes_nonneg": {
           "name": "assets_size_bytes_nonneg",
           "value": "\"assets\".\"size_bytes\" >= 0"
+        },
+        "assets_sha256_hex": {
+          "name": "assets_sha256_hex",
+          "value": "\"assets\".\"sha256\" ~ '^[0-9a-f]{64}$'"
+        },
+        "assets_md5_hex": {
+          "name": "assets_md5_hex",
+          "value": "\"assets\".\"md5\" ~ '^[0-9a-f]{32}$'"
         }
       },
       "isRLSEnabled": false
