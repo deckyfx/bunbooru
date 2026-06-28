@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bunbooru</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <!-- Apply the persisted theme before the bundle loads to avoid a flash. -->
+    <script>
+      try {
+        var raw = localStorage.getItem("bunbooru:theme");
+        var theme = raw ? (JSON.parse(raw).state || {}).theme : "auto";
+        var dark =
+          theme === "dark" ||
+          ((!theme || theme === "auto") &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches);
+        if (dark) document.documentElement.classList.add("dark");
+      } catch (e) {}
+    </script>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
+  </body>
+</html>

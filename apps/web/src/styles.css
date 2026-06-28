@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/* Class-based dark mode (toggled on <html> by the theme store). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Danbooru-flavoured theme tokens. */
+@theme {
+  --font-sans: Verdana, Helvetica, Arial, sans-serif;
+
+  --color-link: #0075f8;
+  --color-link-hover: #0257b8;
+
+  /* Signature Danbooru tag-type colours. */
+  --color-tag-general: #0075f8;
+  --color-tag-artist: #c00004;
+  --color-tag-copyright: #a800aa;
+  --color-tag-character: #00ab2c;
+  --color-tag-meta: #fd9200;
+
+  /* Semantic surface tokens (flip in dark mode below). */
+  --color-bg: #ffffff;
+  --color-surface: #ffffff;
+  --color-line: #d1d5db;
+  --color-ink: #111418;
+  --color-muted: #6b7280;
+}
+
+/* Dark palette — overrides the semantic custom properties under .dark. */
+.dark {
+  --color-bg: #15171c;
+  --color-surface: #1e2128;
+  --color-line: #343a44;
+  --color-ink: #e6e8ec;
+  --color-muted: #9aa3af;
+  --color-link: #57a6ff;
+  --color-tag-general: #57a6ff;
+  --color-tag-artist: #ff6b6e;
+  --color-tag-copyright: #e07ce0;
+  --color-tag-character: #4cd17a;
+  --color-tag-meta: #ffb347;
+}
+
+@layer base {
+  html {
+    font-size: 14px;
+  }
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background: var(--color-bg);
+  }
+  a {
+    color: var(--color-link);
+    text-decoration: none;
+  }
+  a:hover {
+    text-decoration: underline;
+  }
+}

@@ -1,0 +1,3 @@
+# Process Tailwind CSS when the dev server bundles static assets.
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
