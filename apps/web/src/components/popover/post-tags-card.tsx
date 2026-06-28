@@ -16,9 +16,7 @@ export function PostTagsCard({ postId, tags }: { postId: number; tags: string[] 
           <ul key={category} className="flex flex-wrap gap-x-3 gap-y-0.5">
             {grouped.get(category)?.map((name) => (
               <li key={name}>
-                <a href="#" className={`${TAG_TEXT_CLASS[category]} hover:underline`}>
-                  {name}
-                </a>
+                <span className={TAG_TEXT_CLASS[category]}>{name}</span>
               </li>
             ))}
           </ul>

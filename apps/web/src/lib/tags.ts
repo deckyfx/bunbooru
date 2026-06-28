@@ -93,10 +93,12 @@ export function groupByCategory(tags: readonly string[]): Map<TagCategory, strin
 
 /** Deterministic tag set for a post id, drawn from the catalog (static demo). */
 export function postTags(id: number): string[] {
+  // Sanitize: callers may pass Number(routeParam), which can be NaN/negative.
+  const safeId = Number.isFinite(id) ? Math.abs(Math.trunc(id)) : 0;
   const out: string[] = [];
-  const count = 4 + (id % 3);
+  const count = 4 + (safeId % 3);
   for (let k = 0; k < count; k++) {
-    const name = TAG_NAMES[(id * 3 + k * 7) % TAG_NAMES.length];
+    const name = TAG_NAMES[(safeId * 3 + k * 7) % TAG_NAMES.length];
     if (name && !out.includes(name)) out.push(name);
   }
   return out;

@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 
 const STORAGE_KEY = "bunbooru:visits";
+
+/** Once-per-app-boot guard so StrictMode's double-invoked effect counts once. */
+let counted = false;
 /** Demo starting point so the odometer looks established. */
 const SEED = 13370;
 /** Zero-pad width for the classic odometer look. */
@@ -16,7 +19,16 @@ export function VisitorCounter() {
 
   useEffect(() => {
     const stored = Number(localStorage.getItem(STORAGE_KEY));
-    const next = (Number.isFinite(stored) && stored > 0 ? stored : SEED) + 1;
+    const valid = Number.isFinite(stored) && stored > 0;
+
+    // Already counted this boot (e.g. StrictMode's second effect run): just show.
+    if (counted) {
+      setCount(valid ? stored : SEED + 1);
+      return;
+    }
+    counted = true;
+
+    const next = (valid ? stored : SEED) + 1;
     localStorage.setItem(STORAGE_KEY, String(next));
     setCount(next);
   }, []);

@@ -8,7 +8,22 @@ import { postTags } from "../lib/tags";
 
 export function PostDetailPage() {
   const { id } = useParams({ from: "/posts/$id" });
-  const postId = Number(id) || 1;
+  const postId = Number(id);
+
+  if (!Number.isInteger(postId) || postId < 1) {
+    return (
+      <div className="py-12 text-center">
+        <p className="mb-2 font-bold">Post not found</p>
+        <p className="mb-4 text-muted">
+          “{id}” is not a valid post id.
+        </p>
+        <Link to="/posts" className="hover:underline">
+          « Back to posts
+        </Link>
+      </div>
+    );
+  }
+
   const tags = postTags(postId);
   const meta = postMeta(postId);
 

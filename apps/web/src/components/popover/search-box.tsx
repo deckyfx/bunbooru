@@ -113,6 +113,7 @@ export function SearchBox({
           })}
           ref={inputRefs}
           type="search"
+          aria-label={placeholder ?? "Search"}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);

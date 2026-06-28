@@ -6,6 +6,8 @@ import index from "./index.html";
 const port = Number(Bun.env.WEB_PORT ?? "3001") || 3001;
 /** Bind all interfaces by default so the dev server is reachable on the LAN. */
 const hostname = Bun.env.WEB_HOST ?? "0.0.0.0";
+/** Enable Bun's dev bundling/HMR unless explicitly in production. */
+const development = Bun.env.NODE_ENV !== "production";
 
 /**
  * Serve the single-page app. Every route returns `index.html`; the client
@@ -15,7 +17,7 @@ const hostname = Bun.env.WEB_HOST ?? "0.0.0.0";
 const server = serve({
   port,
   hostname,
-  development: true,
+  development,
   routes: {
     "/*": index,
   },

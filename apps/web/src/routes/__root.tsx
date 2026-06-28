@@ -7,17 +7,20 @@ import { useApplyTheme } from "../stores/theme";
 
 const VERSION = pkg.version;
 
-/** Top-level menu items, mirroring Danbooru's primary nav. */
+/**
+ * Top-level menu, mirroring Danbooru's primary nav. Only items with a real
+ * route navigate; the rest are placeholders until their routes exist.
+ */
 const MENU = [
-  { label: "Posts", to: "/posts" },
-  { label: "Comments", to: "/posts" },
-  { label: "Notes", to: "/posts" },
-  { label: "Artists", to: "/posts" },
-  { label: "Tags", to: "/posts" },
-  { label: "Pools", to: "/posts" },
-  { label: "Wiki", to: "/posts" },
-  { label: "Forum", to: "/posts" },
-  { label: "More »", to: "/posts" },
+  { label: "Posts", to: "/posts" as const },
+  { label: "Comments" },
+  { label: "Notes" },
+  { label: "Artists" },
+  { label: "Tags" },
+  { label: "Pools" },
+  { label: "Wiki" },
+  { label: "Forum" },
+  { label: "More »" },
 ] as const;
 
 /** Account links, reused by the header and the home corner strip. */
@@ -49,11 +52,17 @@ export function RootLayout() {
             </Link>
 
             <nav className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              {MENU.map((item, i) => (
-                <Link key={i} to={item.to} className="text-[12px] hover:underline">
-                  {item.label}
-                </Link>
-              ))}
+              {MENU.map((item) =>
+                "to" in item ? (
+                  <Link key={item.label} to={item.to} className="text-[12px] hover:underline">
+                    {item.label}
+                  </Link>
+                ) : (
+                  <span key={item.label} className="cursor-default text-[12px] text-muted">
+                    {item.label}
+                  </span>
+                ),
+              )}
             </nav>
 
             <div className="ml-auto flex items-center gap-3">

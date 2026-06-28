@@ -1,4 +1,6 @@
-import { Link } from "@tanstack/react-router";
+import { useState } from "react";
+
+import { Link, useNavigate } from "@tanstack/react-router";
 
 import { Counter } from "../components/counter";
 
@@ -17,6 +19,9 @@ const HOME_MENU = [
 ] as const;
 
 export function HomePage() {
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+
   return (
     <div className="flex min-h-[82vh] flex-col justify-center space-y-8">
       {/* Banner image goes here — placeholder until real artwork is supplied. */}
@@ -35,11 +40,17 @@ export function HomePage() {
         <Counter value={POST_COUNT} digitClass="h-16 sm:h-20" />
 
         <form
-          onSubmit={(e) => e.preventDefault()}
+          onSubmit={(e) => {
+            e.preventDefault();
+            navigate({ to: "/posts" });
+          }}
           className="flex w-full max-w-xl items-center pt-2"
         >
           <input
             type="search"
+            aria-label="Search posts"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             placeholder="Search posts — e.g. 1girl long_hair"
             className="h-10 flex-1 rounded-l border border-line px-3 text-base outline-none focus:border-link"
           />

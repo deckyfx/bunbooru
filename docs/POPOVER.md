@@ -28,16 +28,22 @@ and autocomplete together** so the shared primitive is proven reusable.
 
 Proposed `apps/web` layout:
 
+As implemented (Phase 0):
+
 ```
 src/components/popover/
-  popover.tsx            generic primitive (Floating UI)
-  tag-popover-card.tsx   tag content template
-  post-preview-card.tsx  thumbnail content template
-  tag-suggest-list.tsx   autocomplete dropdown
-  use-tag-info.ts        data hooks (Phase 1+)
-  use-tag-autocomplete.ts
-src/lib/tags.ts          tag category → colour mapping (shared with posts sidebar)
+  hover-popover.tsx      generic hover/focus primitive (Floating UI)
+  tag-popover-card.tsx   tag content (related tags)
+  post-tags-card.tsx     thumbnail content (a post's tags)
+  search-box.tsx         autocomplete combobox
+src/components/menu/
+  dropdown-menu.tsx      generic click menu (Floating UI)
+src/components/tags/     shared TagRow / TagGroups
+src/lib/tags.ts          tag catalog, colours, helpers (shared with the sidebar)
+src/lib/post-fixtures.ts deterministic post metadata
 ```
+
+Phase 1 adds data hooks (`useTagInfo`, `useTagAutocomplete`, `usePostPreview`).
 
 ### 1. Popover primitive — Floating UI
 
@@ -76,13 +82,14 @@ GET /api/v1/tags/:name
   → { name, category, postCount, aliases[], implications[], sections?: PluginSection[] }
 
 GET /api/v1/tags/autocomplete?q=<prefix>&limit=10
-  → [{ name, category, postCount, antecedent?: string }]   # antecedent = matched alias
+  → [{ name, category, postCount, antecedent?: string }]
 
 GET /api/v1/posts/:id
   → { id, rating, score, width, height, sampleUrl, tags: { [category]: string[] } }
 ```
 
-Autocomplete is served by the **search package's** tag index (prefix lookup),
+`antecedent` is the alias that matched the query (when a suggestion resolves via
+an alias). Autocomplete is served by the **search package's** tag index (prefix lookup),
 supporting the `<50ms` latency goal. Until the DB exists these are mocked with
 static fixtures behind the same hook signatures.
 

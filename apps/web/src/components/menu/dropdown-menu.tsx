@@ -12,7 +12,6 @@ import {
   useDismiss,
   useFloating,
   useInteractions,
-  useRole,
 } from "@floating-ui/react";
 import { ChevronDown } from "lucide-react";
 
@@ -41,8 +40,7 @@ export function DropdownMenu({
 
   const click = useClick(context);
   const dismiss = useDismiss(context);
-  const role = useRole(context, { role: "menu" });
-  const { getReferenceProps, getFloatingProps } = useInteractions([click, dismiss, role]);
+  const { getReferenceProps, getFloatingProps } = useInteractions([click, dismiss]);
 
   return (
     <>

@@ -11,13 +11,13 @@ export function TagRow({ name }: { name: string }) {
   const tag = lookupTag(name);
   return (
     <li className="flex items-baseline gap-1 leading-tight">
-      <a href="#" className="text-muted hover:no-underline" title="wiki">
+      <button type="button" className="text-muted" title="wiki">
         ?
-      </a>
+      </button>
       <HoverPopover placement="right-start" render={() => <TagPopoverCard name={name} />}>
-        <a href="#" className={`${TAG_TEXT_CLASS[tag.category]} hover:underline`}>
+        <button type="button" className={`${TAG_TEXT_CLASS[tag.category]} hover:underline`}>
           {tag.name}
-        </a>
+        </button>
       </HoverPopover>
       <span className="ml-auto text-[11px] text-muted">{formatCount(tag.postCount)}</span>
     </li>

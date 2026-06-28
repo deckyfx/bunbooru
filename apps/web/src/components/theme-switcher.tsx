@@ -20,6 +20,7 @@ export function ThemeSwitcher() {
           key={value}
           type="button"
           aria-label={label}
+          aria-pressed={theme === value}
           title={label}
           onClick={() => setTheme(value)}
           className={`flex items-center px-1.5 py-0.5 ${

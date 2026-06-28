@@ -27,13 +27,19 @@ export function Counter({
   digitClass?: string;
 }) {
   return (
-    <span className={`inline-flex items-end gap-px ${className ?? ""}`}>
+    <span
+      role="img"
+      aria-label={value}
+      className={`inline-flex items-end gap-px ${className ?? ""}`}
+    >
       {[...value].map((ch, i) => {
         const digit = DIGITS[ch.charCodeAt(0) - 48];
         return digit ? (
-          <img key={i} src={digit} alt={ch} className={`${digitClass} w-auto`} />
+          <img key={i} src={digit} alt="" aria-hidden className={`${digitClass} w-auto`} />
         ) : (
-          <span key={i}>{ch}</span>
+          <span key={i} aria-hidden>
+            {ch}
+          </span>
         );
       })}
     </span>

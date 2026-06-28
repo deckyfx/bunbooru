@@ -25,9 +25,7 @@ export function TagPopoverCard({ name }: { name: string }) {
               const r = lookupTag(rel);
               return (
                 <li key={rel}>
-                  <a href="#" className={`${TAG_TEXT_CLASS[r.category]} hover:underline`}>
-                    {r.name}
-                  </a>
+                  <span className={TAG_TEXT_CLASS[r.category]}>{r.name}</span>
                 </li>
               );
             })}
