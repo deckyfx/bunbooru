@@ -17,6 +17,27 @@ export const CORE_PACKAGE = "@bunbooru/core" as const;
 
 export type { StorageProvider };
 
+// Domain row types, re-exported so downstream apps depend on Core, not db directly.
+export type { Asset, Rating, Tag, User } from "@bunbooru/db";
+
+// Core assembly — the single wiring entry point for the API composition root.
+export {
+  assembleCore,
+  createCore,
+  type Core,
+  type CoreConfig,
+} from "./core";
+
+// Asset domain — application service (data access lives in @bunbooru/db).
+export {
+  createAssetService,
+  DEFAULT_PER_PAGE,
+  MAX_PER_PAGE,
+  type AssetListPage,
+  type AssetService,
+  type ListAssetsOptions,
+} from "./services/asset-service";
+
 /** Internal packages the Core composes over — mirrors this package's dependencies. */
 export const CORE_DEPENDENCIES = [
   DB_PACKAGE,

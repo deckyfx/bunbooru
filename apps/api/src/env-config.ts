@@ -32,6 +32,20 @@ class EnvConfig {
   }
 
   /**
+   * Postgres connection string. Required: the API cannot serve data without it,
+   * so a missing value fails fast at startup rather than on the first query.
+   */
+  get DATABASE_URL(): string {
+    // Trim so a whitespace-only value fails fast here rather than deeper in the
+    // driver when it tries to parse the connection string.
+    const url = Bun.env.DATABASE_URL?.trim();
+    if (!url) {
+      throw new Error("DATABASE_URL is required (e.g. postgres://user:pass@host:5432/db)");
+    }
+    return url;
+  }
+
+  /**
    * Runtime environment mode. Fails closed: an unset value defaults to
    * "production" so a missing variable never accidentally enables dev-only
    * behavior (e.g. leaking 5xx detail). Unsupported values are rejected.

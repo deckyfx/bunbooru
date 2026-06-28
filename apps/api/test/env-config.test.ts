@@ -4,12 +4,15 @@ import { envConfig } from "../src/env-config";
 
 const original = Bun.env.SERVER_PORT;
 const originalNodeEnv = Bun.env.NODE_ENV;
+const originalDatabaseUrl = Bun.env.DATABASE_URL;
 
 afterEach(() => {
   if (original === undefined) delete Bun.env.SERVER_PORT;
   else Bun.env.SERVER_PORT = original;
   if (originalNodeEnv === undefined) delete Bun.env.NODE_ENV;
   else Bun.env.NODE_ENV = originalNodeEnv;
+  if (originalDatabaseUrl === undefined) delete Bun.env.DATABASE_URL;
+  else Bun.env.DATABASE_URL = originalDatabaseUrl;
 });
 
 describe("SERVER_PORT", () => {
@@ -49,5 +52,27 @@ describe("NODE_ENV", () => {
   it("throws on an unsupported value", () => {
     Bun.env.NODE_ENV = "staging";
     expect(() => envConfig.NODE_ENV).toThrow();
+  });
+});
+
+describe("DATABASE_URL", () => {
+  it("returns the configured connection string", () => {
+    Bun.env.DATABASE_URL = "postgres://u:p@localhost:5432/db";
+    expect(envConfig.DATABASE_URL).toBe("postgres://u:p@localhost:5432/db");
+  });
+
+  it("throws when unset", () => {
+    delete Bun.env.DATABASE_URL;
+    expect(() => envConfig.DATABASE_URL).toThrow();
+  });
+
+  it("throws when empty", () => {
+    Bun.env.DATABASE_URL = "";
+    expect(() => envConfig.DATABASE_URL).toThrow();
+  });
+
+  it("throws when whitespace-only", () => {
+    Bun.env.DATABASE_URL = "   ";
+    expect(() => envConfig.DATABASE_URL).toThrow();
   });
 });

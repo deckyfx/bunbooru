@@ -1,14 +1,19 @@
+import { createCore } from "@bunbooru/core";
+
 import { envConfig } from "./env-config";
 import { logger } from "./lib/logger";
-import { app } from "./server";
+import { createApp } from "./server";
 
 /**
  * `@bunbooru/api` — the REST API composition root.
  *
- * Wires Core, auth, and enabled plugins together and serves HTTP. For now it
- * starts the bare Elysia app; the Drizzle connection, auth middleware, and
- * plugin loader attach here in later PRs.
+ * Assembles the Core (db → repositories → services) from runtime config and
+ * builds the HTTP app over it, then serves it. Auth middleware and the plugin
+ * loader attach here in later PRs.
  */
+const core = createCore({ databaseUrl: envConfig.DATABASE_URL });
+const app = createApp({ core });
+
 app.listen(envConfig.SERVER_PORT, (server) => {
   logger.info("server_started", {
     url: `http://${server.hostname}:${server.port}`,

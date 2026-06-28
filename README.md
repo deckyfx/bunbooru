@@ -93,14 +93,26 @@ Requires [Bun](https://bun.sh) and Docker.
 cp .env.example .env       # configure local environment
 bun install                # install workspace dependencies
 bun run services:up        # start Postgres (the required service)
+bun run migrate            # apply database migrations
 bun run typecheck          # verify the workspace compiles
+bun run test               # run the test suite
+```
+
+Service data is bind-mounted under `./data` (git-ignored), so all state lives in
+the project folder — `bun run services:down` keeps it; delete `./data` to wipe it.
+
+After editing `packages/db/src/schema.ts`, regenerate and apply migrations:
+
+```bash
+bun run db:generate        # emit SQL from the schema into packages/db/drizzle
+bun run migrate            # apply pending migrations
 ```
 
 Redis is optional — Core never requires it. Start it only when needed:
 
 ```bash
 bun run services:up:redis  # Postgres + Redis
-bun run services:down      # stop services (add -v in compose to drop data)
+bun run services:down      # stop services
 ```
 
 ## Current Status
