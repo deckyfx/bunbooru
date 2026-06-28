@@ -1,29 +1,13 @@
 /**
- * `@bunbooru/storage` — the `StorageProvider` contract.
+ * `@bunbooru/storage` — the `StorageProvider` contract and its implementations.
  *
- * Core never touches the filesystem directly. Filesystem, S3, MinIO, and R2
- * implementations must all satisfy this interface, so new providers require
- * zero Core changes. Concrete implementations land in later PRs.
+ * Core never touches the filesystem directly; it depends only on the
+ * `StorageProvider` interface, so new backends require zero Core changes.
  */
 export const STORAGE_PACKAGE = "@bunbooru/storage" as const;
 
-export interface StorageProvider {
-  /** Persist `data` under `key`. */
-  store(key: string, data: ReadableStream<Uint8Array> | Uint8Array): Promise<void>;
-  /** Remove the object at `key`. */
-  delete(key: string): Promise<void>;
-  /** Whether an object exists at `key`. */
-  exists(key: string): Promise<boolean>;
-  /** Open a readable stream for the object at `key`. */
-  stream(key: string): Promise<ReadableStream<Uint8Array>>;
-  /** Copy `from` to `to` within the provider. */
-  copy(from: string, to: string): Promise<void>;
-  /** Move `from` to `to` within the provider. */
-  move(from: string, to: string): Promise<void>;
-  /**
-   * Public URL for the object at `key`, or `null` when the provider exposes
-   * none (e.g. a private filesystem backend). Async so providers can mint
-   * signed/expiring URLs without breaking `plugin-sdk` consumers.
-   */
-  getPublicUrl(key: string): Promise<string | null>;
-}
+export type { StorageProvider } from "./provider";
+export {
+  createFilesystemStorageProvider,
+  type FilesystemStorageConfig,
+} from "./filesystem";
