@@ -43,8 +43,11 @@ function toPositiveInt(value: number | undefined, fallback: number): number {
 export function createAssetService(repository: AssetRepository): AssetService {
   return {
     async list(options = {}) {
-      const page = toPositiveInt(options.page, 1);
       const perPage = Math.min(toPositiveInt(options.perPage, DEFAULT_PER_PAGE), MAX_PER_PAGE);
+      // Cap page so (page - 1) * perPage can't exceed MAX_SAFE_INTEGER and turn
+      // the offset into a rounded/Infinity value — protects non-HTTP callers too.
+      const maxPage = Math.floor(Number.MAX_SAFE_INTEGER / perPage) + 1;
+      const page = Math.min(toPositiveInt(options.page, 1), maxPage);
       const offset = (page - 1) * perPage;
 
       // Count and page in parallel — they're independent reads.

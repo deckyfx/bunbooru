@@ -1,5 +1,5 @@
 {
-  "id": "1a7d778e-0dda-4a11-a075-42532874b2f4",
+  "id": "b79363b7-c6d1-48b7-8003-132574094817",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -127,6 +127,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "sha256": {
+          "name": "sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "md5": {
           "name": "md5",
           "type": "text",
@@ -186,16 +192,29 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "assets_md5_unique": {
-          "name": "assets_md5_unique",
+        "assets_sha256_unique": {
+          "name": "assets_sha256_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "md5"
+            "sha256"
           ]
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "assets_width_nonneg": {
+          "name": "assets_width_nonneg",
+          "value": "\"assets\".\"width\" >= 0"
+        },
+        "assets_height_nonneg": {
+          "name": "assets_height_nonneg",
+          "value": "\"assets\".\"height\" >= 0"
+        },
+        "assets_size_bytes_nonneg": {
+          "name": "assets_size_bytes_nonneg",
+          "value": "\"assets\".\"size_bytes\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.tags": {
@@ -250,7 +269,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "tags_post_count_nonneg": {
+          "name": "tags_post_count_nonneg",
+          "value": "\"tags\".\"post_count\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.users": {

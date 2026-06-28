@@ -15,13 +15,17 @@ CREATE TABLE "assets" (
 	"width" integer NOT NULL,
 	"height" integer NOT NULL,
 	"size_bytes" bigint NOT NULL,
+	"sha256" text NOT NULL,
 	"md5" text NOT NULL,
 	"rating" "rating" DEFAULT 'questionable' NOT NULL,
 	"source" text,
 	"uploader_id" bigint,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "assets_md5_unique" UNIQUE("md5")
+	CONSTRAINT "assets_sha256_unique" UNIQUE("sha256"),
+	CONSTRAINT "assets_width_nonneg" CHECK ("assets"."width" >= 0),
+	CONSTRAINT "assets_height_nonneg" CHECK ("assets"."height" >= 0),
+	CONSTRAINT "assets_size_bytes_nonneg" CHECK ("assets"."size_bytes" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "tags" (
@@ -30,7 +34,8 @@ CREATE TABLE "tags" (
 	"category" "tag_category" DEFAULT 'general' NOT NULL,
 	"post_count" integer DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "tags_name_unique" UNIQUE("name")
+	CONSTRAINT "tags_name_unique" UNIQUE("name"),
+	CONSTRAINT "tags_post_count_nonneg" CHECK ("tags"."post_count" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "users" (

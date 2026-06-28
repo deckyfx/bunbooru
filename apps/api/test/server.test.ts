@@ -12,6 +12,7 @@ const sampleAsset: Asset = {
   width: 800,
   height: 600,
   sizeBytes: 123_456,
+  sha256: "sha256-abcd",
   md5: "abcd",
   rating: "safe",
   source: null,

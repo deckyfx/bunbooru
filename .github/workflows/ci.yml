@@ -23,7 +23,8 @@ jobs:
     # so the pg18 data-dir layout is a non-issue here.
     services:
       postgres:
-        image: postgres:18-alpine
+        # Digest-pinned (postgres 18.4-alpine) for reproducible CI.
+        image: postgres:18-alpine@sha256:1b1689b20d16a014a3d195653381cf2caa75a41a92d93b255a9d6ea29fd353aa
         env:
           POSTGRES_USER: bunbooru
           POSTGRES_PASSWORD: bunbooru

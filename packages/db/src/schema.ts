@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   bigserial,
+  check,
   index,
   integer,
   pgEnum,
@@ -18,6 +19,13 @@ import {
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
+
+// `bigint`/`bigserial` columns use `mode: "number"`: they need 64-bit *storage*
+// (file sizes exceed int4's ~2.1 GB; PK headroom past 2.1B rows), but their
+// values stay far below 2^53 (~9×10^15) at booru scale (~10^7 assets, ≤TB
+// files), where JS `number` is exact. Revisit only if a column could exceed
+// 2^53 — then store as bigint and serialize to string in the API (JSON has no
+// 64-bit int type), never JS BigInt (it isn't JSON-serializable).
 
 /** Content maturity rating, mirroring the booru convention. */
 export const ratingEnum = pgEnum("rating", ["safe", "questionable", "explicit"]);
@@ -45,36 +53,53 @@ export const users = pgTable("users", {
 });
 
 /**
- * An uploaded media item (the booru "post"). `md5` is unique so re-uploads are
- * detected cheaply; the binary itself lives behind a StorageProvider and is
- * referenced only by `storageKey`. `uploaderId` is nullable to allow anonymous
- * uploads and to survive account deletion (set null).
+ * An uploaded media item (the booru "post"). `sha256` is the unique content key
+ * — collision-resistant, so it doubles as dedupe and integrity check; `md5` is
+ * kept (non-unique) for booru-ecosystem compatibility (Danbooru exposes
+ * `post.md5` and derives file paths from it), but MD5 collisions make it unsafe
+ * as the identity key. The binary lives behind a StorageProvider, referenced
+ * only by `storageKey`. `uploaderId` is nullable to allow anonymous uploads and
+ * to survive account deletion (set null). CHECK constraints reject impossible
+ * negative dimensions/size at the source-of-truth layer, not just in callers.
  */
-export const assets = pgTable("assets", {
-  id: bigserial("id", { mode: "number" }).primaryKey(),
-  storageKey: text("storage_key").notNull(),
-  mimeType: text("mime_type").notNull(),
-  width: integer("width").notNull(),
-  height: integer("height").notNull(),
-  sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
-  md5: text("md5").notNull().unique(),
-  rating: ratingEnum("rating").notNull().default("questionable"),
-  source: text("source"),
-  uploaderId: bigint("uploader_id", { mode: "number" }).references(() => users.id, {
-    onDelete: "set null",
-  }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const assets = pgTable(
+  "assets",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    storageKey: text("storage_key").notNull(),
+    mimeType: text("mime_type").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    sha256: text("sha256").notNull().unique(),
+    md5: text("md5").notNull(),
+    rating: ratingEnum("rating").notNull().default("questionable"),
+    source: text("source"),
+    uploaderId: bigint("uploader_id", { mode: "number" }).references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("assets_width_nonneg", sql`${table.width} >= 0`),
+    check("assets_height_nonneg", sql`${table.height} >= 0`),
+    check("assets_size_bytes_nonneg", sql`${table.sizeBytes} >= 0`),
+  ],
+);
 
 /** A label. `postCount` is a denormalized counter maintained by the tag service. */
-export const tags = pgTable("tags", {
-  id: bigserial("id", { mode: "number" }).primaryKey(),
-  name: text("name").notNull().unique(),
-  category: tagCategoryEnum("category").notNull().default("general"),
-  postCount: integer("post_count").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const tags = pgTable(
+  "tags",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    name: text("name").notNull().unique(),
+    category: tagCategoryEnum("category").notNull().default("general"),
+    postCount: integer("post_count").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [check("tags_post_count_nonneg", sql`${table.postCount} >= 0`)],
+);
 
 /**
  * Asset↔tag join. Composite primary key prevents duplicate links; the extra

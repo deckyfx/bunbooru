@@ -13,6 +13,7 @@ function asset(id: number): Asset {
     width: 1,
     height: 1,
     sizeBytes: 1,
+    sha256: `sha256-${id}`,
     md5: `md5-${id}`,
     rating: "questionable",
     source: null,

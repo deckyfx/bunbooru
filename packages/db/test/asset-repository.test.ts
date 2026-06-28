@@ -8,7 +8,7 @@ import { createAssetRepository, createDb, type AssetRepository, type DB } from "
  * migrations must already be applied). Skipped when it's unset so `bun test`
  * stays green on machines without a database; CI provides one and runs them.
  */
-const DATABASE_URL = Bun.env.DATABASE_URL;
+const DATABASE_URL = Bun.env.DATABASE_URL?.trim();
 
 describe.skipIf(!DATABASE_URL)("AssetRepository (integration)", () => {
   let db: DB;
@@ -37,11 +37,13 @@ describe.skipIf(!DATABASE_URL)("AssetRepository (integration)", () => {
       width: 800,
       height: 600,
       sizeBytes: 4096,
+      sha256: "sha256-abcd",
       md5: "abcd",
       rating: "safe",
     });
 
     expect(created.id).toBeGreaterThan(0);
+    expect(created.sha256).toBe("sha256-abcd");
     expect(created.md5).toBe("abcd");
     expect(created.rating).toBe("safe");
     expect(created.createdAt).toBeInstanceOf(Date);
@@ -55,12 +57,25 @@ describe.skipIf(!DATABASE_URL)("AssetRepository (integration)", () => {
       width: 1,
       height: 1,
       sizeBytes: 1,
+      sha256: "sha256-defaults",
       md5: "defaults",
     });
 
     expect(created.rating).toBe("questionable"); // schema default
     expect(created.source).toBeNull();
     expect(created.uploaderId).toBeNull();
+  });
+
+  it("rejects a duplicate sha256 (unique content key)", async () => {
+    await repo.create(seed("dupe"));
+    // Same sha256, different md5 — the unique constraint must still reject it.
+    await expect(
+      repo.create({ ...seed("dupe"), md5: "different" }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects a negative dimension (CHECK constraint)", async () => {
+    await expect(repo.create({ ...seed("neg"), width: -1 })).rejects.toThrow();
   });
 
   it("lists assets newest-first", async () => {
@@ -88,14 +103,15 @@ describe.skipIf(!DATABASE_URL)("AssetRepository (integration)", () => {
   });
 });
 
-/** Minimal valid asset insert keyed by a unique md5. */
-function seed(md5: string) {
+/** Minimal valid asset insert keyed by `key` (unique sha256; md5 echoes `key`). */
+function seed(key: string) {
   return {
-    storageKey: `key/${md5}`,
+    storageKey: `key/${key}`,
     mimeType: "image/png",
     width: 1,
     height: 1,
     sizeBytes: 1,
-    md5,
+    sha256: `sha256-${key}`,
+    md5: key,
   };
 }

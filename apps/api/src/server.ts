@@ -123,8 +123,16 @@ export function createApp({ core }: AppDependencies) {
           {
             query: t.Object({
               // Integer-only (`multipleOf: 1`): reject fractional page sizes at
-              // the boundary so offset/limit math is never ambiguous.
-              page: t.Optional(t.Numeric({ minimum: 1, multipleOf: 1 })),
+              // the boundary so offset/limit math is never ambiguous. The upper
+              // bound keeps (page-1)*perPage within MAX_SAFE_INTEGER so a huge
+              // page can't overflow the offset into a 5xx (the service caps too).
+              page: t.Optional(
+                t.Numeric({
+                  minimum: 1,
+                  maximum: Math.floor(Number.MAX_SAFE_INTEGER / MAX_PER_PAGE) + 1,
+                  multipleOf: 1,
+                }),
+              ),
               per_page: t.Optional(
                 t.Numeric({ minimum: 1, maximum: MAX_PER_PAGE, multipleOf: 1 }),
               ),
