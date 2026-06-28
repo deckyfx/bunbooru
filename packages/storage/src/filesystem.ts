@@ -39,6 +39,11 @@ export function createFilesystemStorageProvider(
    * when `root` is the filesystem root (where `root + sep` would be `//`).
    */
   function resolveKey(key: string): string {
+    // Reject absolute keys outright: relativizing first would accept an absolute
+    // key that happens to point inside root (and always when root === "/").
+    if (isAbsolute(key)) {
+      throw new Error(`storage key escapes the storage root: ${JSON.stringify(key)}`);
+    }
     const full = resolve(root, key);
     const rel = relative(root, full);
     if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
@@ -77,15 +82,18 @@ export function createFilesystemStorageProvider(
     },
 
     async copy(from, to) {
+      // Validate the source first so a rejected escaping key leaves no dirs behind.
+      const source = resolveKey(from);
       const target = resolveKey(to);
       await mkdir(dirname(target), { recursive: true });
-      await copyFile(resolveKey(from), target);
+      await copyFile(source, target);
     },
 
     async move(from, to) {
+      const source = resolveKey(from);
       const target = resolveKey(to);
       await mkdir(dirname(target), { recursive: true });
-      await rename(resolveKey(from), target);
+      await rename(source, target);
     },
 
     async getPublicUrl() {

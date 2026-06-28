@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -82,6 +82,15 @@ describe("FilesystemStorageProvider", () => {
 
     it("rejects an absolute key", async () => {
       await expect(storage.store("/etc/passwd", bytes("x"))).rejects.toThrow(/escape/);
+    });
+
+    it("rejects an absolute key even when it points inside root", async () => {
+      await expect(storage.store(join(root, "inside.txt"), bytes("x"))).rejects.toThrow(/escape/);
+    });
+
+    it("creates no destination dirs when the source key is invalid", async () => {
+      await expect(storage.copy("../bad", "fresh/dir/x.txt")).rejects.toThrow(/escape/);
+      await expect(stat(join(root, "fresh"))).rejects.toThrow(); // dir never created
     });
 
     it("rejects traversal on the copy/move destination, leaving the source intact", async () => {
