@@ -60,20 +60,25 @@ describe.skipIf(!DATABASE_URL)("AssetRepository (integration)", () => {
 
   it("rejects a duplicate sha256 (unique content key)", async () => {
     await repo.create(seed("dupe"));
-    // Same sha256, different md5 — the unique constraint must still reject it.
-    await expect(
+    // Same sha256, different md5 — assert the *named* constraint so the test
+    // fails only for the right reason, not any incidental error.
+    await expectConstraint(
       repo.create({ ...seed("dupe"), md5: hexDigest("md5", "other") }),
-    ).rejects.toThrow();
+      "assets_sha256_unique",
+    );
   });
 
   it("rejects a negative dimension (CHECK constraint)", async () => {
-    await expect(repo.create({ ...seed("neg"), width: -1 })).rejects.toThrow();
+    await expectConstraint(repo.create({ ...seed("neg"), width: -1 }), "assets_width_nonneg");
   });
 
   it("rejects a non-hex or mixed-case digest (CHECK constraint)", async () => {
-    await expect(repo.create({ ...seed("bad"), sha256: "not-a-hex-digest" })).rejects.toThrow();
+    await expectConstraint(
+      repo.create({ ...seed("bad"), sha256: "not-a-hex-digest" }),
+      "assets_sha256_hex",
+    );
     // Uppercase hex is non-canonical and must be rejected too.
-    await expect(repo.create({ ...seed("upper"), md5: "A".repeat(32) })).rejects.toThrow();
+    await expectConstraint(repo.create({ ...seed("upper"), md5: "A".repeat(32) }), "assets_md5_hex");
   });
 
   it("lists assets newest-first", async () => {
@@ -100,6 +105,28 @@ describe.skipIf(!DATABASE_URL)("AssetRepository (integration)", () => {
     expect(secondPage.map((r) => r.storageKey)).toEqual(["key/a"]);
   });
 });
+
+/** Bun's Postgres driver puts the violated constraint name on `error.cause`. */
+interface PgCause {
+  constraint?: string;
+}
+
+/**
+ * Assert an insert rejects by violating a *specific* named DB constraint, read
+ * from `error.cause.constraint` (the wrapped Drizzle message omits it). Matching
+ * the name keeps the test tied to the schema contract instead of passing on any
+ * incidental error.
+ */
+async function expectConstraint(promise: Promise<unknown>, constraint: string): Promise<void> {
+  try {
+    await promise;
+  } catch (error) {
+    const cause = (error as { cause?: PgCause }).cause;
+    expect(cause?.constraint).toBe(constraint);
+    return;
+  }
+  throw new Error(`expected a "${constraint}" violation, but the insert resolved`);
+}
 
 /** Canonical lowercase-hex digest, satisfying the schema's hex CHECK constraints. */
 function hexDigest(algo: "sha256" | "md5", input: string): string {
