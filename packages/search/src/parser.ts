@@ -10,6 +10,12 @@ const OPERATORS: ReadonlyArray<readonly [string, CompareOp]> = [
 ];
 
 /**
+ * A range is `lo..hi` separated by exactly `..`, where neither side contains a
+ * scheme/path character — so URL values like `https://a..b` are NOT ranges.
+ */
+const RANGE_RE = /^[^:/]*\.\.[^:/]*$/;
+
+/**
  * Parse a booru query string into its AST. Semantics:
  * - whitespace-separated terms are AND'd (the implicit top level);
  * - `-term` negates a term;
@@ -46,13 +52,14 @@ function toNode(token: Token): QueryNode {
 }
 
 function parseMetatag(key: string, raw: string): MetatagNode {
-  if (raw.includes("..")) {
-    return { type: "metatag", key, op: "range", value: raw };
-  }
+  // Operators first, so an operator beats a range-looking value (e.g. >10..20).
   for (const [symbol, op] of OPERATORS) {
     if (raw.startsWith(symbol)) {
       return { type: "metatag", key, op, value: raw.slice(symbol.length) };
     }
+  }
+  if (RANGE_RE.test(raw)) {
+    return { type: "metatag", key, op: "range", value: raw };
   }
   return { type: "metatag", key, op: "eq", value: raw };
 }

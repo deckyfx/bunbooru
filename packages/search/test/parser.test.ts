@@ -81,6 +81,24 @@ describe("parse", () => {
     });
   });
 
+  it("does not treat a URL value (with ..) as a range", () => {
+    expect(parse("source:https://example.com/a..b").children[0]).toEqual({
+      type: "metatag",
+      key: "source",
+      op: "eq",
+      value: "https://example.com/a..b",
+    });
+  });
+
+  it("lets an operator win over a range-looking value", () => {
+    expect(parse("score:>10..20").children[0]).toEqual({
+      type: "metatag",
+      key: "score",
+      op: "gt",
+      value: "10..20",
+    });
+  });
+
   it("combines tags, OR, NOT and metatags (OR group appended last)", () => {
     expect(parse("1girl ~blue_eyes ~green_eyes -monochrome rating:safe")).toEqual({
       type: "and",
