@@ -19,18 +19,16 @@ and autocomplete together** so the shared primitive is proven reusable.
 
 ## Architecture
 
-```
+```text
 1. Popover primitive   headless floating layer — positioning, hover/focus/dismiss, a11y, portal
-2. Content cards       <TagPopoverCard> <PostPreviewCard> <TagSuggestList>   (pure presentational)
+2. Content cards       <TagPopoverCard> <PostTagsCard> <SearchBox>   (pure presentational)
 3. Data hooks          useTagInfo(name) · usePostPreview(id) · useTagAutocomplete(q)   (TanStack Query)
 4. API contract        Core endpoints (mocked with static data until the DB lands)
 ```
 
-Proposed `apps/web` layout:
-
 As implemented (Phase 0):
 
-```
+```text
 src/components/popover/
   hover-popover.tsx      generic hover/focus primitive (Floating UI)
   tag-popover-card.tsx   tag content (related tags)
