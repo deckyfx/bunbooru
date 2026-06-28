@@ -18,10 +18,12 @@
     "services:up": "docker compose up -d",
     "services:up:redis": "docker compose --profile redis up -d",
     "services:down": "docker compose down",
-    "services:logs": "docker compose logs -f"
+    "services:logs": "docker compose logs -f",
+    "lint:boundaries": "depcruise apps packages plugins"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "dependency-cruiser": "^18.0.0",
     "typescript": "^6"
   }
 }
