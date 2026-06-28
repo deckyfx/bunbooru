@@ -22,10 +22,10 @@ module.exports = {
     {
       name: "plugins-only-plugin-sdk",
       comment:
-        "Plugins may import ONLY @bunbooru/plugin-sdk — never core/db/auth/events/storage/search directly.",
+        "Plugins may import ONLY @bunbooru/plugin-sdk (deny-by-default: any other @bunbooru/* package, including future ones, is rejected).",
       severity: "error",
       from: { path: "^plugins/" },
-      to: { path: "^@bunbooru/(core|db|auth|events|storage|search)$" },
+      to: { path: "^@bunbooru/", pathNot: "^@bunbooru/plugin-sdk$" },
     },
     {
       name: "db-is-leaf",
@@ -35,12 +35,12 @@ module.exports = {
       to: { path: "^@bunbooru/", pathNot: "^@bunbooru/db$" },
     },
     {
-      name: "core-no-outward",
+      name: "core-only-leaf-packages",
       comment:
-        "core must not depend outward (auth, plugin-sdk); it may only use db/events/storage/search.",
+        "core may import ONLY the leaf packages db/events/storage/search (deny-by-default: any other @bunbooru/* package, including future ones, is rejected).",
       severity: "error",
       from: { path: "^packages/core/" },
-      to: { path: "^@bunbooru/(auth|plugin-sdk)$" },
+      to: { path: "^@bunbooru/", pathNot: "^@bunbooru/(db|events|storage|search)$" },
     },
     {
       name: "no-import-plugins",
