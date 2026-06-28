@@ -35,3 +35,6 @@ TODOS.md
 # Claude Code local session artifacts
 .claude/scheduled_tasks.*
 .claude/settings.local.json
+
+# Local service data (Postgres/Redis bind mounts)
+/data/

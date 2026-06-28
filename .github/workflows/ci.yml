@@ -18,6 +18,27 @@ jobs:
   check:
     name: typecheck · test · boundaries
     runs-on: ubuntu-latest
+
+    # Ephemeral Postgres for the repository integration tests. No volume mount,
+    # so the pg18 data-dir layout is a non-issue here.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: bunbooru
+          POSTGRES_PASSWORD: bunbooru
+          POSTGRES_DB: bunbooru
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bunbooru -d bunbooru"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://bunbooru:bunbooru@localhost:5432/bunbooru
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +53,9 @@ jobs:
 
       - name: Typecheck
         run: bun run typecheck
+
+      - name: Migrate
+        run: bun run migrate
 
       - name: Test
         run: bun run test

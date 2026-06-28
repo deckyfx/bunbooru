@@ -13,6 +13,9 @@
     "test": "NODE_ENV=test bun test",
     "dev": "bun run --cwd apps/api dev",
     "dev:web": "bun run --cwd apps/web dev",
+    "db:generate": "bun run --cwd packages/db db:generate",
+    "db:studio": "bun run --cwd packages/db db:studio",
+    "migrate": "bun run --cwd packages/db migrate",
     "build:api": "bun run apps/api/build.ts",
     "docker:build": "docker build -t bunbooru:latest .",
     "services:up": "docker compose up -d",
@@ -24,6 +27,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "dependency-cruiser": "^18.0.0",
+    "drizzle-kit": "^0.31.10",
     "typescript": "^6"
   }
 }
