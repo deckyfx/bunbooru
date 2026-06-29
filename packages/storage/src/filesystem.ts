@@ -1,7 +1,8 @@
 import { copyFile, mkdir, rename, rm } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import type { StorageProvider } from "./provider";
+import { resolveKeyWithinRoot } from "./resolve-key";
 
 /** Configuration for the filesystem-backed {@link StorageProvider}. */
 export interface FilesystemStorageConfig {
@@ -31,26 +32,7 @@ export function createFilesystemStorageProvider(
   config: FilesystemStorageConfig,
 ): StorageProvider {
   const root = resolve(config.root);
-
-  /**
-   * Resolve `key` to an absolute path strictly inside `root`. Throws on any key
-   * that would escape (traversal, absolute path, or the root itself). Uses
-   * `relative()` rather than `startsWith(root + sep)` so it stays correct even
-   * when `root` is the filesystem root (where `root + sep` would be `//`).
-   */
-  function resolveKey(key: string): string {
-    // Reject absolute keys outright: relativizing first would accept an absolute
-    // key that happens to point inside root (and always when root === "/").
-    if (isAbsolute(key)) {
-      throw new Error(`storage key escapes the storage root: ${JSON.stringify(key)}`);
-    }
-    const full = resolve(root, key);
-    const rel = relative(root, full);
-    if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-      throw new Error(`storage key escapes the storage root: ${JSON.stringify(key)}`);
-    }
-    return full;
-  }
+  const resolveKey = (key: string) => resolveKeyWithinRoot(root, key);
 
   return {
     async store(key, data) {

@@ -14,6 +14,7 @@ import { createApp } from "./server";
 const core = createCore({
   databaseUrl: envConfig.DATABASE_URL,
   storageRoot: envConfig.STORAGE_ROOT,
+  maxUploadBytes: envConfig.MAX_UPLOAD_BYTES,
 });
 const app = createApp({ core, maxUploadBytes: envConfig.MAX_UPLOAD_BYTES });
 

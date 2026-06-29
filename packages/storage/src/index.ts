@@ -11,3 +11,8 @@ export {
   createFilesystemStorageProvider,
   type FilesystemStorageConfig,
 } from "./filesystem";
+export {
+  createFilesystemStaging,
+  type FilesystemStagingConfig,
+  type StagingStore,
+} from "./staging";

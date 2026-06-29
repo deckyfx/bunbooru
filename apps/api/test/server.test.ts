@@ -7,8 +7,9 @@ import type {
   AssetUpdate,
   Core,
   ListAssetsOptions,
+  UploadService,
 } from "@bunbooru/core";
-import { createCoreEvents, UnsupportedMediaError } from "@bunbooru/core";
+import { createCoreEvents, UnsupportedMediaError, UploadConflictError } from "@bunbooru/core";
 
 import { createApp } from "../src/server";
 
@@ -34,8 +35,11 @@ const emptyPage: AssetListPage = { assets: [], total: 0, page: 1, perPage: 20, p
 /** Small upload cap so the oversize path is cheap to exercise. */
 const MAX_UPLOAD_BYTES = 1024;
 
-/** Build a Core, overriding only the asset-service methods a test cares about. */
-function stubCore(overrides: Partial<AssetService> = {}): Core {
+/** Build a Core, overriding only the service methods a test cares about. */
+function stubCore(
+  overrides: Partial<AssetService> = {},
+  uploadOverrides: Partial<UploadService> = {},
+): Core {
   return {
     assetService: {
       list: async () => emptyPage,
@@ -44,6 +48,14 @@ function stubCore(overrides: Partial<AssetService> = {}): Core {
       update: async () => null,
       openFile: async () => null,
       ...overrides,
+    },
+    uploadService: {
+      begin: async () => ({ token: "tok-1", offset: 0, size: 100 }),
+      offsetOf: async () => ({ offset: 0, size: 100 }),
+      appendChunk: async () => ({ status: "incomplete", offset: 0 }),
+      cancel: async () => true,
+      gcExpired: async () => 0,
+      ...uploadOverrides,
     },
     events: createCoreEvents(),
   };
@@ -356,5 +368,150 @@ describe("GET /api/v1/assets/:id/file", () => {
   it("rejects a non-numeric id with 422", async () => {
     const res = await request("/api/v1/assets/abc/file");
     expect(res.status).toBe(422);
+  });
+});
+
+describe("resumable uploads (/api/v1/uploads)", () => {
+  it("POST /uploads opens a session (201) and forwards filename/size/mimeType", async () => {
+    let received: { filename: string; size: number; mimeType?: string | null } | undefined;
+    const res = await buildApp(
+      stubCore(
+        {},
+        {
+          begin: async (input) => {
+            received = input;
+            return { token: "tok-9", offset: 0, size: input.size };
+          },
+        },
+      ),
+    ).handle(
+      new Request("http://localhost/api/v1/uploads", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ filename: "a.png", size: 10, mimeType: "image/png" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    expect(received).toMatchObject({ filename: "a.png", size: 10, mimeType: "image/png" });
+    const body = (await res.json()) as { token: string; offset: number; size: number };
+    expect(body.token).toBe("tok-9");
+    expect(body.offset).toBe(0);
+  });
+
+  it("POST /uploads rejects an oversize declared size with 413", async () => {
+    const res = await buildApp(stubCore()).handle(
+      new Request("http://localhost/api/v1/uploads", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ filename: "big.png", size: MAX_UPLOAD_BYTES + 1 }),
+      }),
+    );
+    expect(res.status).toBe(413);
+  });
+
+  it("HEAD /uploads/:token reports the committed offset + length", async () => {
+    const res = await buildApp(
+      stubCore({}, { offsetOf: async () => ({ offset: 42, size: 100 }) }),
+    ).handle(new Request("http://localhost/api/v1/uploads/tok-1", { method: "HEAD" }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("upload-offset")).toBe("42");
+    expect(res.headers.get("upload-length")).toBe("100");
+  });
+
+  it("HEAD /uploads/:token returns 404 for an unknown session", async () => {
+    const res = await buildApp(stubCore({}, { offsetOf: async () => null })).handle(
+      new Request("http://localhost/api/v1/uploads/nope", { method: "HEAD" }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("PATCH /uploads/:token appends a chunk → 204 + new offset (incomplete)", async () => {
+    let received: { token: string; offset: number; len: number } | undefined;
+    const res = await buildApp(
+      stubCore(
+        {},
+        {
+          appendChunk: async (token, offset, data) => {
+            received = { token, offset, len: data.byteLength };
+            return { status: "incomplete", offset: offset + data.byteLength };
+          },
+        },
+      ),
+    ).handle(
+      new Request("http://localhost/api/v1/uploads/tok-1", {
+        method: "PATCH",
+        headers: { "upload-offset": "0", "content-type": "application/octet-stream" },
+        body: new Uint8Array([1, 2, 3, 4]),
+      }),
+    );
+    expect(res.status).toBe(204);
+    expect(res.headers.get("upload-offset")).toBe("4");
+    expect(received).toEqual({ token: "tok-1", offset: 0, len: 4 });
+  });
+
+  it("PATCH /uploads/:token finalizes → 201 with the asset (complete)", async () => {
+    const res = await buildApp(
+      stubCore(
+        {},
+        { appendChunk: async () => ({ status: "complete", asset: sampleAsset, deduped: false }) },
+      ),
+    ).handle(
+      new Request("http://localhost/api/v1/uploads/tok-1", {
+        method: "PATCH",
+        headers: { "upload-offset": "0", "content-type": "application/octet-stream" },
+        body: new Uint8Array([1, 2, 3]),
+      }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: number };
+    expect(body.id).toBe(1);
+  });
+
+  it("PATCH /uploads/:token maps an offset mismatch to 409", async () => {
+    const res = await buildApp(
+      stubCore(
+        {},
+        {
+          appendChunk: async () => {
+            throw new UploadConflictError();
+          },
+        },
+      ),
+    ).handle(
+      new Request("http://localhost/api/v1/uploads/tok-1", {
+        method: "PATCH",
+        headers: { "upload-offset": "5", "content-type": "application/octet-stream" },
+        body: new Uint8Array([1]),
+      }),
+    );
+    expect(res.status).toBe(409);
+  });
+
+  it("PATCH /uploads/:token rejects a missing Upload-Offset header with 400", async () => {
+    const res = await buildApp(stubCore()).handle(
+      new Request("http://localhost/api/v1/uploads/tok-1", {
+        method: "PATCH",
+        headers: { "content-type": "application/octet-stream" },
+        body: new Uint8Array([1]),
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("DELETE /uploads/:token cancels the session (204)", async () => {
+    let cancelled: string | undefined;
+    const res = await buildApp(
+      stubCore(
+        {},
+        {
+          cancel: async (token) => {
+            cancelled = token;
+            return true;
+          },
+        },
+      ),
+    ).handle(new Request("http://localhost/api/v1/uploads/tok-1", { method: "DELETE" }));
+    expect(res.status).toBe(204);
+    expect(cancelled).toBe("tok-1");
   });
 });

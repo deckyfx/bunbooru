@@ -1,0 +1,1 @@
+ALTER TABLE "upload_sessions" ADD CONSTRAINT "upload_sessions_staging_key_unique" UNIQUE("staging_key");

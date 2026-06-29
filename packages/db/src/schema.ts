@@ -133,6 +133,38 @@ export const assetTags = pgTable(
   ],
 );
 
+/**
+ * An in-progress resumable upload. Chunks are staged to a temp file
+ * (`stagingKey`) and `uploadedSize` tracks committed bytes; on completion the
+ * bytes are finalized into an `asset` and the row is deleted. `token` is the
+ * public, non-enumerable handle used in the `/uploads/:token` URLs.
+ */
+export const uploadSessions = pgTable(
+  "upload_sessions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    token: text("token").notNull().unique(),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type"),
+    declaredSize: bigint("declared_size", { mode: "number" }).notNull(),
+    uploadedSize: bigint("uploaded_size", { mode: "number" }).notNull().default(0),
+    stagingKey: text("staging_key").notNull().unique(),
+    uploaderId: bigint("uploader_id", { mode: "number" }).references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("upload_sessions_declared_size_nonneg", sql`${table.declaredSize} >= 0`),
+    check(
+      "upload_sessions_uploaded_size_range",
+      sql`${table.uploadedSize} >= 0 and ${table.uploadedSize} <= ${table.declaredSize}`,
+    ),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 
@@ -144,6 +176,9 @@ export type NewTag = typeof tags.$inferInsert;
 
 export type AssetTag = typeof assetTags.$inferSelect;
 export type NewAssetTag = typeof assetTags.$inferInsert;
+
+export type UploadSession = typeof uploadSessions.$inferSelect;
+export type NewUploadSession = typeof uploadSessions.$inferInsert;
 
 /** Domain enum unions, derived from the pg enums so they can't drift. */
 export type Rating = (typeof ratingEnum.enumValues)[number];

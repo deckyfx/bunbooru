@@ -1,4 +1,4 @@
-import { UnsupportedMediaError } from "@bunbooru/core";
+import { UnsupportedMediaError, UploadConflictError, UploadRangeError } from "@bunbooru/core";
 
 import { HttpError } from "./errors";
 
@@ -10,6 +10,8 @@ import { HttpError } from "./errors";
 export function statusFor(code: string | number, error: unknown): number {
   if (error instanceof HttpError) return error.status;
   if (error instanceof UnsupportedMediaError) return 415;
+  if (error instanceof UploadConflictError) return 409;
+  if (error instanceof UploadRangeError) return 400;
   switch (code) {
     case "NOT_FOUND":
       return 404;
