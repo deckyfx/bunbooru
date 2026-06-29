@@ -16,6 +16,7 @@
     "db:generate": "bun run --cwd packages/db db:generate",
     "db:studio": "bun run --cwd packages/db db:studio",
     "migrate": "bun run --cwd packages/db migrate",
+    "cr": "bun bin/cr.ts",
     "build:api": "bun run apps/api/build.ts",
     "docker:build": "docker build -t bunbooru:latest .",
     "services:up": "docker compose up -d",
