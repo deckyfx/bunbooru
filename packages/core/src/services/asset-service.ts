@@ -2,6 +2,7 @@ import type { Asset, AssetRepository, NewAsset } from "@bunbooru/db";
 import type { StorageProvider } from "@bunbooru/storage";
 
 import { UnsupportedMediaError } from "../errors";
+import { compileAssetSearch } from "../search/asset-query";
 
 /** Default and ceiling page sizes — the ceiling bounds the cost of one query. */
 export const DEFAULT_PER_PAGE = 20;
@@ -43,6 +44,8 @@ export interface AssetListPage {
 export interface ListAssetsOptions {
   page?: number;
   perPage?: number;
+  /** Booru query string (tags + metatags); compiled to a SQL filter. */
+  query?: string;
 }
 
 /** Raw upload: the bytes plus optional metadata the client may set. */
@@ -109,10 +112,16 @@ export function createAssetService(
       const page = Math.min(toPositiveInt(options.page, 1), maxPage);
       const offset = (page - 1) * perPage;
 
+      // Compile the query string to a SQL filter once; the count must use the
+      // same filter so pagination metadata matches the page. Trim first so
+      // surrounding whitespace is normalized away, not fed to the parser.
+      const query = options.query?.trim();
+      const where = query ? compileAssetSearch(query) : undefined;
+
       // Count and page in parallel — they're independent reads.
       const [list, total] = await Promise.all([
-        repository.findMany({ limit: perPage, offset }),
-        repository.count(),
+        repository.findMany({ limit: perPage, offset, where }),
+        repository.count(where),
       ]);
 
       return {
