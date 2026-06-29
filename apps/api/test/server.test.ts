@@ -219,6 +219,30 @@ describe("POST /api/v1/assets", () => {
   });
 });
 
+describe("GET /api/v1/assets/:id", () => {
+  it("returns the asset metadata (ISO timestamps)", async () => {
+    const res = await buildApp(stubCore({ getById: async () => sampleAsset })).handle(
+      new Request("http://localhost/api/v1/assets/1"),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: number; createdAt: unknown };
+    expect(body.id).toBe(1);
+    expect(body.createdAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("returns 404 when absent", async () => {
+    const res = await buildApp(stubCore({ getById: async () => null })).handle(
+      new Request("http://localhost/api/v1/assets/999"),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a non-numeric id with 422", async () => {
+    const res = await request("/api/v1/assets/abc");
+    expect(res.status).toBe(422);
+  });
+});
+
 describe("GET /api/v1/assets/:id/file", () => {
   it("streams the stored bytes with the asset's content type", async () => {
     const body = new Response("IMGBYTES").body;

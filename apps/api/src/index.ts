@@ -44,4 +44,4 @@ const shutdown = async (): Promise<void> => {
 process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 
-export type { App } from "./server";
+export type { App, AssetDto } from "./server";

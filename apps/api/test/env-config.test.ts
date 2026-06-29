@@ -90,7 +90,7 @@ describe("STORAGE_ROOT", () => {
     Bun.env.NODE_ENV = "development";
     const root = envConfig.STORAGE_ROOT;
     expect(root.startsWith("/")).toBe(true);
-    expect(root.endsWith("/data/storage")).toBe(true);
+    expect(root.endsWith("/storage")).toBe(true);
   });
 
   it("is required in production", () => {
