@@ -8,8 +8,12 @@ const port = Number(Bun.env.WEB_PORT ?? "3001") || 3001;
 const hostname = Bun.env.WEB_HOST ?? "0.0.0.0";
 /** Enable Bun's dev bundling/HMR unless explicitly in production. */
 const development = Bun.env.NODE_ENV !== "production";
-/** Where to proxy `/api/*` in dev (the API listens on 3000 by default). */
-const apiTarget = Bun.env.API_TARGET ?? "http://localhost:3000";
+/**
+ * Where to proxy `/api/*` in dev (the API listens on 3000 by default). Strip any
+ * trailing slash so concatenating the request path can't yield `//api/...`,
+ * which some upstreams route differently.
+ */
+const apiTarget = (Bun.env.API_TARGET ?? "http://localhost:3000").replace(/\/+$/, "");
 /**
  * Per-proxied-request timeout. Bun's default fetch timeout is ~5 min, long
  * enough that a stalled/silent upstream would hold a dev request open for ages.

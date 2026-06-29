@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 
 /**
  * An asset image that degrades gracefully. A metadata row can outlive its stored
@@ -21,6 +21,12 @@ export function AssetImage({
   loading?: "lazy" | "eager";
 }) {
   const [failed, setFailed] = useState(false);
+
+  // Reset on src change so a reused instance retries the new asset instead of
+  // staying stuck on the placeholder from a previous failure.
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
 
   if (failed) {
     return (
