@@ -8,19 +8,46 @@ const port = Number(Bun.env.WEB_PORT ?? "3001") || 3001;
 const hostname = Bun.env.WEB_HOST ?? "0.0.0.0";
 /** Enable Bun's dev bundling/HMR unless explicitly in production. */
 const development = Bun.env.NODE_ENV !== "production";
+/** Where to proxy `/api/*` in dev (the API listens on 3000 by default). */
+const apiTarget = Bun.env.API_TARGET ?? "http://localhost:3000";
 
 /**
- * Serve the single-page app. Every route returns `index.html`; the client
- * router takes over, and Bun bundles `index.tsx` + assets (Tailwind via
- * bun-plugin-tailwind from bunfig.toml).
+ * Serve the single-page app. `/api/*` is reverse-proxied to the API so the
+ * browser talks to a single origin (Model A topology) — the Eden client uses
+ * `window.location.origin`, so there's no CORS in dev or prod. Every other route
+ * returns `index.html`; the client router takes over, and Bun bundles
+ * `index.tsx` + assets (Tailwind via bun-plugin-tailwind from bunfig.toml).
  */
 const server = serve({
   port,
   hostname,
   development,
   routes: {
+    // Re-target at the API, preserving method/headers/body (streams multipart
+    // uploads through unchanged). A failed upstream becomes a deterministic 502
+    // rather than an opaque server error.
+    "/api/*": async (req) => {
+      const { pathname, search } = new URL(req.url);
+      try {
+        return await fetch(new Request(`${apiTarget}${pathname}${search}`, req));
+      } catch {
+        return new Response("Upstream API unavailable", { status: 502 });
+      }
+    },
     "/*": index,
   },
 });
 
-console.log(`🐇 Bunbooru web on ${server.url}`);
+/** Log the target without any basic-auth credentials it might carry. */
+const apiTargetForLog = (() => {
+  try {
+    const url = new URL(apiTarget);
+    url.username = "";
+    url.password = "";
+    return url.toString();
+  } catch {
+    return "<invalid API_TARGET>";
+  }
+})();
+
+console.log(`🐇 Bunbooru web on ${server.url} (api → ${apiTargetForLog})`);

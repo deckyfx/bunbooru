@@ -41,3 +41,6 @@ TODOS.md
 
 # CodeRabbit CLI review output (bin/cr.ts)
 .cr/
+
+# Local asset storage (filesystem provider)
+/storage/

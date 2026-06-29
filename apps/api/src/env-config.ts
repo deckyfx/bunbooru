@@ -56,8 +56,9 @@ class EnvConfig {
 
   /**
    * Filesystem root for stored asset binaries. Required in production; in dev it
-   * defaults to an **absolute** `<cwd>/data/storage` so the location is
-   * deterministic and doesn't silently move with the process working directory.
+   * defaults to an **absolute** `<cwd>/storage` — deterministic, and kept out of
+   * `data/` (which holds the root-owned Docker bind mounts the app-user can't
+   * write into).
    */
   get STORAGE_ROOT(): string {
     const raw = Bun.env.STORAGE_ROOT?.trim();
@@ -65,7 +66,7 @@ class EnvConfig {
     if (this.NODE_ENV === "production") {
       throw new Error("STORAGE_ROOT is required outside development");
     }
-    return resolve(process.cwd(), "data/storage");
+    return resolve(process.cwd(), "storage");
   }
 
   /**

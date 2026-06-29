@@ -176,6 +176,17 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
             }),
           },
         )
+        // Single asset's metadata (JSON). The detail page fetches this directly
+        // so deep links work without a prior list query.
+        .get(
+          "/assets/:id",
+          async ({ params }) => {
+            const asset = await core.assetService.getById(params.id);
+            if (!asset) throw new HttpError(404, "Asset not found");
+            return serializeAsset(asset);
+          },
+          { params: t.Object({ id: t.Numeric({ minimum: 1, multipleOf: 1 }) }) },
+        )
         // Stream an asset's stored bytes. Kept separate from the JSON metadata so
         // the binary never has to be base64'd into a JSON payload.
         .get(
