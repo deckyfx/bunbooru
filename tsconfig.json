@@ -1,6 +1,7 @@
 {
   "extends": "./tsconfig.base.json",
   "include": [
+    "bin/**/*.ts",
     "apps/*/src/**/*.ts",
     "apps/*/build.ts",
     "apps/*/test/**/*.ts",
