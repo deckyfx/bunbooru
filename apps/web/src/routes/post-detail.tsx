@@ -159,6 +159,7 @@ function AssetInfo({ asset }: { asset: AssetDto }) {
   }
 
   function cancel() {
+    update.reset(); // drop any prior error so reopening starts clean
     setRating(asset.rating);
     setSource(asset.source ?? "");
     setEditing(false);
@@ -171,7 +172,10 @@ function AssetInfo({ asset }: { asset: AssetDto }) {
         {editing ? null : (
           <button
             type="button"
-            onClick={() => setEditing(true)}
+            onClick={() => {
+              update.reset();
+              setEditing(true);
+            }}
             className="text-[11px] text-link hover:underline"
           >
             Edit
@@ -189,10 +193,11 @@ function AssetInfo({ asset }: { asset: AssetDto }) {
             <div className="mb-1 text-muted">Source</div>
             <input
               type="url"
+              disabled={update.isPending}
               value={source}
               onChange={(e) => setSource(e.target.value)}
               placeholder="https://…"
-              className="block w-full rounded border border-line p-1 outline-none focus:border-link"
+              className="block w-full rounded border border-line p-1 outline-none focus:border-link disabled:cursor-not-allowed disabled:opacity-60"
             />
           </div>
           {update.isError ? <p className="text-tag-artist">Couldn’t save. Please try again.</p> : null}

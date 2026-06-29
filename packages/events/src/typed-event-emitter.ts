@@ -35,6 +35,16 @@ export function createTypedEventEmitter<TEventMap>(
     options.onListenerError ??
     ((error, event) => console.error(`[events] listener for "${event}" failed:`, error));
 
+  // The error hook is user-supplied; if IT throws, that must not break emit()'s
+  // fire-and-forget contract (sync throw to caller, or an unhandled rejection).
+  function reportListenerError(error: unknown, event: keyof TEventMap): void {
+    try {
+      onListenerError(error, String(event));
+    } catch (hookError) {
+      console.error(`[events] onListenerError for "${String(event)}" threw:`, hookError);
+    }
+  }
+
   // One listener set per event name. `unknown` payload internally; the public
   // generic signatures keep call sites type-safe.
   const registry = new Map<keyof TEventMap, Set<EventListener<unknown>>>();
@@ -69,9 +79,9 @@ export function createTypedEventEmitter<TEventMap>(
       for (const listener of [...set]) {
         try {
           const result = listener(payload);
-          if (result instanceof Promise) result.catch((error) => onListenerError(error, String(event)));
+          if (result instanceof Promise) result.catch((error) => reportListenerError(error, event));
         } catch (error) {
-          onListenerError(error, String(event));
+          reportListenerError(error, event);
         }
       }
     },

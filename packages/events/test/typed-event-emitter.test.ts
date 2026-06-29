@@ -91,6 +91,18 @@ describe("createTypedEventEmitter", () => {
     expect(errors).toEqual(["ping"]);
   });
 
+  it("does not throw even if onListenerError itself throws", () => {
+    const bus = createTypedEventEmitter<TestMap>({
+      onListenerError: () => {
+        throw new Error("hook boom");
+      },
+    });
+    bus.on("ping", () => {
+      throw new Error("listener boom");
+    });
+    expect(() => bus.emit("ping", { n: 1 })).not.toThrow();
+  });
+
   it("routes an async listener rejection to onListenerError without throwing", async () => {
     let caught: unknown;
     const bus = createTypedEventEmitter<TestMap>({

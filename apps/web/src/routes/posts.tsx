@@ -128,6 +128,7 @@ export function PostsPage() {
             {data.assets.map((asset) => (
               <HoverPopover
                 key={asset.id}
+                interactive={false}
                 className={classic ? "block" : "mb-2 block break-inside-avoid"}
                 placement="top"
                 render={() => <PostHoverCard asset={asset} />}

@@ -127,7 +127,7 @@ export function UploadPage() {
           <label
             onDragOver={(e) => e.preventDefault()}
             onDrop={onDrop}
-            className="flex aspect-video cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded border-2 border-dashed border-line bg-bg text-center text-muted hover:border-link"
+            className="flex aspect-video cursor-pointer flex-col items-center justify-center gap-2 overflow-hidden rounded border-2 border-dashed border-line bg-bg text-center text-muted hover:border-link focus-within:border-link focus-within:ring-2 focus-within:ring-link"
           >
             {previewUrl ? (
               <img src={previewUrl} alt="Selected preview" className="h-full w-full object-contain" />
@@ -137,7 +137,7 @@ export function UploadPage() {
                 Choose file or drag image here
               </span>
             )}
-            <input type="file" accept="image/*" onChange={onInputChange} className="hidden" />
+            <input type="file" accept="image/*" onChange={onInputChange} className="sr-only" />
           </label>
 
           {uploading ? <ProgressBar value={progress} /> : null}
@@ -187,14 +187,20 @@ function MetadataEditor({
   const update = useUpdateAsset(asset.id);
   const [rating, setRating] = useState<Rating>(asset.rating);
   const [source, setSource] = useState(asset.source ?? "");
-  // Track the last-persisted source locally — `asset` is the immutable upload
-  // result, so comparing against it would re-PATCH every blur after the first edit.
+  // Track the last-persisted values locally — `asset` is the immutable upload
+  // result and this component never rehydrates from the cache, so comparing
+  // against it would re-PATCH (rating) or never retry (source) after the first edit.
+  const [savedRating, setSavedRating] = useState<Rating>(asset.rating);
   const [savedSource, setSavedSource] = useState(asset.source ?? "");
 
   function changeRating(next: Rating) {
-    if (next === rating) return;
-    setRating(next);
-    update.mutate({ rating: next });
+    if (next === savedRating || update.isPending) return;
+    const previous = savedRating;
+    setRating(next); // optimistic
+    update.mutate(
+      { rating: next },
+      { onSuccess: () => setSavedRating(next), onError: () => setRating(previous) },
+    );
   }
 
   function saveSource() {
