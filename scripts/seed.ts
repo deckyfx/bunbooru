@@ -7,7 +7,8 @@
  * Builds small solid-colour PNGs of varied size/hue — each a unique byte stream,
  * so dedupe doesn't collapse them — and ingests each through the real upload
  * service (hash → store → insert). Run from the repo root so it shares the same
- * `data/storage` root the API serves from.
+ * `storage/` root the API serves from (its STORAGE_ROOT default, `resolve(cwd,
+ * "storage")`); override with STORAGE_ROOT to point elsewhere.
  */
 import { deflateSync } from "node:zlib";
 

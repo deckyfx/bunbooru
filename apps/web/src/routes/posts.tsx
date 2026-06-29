@@ -6,6 +6,7 @@ import { DropdownMenu } from "../components/menu/dropdown-menu";
 import { SearchBox } from "../components/popover/search-box";
 import { TagGroups } from "../components/tags/tag-groups";
 import { TagRow } from "../components/tags/tag-row";
+import { AssetImage } from "../components/asset-image";
 import { assetFileUrl } from "../lib/api";
 import { useAssetsPage } from "../lib/assets";
 import { lookupTag } from "../lib/tags";
@@ -154,7 +155,7 @@ export function PostsPage() {
                 }`}
                 style={{ aspectRatio: classic ? "1 / 1" : `${asset.width} / ${asset.height}` }}
               >
-                <img
+                <AssetImage
                   src={assetFileUrl(asset.id)}
                   alt={`Post ${asset.id}`}
                   loading="lazy"

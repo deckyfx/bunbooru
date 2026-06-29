@@ -10,6 +10,14 @@ const hostname = Bun.env.WEB_HOST ?? "0.0.0.0";
 const development = Bun.env.NODE_ENV !== "production";
 /** Where to proxy `/api/*` in dev (the API listens on 3000 by default). */
 const apiTarget = Bun.env.API_TARGET ?? "http://localhost:3000";
+/**
+ * Per-proxied-request timeout. Bun's default fetch timeout is ~5 min, long
+ * enough that a stalled/silent upstream would hold a dev request open for ages.
+ * Cap it so `/api/*` fails fast with a 504 instead — generous enough not to
+ * abort legitimate dev uploads (this dev-only proxy isn't on the prod path,
+ * where the API serves the SPA directly).
+ */
+const PROXY_TIMEOUT_MS = 120_000;
 
 /**
  * Serve the single-page app. `/api/*` is reverse-proxied to the API so the
@@ -29,9 +37,16 @@ const server = serve({
     "/api/*": async (req) => {
       const { pathname, search } = new URL(req.url);
       try {
-        return await fetch(new Request(`${apiTarget}${pathname}${search}`, req));
-      } catch {
-        return new Response("Upstream API unavailable", { status: 502 });
+        return await fetch(new Request(`${apiTarget}${pathname}${search}`, req), {
+          signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+        });
+      } catch (error) {
+        // A timeout means the upstream stalled (504); anything else is a
+        // connect/transport failure (502). Both are deterministic, not opaque.
+        const timedOut = error instanceof DOMException && error.name === "TimeoutError";
+        return new Response(timedOut ? "Upstream API timed out" : "Upstream API unavailable", {
+          status: timedOut ? 504 : 502,
+        });
       }
     },
     "/*": index,

@@ -1,6 +1,7 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { Download } from "lucide-react";
 
+import { AssetImage } from "../components/asset-image";
 import { SearchBox } from "../components/popover/search-box";
 import { assetFileUrl } from "../lib/api";
 import { useAsset } from "../lib/assets";
@@ -81,7 +82,7 @@ export function PostDetailPage() {
         ) : (
           <>
             <div className="flex justify-center rounded border border-line bg-bg p-3">
-              <img
+              <AssetImage
                 src={assetFileUrl(asset.id)}
                 alt={`Post ${asset.id}`}
                 className="max-h-[80vh] w-auto max-w-full rounded"
