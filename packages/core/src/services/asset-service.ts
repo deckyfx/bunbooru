@@ -184,6 +184,10 @@ export function createAssetService(
     async openFile(id) {
       const asset = await repository.findById(id);
       if (!asset) return null;
+      // A row can outlive its blob (manual deletion, failed write). Treat a
+      // missing object as "not found" (null → 404) rather than letting the
+      // provider throw and surface as a 500.
+      if (!(await storage.exists(asset.storageKey))) return null;
       const stream = await storage.stream(asset.storageKey);
       return { stream, mimeType: asset.mimeType, sizeBytes: asset.sizeBytes };
     },

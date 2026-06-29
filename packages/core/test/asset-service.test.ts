@@ -34,15 +34,16 @@ function asset(id: number): Asset {
 }
 
 /**
- * In-memory repository — insertion order preserved (the real one orders/queries
- * in SQL), so `findMany` slices like the SQL `limit/offset` and lets us assert
- * the service's pagination math without a database.
+ * In-memory repository mirroring the real one's **newest-first** ordering
+ * (`order by id desc`), so the pagination assertions validate the same order
+ * production returns — without a database.
  */
 function fakeRepo(initial: Asset[] = []): AssetRepository {
   const rows = [...initial];
   let nextId = (rows.at(-1)?.id ?? 0) + 1;
   return {
-    findMany: async ({ limit, offset }) => rows.slice(offset, offset + limit),
+    findMany: async ({ limit, offset }) =>
+      [...rows].sort((a, b) => b.id - a.id).slice(offset, offset + limit),
     count: async () => rows.length,
     findById: async (id) => rows.find((r) => r.id === id) ?? null,
     findBySha256: async (sha256) => rows.find((r) => r.sha256 === sha256) ?? null,
@@ -100,12 +101,12 @@ const rows = Array.from({ length: 25 }, (_, i) => asset(i + 1));
 describe("createAssetService.list", () => {
   const service = () => createAssetService(fakeRepo(rows), fakeStorage().provider);
 
-  it("defaults to page 1 and DEFAULT_PER_PAGE", async () => {
+  it("defaults to page 1 and DEFAULT_PER_PAGE (newest-first)", async () => {
     const result = await service().list();
     expect(result.page).toBe(1);
     expect(result.perPage).toBe(DEFAULT_PER_PAGE);
     expect(result.assets).toHaveLength(DEFAULT_PER_PAGE);
-    expect(result.assets[0]?.id).toBe(1);
+    expect(result.assets[0]?.id).toBe(25); // highest id first
     expect(result.total).toBe(25);
     expect(result.pageCount).toBe(2);
   });
@@ -114,7 +115,7 @@ describe("createAssetService.list", () => {
     const result = await service().list({ page: 2 });
     expect(result.page).toBe(2);
     expect(result.assets).toHaveLength(5);
-    expect(result.assets[0]?.id).toBe(21);
+    expect(result.assets[0]?.id).toBe(5); // ids 5..1 on the last page
   });
 
   it("clamps perPage to MAX_PER_PAGE", async () => {
@@ -195,5 +196,14 @@ describe("createAssetService.getById / openFile", () => {
     expect(back).toEqual(PNG_1x1);
 
     expect(await service.openFile(9999)).toBeNull();
+  });
+
+  it("openFile returns null when the row outlived its blob", async () => {
+    const { provider, stored } = fakeStorage();
+    const service = createAssetService(fakeRepo(), provider);
+    const { asset } = await service.create({ bytes: PNG_1x1 });
+
+    stored.clear(); // blob deleted out from under the DB row
+    expect(await service.openFile(asset.id)).toBeNull();
   });
 });
