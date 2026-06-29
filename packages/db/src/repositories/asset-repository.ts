@@ -1,12 +1,17 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, type SQL } from "drizzle-orm";
 
 import { assets, type Asset, type NewAsset } from "../schema";
 import type { DB } from "../client";
 
-/** Cursor-free page request: `limit` rows starting at `offset`. */
+/**
+ * Cursor-free page request: `limit` rows starting at `offset`, optionally
+ * narrowed by a prebuilt `where` condition (the Search Engine in `@bunbooru/core`
+ * compiles a query AST into this — `db` never parses text).
+ */
 export interface AssetPage {
   limit: number;
   offset: number;
+  where?: SQL;
 }
 
 /**
@@ -16,10 +21,10 @@ export interface AssetPage {
  * can't leak SQL upward.
  */
 export interface AssetRepository {
-  /** Newest-first page of assets. */
+  /** Newest-first page of assets, optionally filtered by `page.where`. */
   findMany(page: AssetPage): Promise<Asset[]>;
-  /** Total asset count, for pagination metadata. */
-  count(): Promise<number>;
+  /** Total assets, optionally filtered by the same `where` (for pagination). */
+  count(where?: SQL): Promise<number>;
   /** One asset by id, or null. */
   findById(id: number): Promise<Asset | null>;
   /** One asset by its unique sha256 content key, or null (drives dedupe). */
@@ -35,14 +40,21 @@ export interface AssetRepository {
  */
 export function createAssetRepository(db: DB): AssetRepository {
   return {
-    findMany({ limit, offset }) {
-      return db.select().from(assets).orderBy(desc(assets.id)).limit(limit).offset(offset);
+    findMany({ limit, offset, where }) {
+      // .where(undefined) is a no-op in Drizzle, so an unfiltered page just omits it.
+      return db
+        .select()
+        .from(assets)
+        .where(where)
+        .orderBy(desc(assets.id))
+        .limit(limit)
+        .offset(offset);
     },
 
-    count() {
-      // Drizzle's $count returns a JS number and isn't capped at int32 like a
-      // hand-written `count(*)::int` would be — matters as the table grows.
-      return db.$count(assets);
+    count(where) {
+      // $count returns a JS number (not int32-capped) and accepts an optional
+      // filter so the total matches the same `where` as the page.
+      return db.$count(assets, where);
     },
 
     async findById(id) {

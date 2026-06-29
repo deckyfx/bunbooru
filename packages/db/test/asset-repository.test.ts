@@ -4,19 +4,21 @@ import { sql } from "drizzle-orm";
 import { createAssetRepository, createDb, type AssetRepository, type DB } from "../src/index";
 
 /**
- * Integration tests — they hit a real Postgres named by `DATABASE_URL` (the
- * migrations must already be applied). Skipped when it's unset so `bun test`
- * stays green on machines without a database; CI provides one and runs them.
+ * Integration tests — they hit a real Postgres (migrations must already be
+ * applied) and TRUNCATE between cases, so they read a dedicated, opt-in
+ * `TEST_DATABASE_URL` — never the app's `DATABASE_URL` — so a misconfigured
+ * dev/prod env can't be wiped. Skipped when unset, so a bare `bun test` stays
+ * green without a database; CI provides it and runs them.
  */
-const DATABASE_URL = Bun.env.DATABASE_URL?.trim();
+const TEST_DATABASE_URL = Bun.env.TEST_DATABASE_URL?.trim();
 
-describe.skipIf(!DATABASE_URL)("AssetRepository (integration)", () => {
+describe.skipIf(!TEST_DATABASE_URL)("AssetRepository (integration)", () => {
   let db: DB;
   let repo: AssetRepository;
 
   beforeAll(() => {
-    // Non-null: this block is skipped when DATABASE_URL is unset.
-    db = createDb(DATABASE_URL as string);
+    // Non-null: this block is skipped when TEST_DATABASE_URL is unset.
+    db = createDb(TEST_DATABASE_URL as string);
     repo = createAssetRepository(db);
   });
 

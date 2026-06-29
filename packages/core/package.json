@@ -11,6 +11,7 @@
     "@bunbooru/db": "workspace:*",
     "@bunbooru/events": "workspace:*",
     "@bunbooru/search": "workspace:*",
-    "@bunbooru/storage": "workspace:*"
+    "@bunbooru/storage": "workspace:*",
+    "drizzle-orm": "^0.45.2"
   }
 }

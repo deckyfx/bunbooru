@@ -120,11 +120,14 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
             const page = await core.assetService.list({
               page: query.page,
               perPage: query.per_page,
+              query: query.q,
             });
             return { ...page, assets: page.assets.map(serializeAsset) };
           },
           {
             query: t.Object({
+              // Booru search query (tags + metatags); Core compiles it to SQL.
+              q: t.Optional(t.String({ maxLength: 1024 })),
               // Integer-only (`multipleOf: 1`): reject fractional page sizes at
               // the boundary so offset/limit math is never ambiguous. The upper
               // bound keeps (page-1)*perPage within MAX_SAFE_INTEGER so a huge

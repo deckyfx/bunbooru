@@ -167,6 +167,21 @@ describe("GET /api/v1/assets", () => {
     expect(received).toEqual({ page: 2, perPage: 5 });
   });
 
+  it("forwards the q search query to the service", async () => {
+    let received: ListAssetsOptions | undefined;
+    const res = await buildApp(
+      stubCore({
+        list: async (options = {}) => {
+          received = options;
+          return emptyPage;
+        },
+      }),
+    ).handle(new Request("http://localhost/api/v1/assets?q=rating%3Asafe+1girl"));
+
+    expect(res.status).toBe(200);
+    expect(received?.query).toBe("rating:safe 1girl");
+  });
+
   it("rejects an out-of-range page with 422", async () => {
     const res = await request("/api/v1/assets?page=0");
     expect(res.status).toBe(422);
