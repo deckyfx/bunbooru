@@ -33,10 +33,16 @@ export {
   createAssetService,
   DEFAULT_PER_PAGE,
   MAX_PER_PAGE,
+  type AssetFile,
   type AssetListPage,
   type AssetService,
+  type CreateAssetInput,
+  type CreateAssetResult,
   type ListAssetsOptions,
 } from "./services/asset-service";
+
+// Typed domain errors the API maps to HTTP status codes.
+export { UnsupportedMediaError } from "./errors";
 
 /** Internal packages the Core composes over — mirrors this package's dependencies. */
 export const CORE_DEPENDENCIES = [

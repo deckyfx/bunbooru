@@ -1,4 +1,4 @@
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 
 import { assets, type Asset, type NewAsset } from "../schema";
 import type { DB } from "../client";
@@ -20,6 +20,10 @@ export interface AssetRepository {
   findMany(page: AssetPage): Promise<Asset[]>;
   /** Total asset count, for pagination metadata. */
   count(): Promise<number>;
+  /** One asset by id, or null. */
+  findById(id: number): Promise<Asset | null>;
+  /** One asset by its unique sha256 content key, or null (drives dedupe). */
+  findBySha256(sha256: string): Promise<Asset | null>;
   /** Insert one asset, returning the persisted row. */
   create(input: NewAsset): Promise<Asset>;
 }
@@ -39,6 +43,16 @@ export function createAssetRepository(db: DB): AssetRepository {
       // Drizzle's $count returns a JS number and isn't capped at int32 like a
       // hand-written `count(*)::int` would be — matters as the table grows.
       return db.$count(assets);
+    },
+
+    async findById(id) {
+      const [row] = await db.select().from(assets).where(eq(assets.id, id)).limit(1);
+      return row ?? null;
+    },
+
+    async findBySha256(sha256) {
+      const [row] = await db.select().from(assets).where(eq(assets.sha256, sha256)).limit(1);
+      return row ?? null;
     },
 
     async create(input) {

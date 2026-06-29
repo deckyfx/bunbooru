@@ -5,7 +5,7 @@
     "": {
       "name": "bunbooru",
       "devDependencies": {
-        "@types/bun": "latest",
+        "@types/bun": "^1.3.14",
         "dependency-cruiser": "^18.0.0",
         "drizzle-kit": "^0.31.10",
         "typescript": "^6",

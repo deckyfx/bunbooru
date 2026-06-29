@@ -1,18 +1,20 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
-import { envConfig } from "../src/env-config";
+import { envConfig, MAX_REQUEST_BODY_BYTES } from "../src/env-config";
 
-const original = Bun.env.SERVER_PORT;
-const originalNodeEnv = Bun.env.NODE_ENV;
-const originalDatabaseUrl = Bun.env.DATABASE_URL;
+const saved = {
+  SERVER_PORT: Bun.env.SERVER_PORT,
+  NODE_ENV: Bun.env.NODE_ENV,
+  DATABASE_URL: Bun.env.DATABASE_URL,
+  STORAGE_ROOT: Bun.env.STORAGE_ROOT,
+  MAX_UPLOAD_BYTES: Bun.env.MAX_UPLOAD_BYTES,
+};
 
 afterEach(() => {
-  if (original === undefined) delete Bun.env.SERVER_PORT;
-  else Bun.env.SERVER_PORT = original;
-  if (originalNodeEnv === undefined) delete Bun.env.NODE_ENV;
-  else Bun.env.NODE_ENV = originalNodeEnv;
-  if (originalDatabaseUrl === undefined) delete Bun.env.DATABASE_URL;
-  else Bun.env.DATABASE_URL = originalDatabaseUrl;
+  for (const [key, value] of Object.entries(saved)) {
+    if (value === undefined) delete Bun.env[key];
+    else Bun.env[key] = value;
+  }
 });
 
 describe("SERVER_PORT", () => {
@@ -74,5 +76,48 @@ describe("DATABASE_URL", () => {
   it("throws when whitespace-only", () => {
     Bun.env.DATABASE_URL = "   ";
     expect(() => envConfig.DATABASE_URL).toThrow();
+  });
+});
+
+describe("STORAGE_ROOT", () => {
+  it("returns the configured (trimmed) value", () => {
+    Bun.env.STORAGE_ROOT = "  /srv/assets  ";
+    expect(envConfig.STORAGE_ROOT).toBe("/srv/assets");
+  });
+
+  it("defaults to an absolute dev path when unset", () => {
+    delete Bun.env.STORAGE_ROOT;
+    Bun.env.NODE_ENV = "development";
+    const root = envConfig.STORAGE_ROOT;
+    expect(root.startsWith("/")).toBe(true);
+    expect(root.endsWith("/data/storage")).toBe(true);
+  });
+
+  it("is required in production", () => {
+    delete Bun.env.STORAGE_ROOT;
+    Bun.env.NODE_ENV = "production";
+    expect(() => envConfig.STORAGE_ROOT).toThrow();
+  });
+});
+
+describe("MAX_UPLOAD_BYTES", () => {
+  it("defaults to 100 MB when unset", () => {
+    delete Bun.env.MAX_UPLOAD_BYTES;
+    expect(envConfig.MAX_UPLOAD_BYTES).toBe(100 * 1024 * 1024);
+  });
+
+  it("parses a valid integer", () => {
+    Bun.env.MAX_UPLOAD_BYTES = "5242880";
+    expect(envConfig.MAX_UPLOAD_BYTES).toBe(5_242_880);
+  });
+
+  it("throws on a non-integer value", () => {
+    Bun.env.MAX_UPLOAD_BYTES = "abc";
+    expect(() => envConfig.MAX_UPLOAD_BYTES).toThrow();
+  });
+
+  it("throws when above the request-body ceiling", () => {
+    Bun.env.MAX_UPLOAD_BYTES = String(MAX_REQUEST_BODY_BYTES + 1);
+    expect(() => envConfig.MAX_UPLOAD_BYTES).toThrow();
   });
 });
