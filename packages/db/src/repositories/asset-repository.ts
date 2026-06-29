@@ -31,7 +31,12 @@ export interface AssetRepository {
   findBySha256(sha256: string): Promise<Asset | null>;
   /** Insert one asset, returning the persisted row. */
   create(input: NewAsset): Promise<Asset>;
+  /** Patch a row's mutable metadata, returning the updated row or null if absent. */
+  update(id: number, patch: AssetUpdate): Promise<Asset | null>;
 }
+
+/** Mutable-after-create asset fields (immutable: dimensions, hashes, storage key). */
+export type AssetUpdate = Partial<Pick<NewAsset, "rating" | "source">>;
 
 /**
  * Build an {@link AssetRepository} over a {@link DB} handle. The connection is
@@ -73,6 +78,16 @@ export function createAssetRepository(db: DB): AssetRepository {
         throw new Error("asset insert returned no row");
       }
       return row;
+    },
+
+    async update(id, patch) {
+      // Always bump updatedAt; the column defaults to now() only on insert.
+      const [row] = await db
+        .update(assets)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(eq(assets.id, id))
+        .returning();
+      return row ?? null;
     },
   };
 }

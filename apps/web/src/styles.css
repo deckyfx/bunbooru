@@ -56,4 +56,14 @@
   a:hover {
     text-decoration: underline;
   }
+  /* Affordance: every interactive control shows the pointer cursor. Icons that
+     are clickable live inside these (a/button), so they inherit it. Disabled
+     controls are excluded so they keep the default/not-allowed cursor. */
+  a[href],
+  button:not(:disabled),
+  summary,
+  label[for],
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
 }

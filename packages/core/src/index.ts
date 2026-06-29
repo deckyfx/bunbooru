@@ -18,7 +18,7 @@ export const CORE_PACKAGE = "@bunbooru/core" as const;
 export type { StorageProvider };
 
 // Domain row types, re-exported so downstream apps depend on Core, not db directly.
-export type { Asset, Rating, Tag, User } from "@bunbooru/db";
+export type { Asset, AssetUpdate, Rating, Tag, User } from "@bunbooru/db";
 
 // Core assembly — the single wiring entry point for the API composition root.
 export {
@@ -27,6 +27,14 @@ export {
   type Core,
   type CoreConfig,
 } from "./core";
+
+// Event bus — Core emits domain events; plugins subscribe (CLAUDE.md Event Rule).
+export {
+  createCoreEvents,
+  type AssetCreatedEvent,
+  type CoreEventMap,
+  type CoreEvents,
+} from "./events";
 
 // Asset domain — application service (data access lives in @bunbooru/db).
 export {

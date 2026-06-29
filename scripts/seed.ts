@@ -7,9 +7,10 @@
  * Builds small solid-colour PNGs of varied size/hue — each a unique byte stream,
  * so dedupe doesn't collapse them — and ingests each through the real upload
  * service (hash → store → insert). Run from the repo root so it shares the same
- * `storage/` root the API serves from (its STORAGE_ROOT default, `resolve(cwd,
- * "storage")`); override with STORAGE_ROOT to point elsewhere.
+ * `data/storage` root the API serves from (its STORAGE_ROOT default, `resolve(cwd,
+ * "data/storage")`); override with STORAGE_ROOT to point elsewhere.
  */
+import { resolve } from "node:path";
 import { deflateSync } from "node:zlib";
 
 import { createCore } from "@bunbooru/core";
@@ -117,7 +118,7 @@ if (!databaseUrl) {
 
 const core = createCore({
   databaseUrl,
-  storageRoot: Bun.env.STORAGE_ROOT?.trim() || "storage",
+  storageRoot: Bun.env.STORAGE_ROOT?.trim() || resolve(process.cwd(), "data/storage"),
 });
 
 /** Aspect variety so the masonry layout has something to do. */

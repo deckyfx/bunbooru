@@ -18,7 +18,7 @@ export function compileAssetSearch(query: string): SQL | undefined {
   return buildNode(parse(query));
 }
 
-const RATINGS = new Set<Rating>(["safe", "questionable", "explicit"]);
+const RATINGS = new Set<Rating>(["safe", "questionable", "explicit", "unrated"]);
 const isRating = (value: string): value is Rating => RATINGS.has(value as Rating);
 
 /** Metatag keys that map to a numeric asset column. */

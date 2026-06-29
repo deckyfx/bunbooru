@@ -4,10 +4,11 @@ import type {
   Asset,
   AssetListPage,
   AssetService,
+  AssetUpdate,
   Core,
   ListAssetsOptions,
 } from "@bunbooru/core";
-import { UnsupportedMediaError } from "@bunbooru/core";
+import { createCoreEvents, UnsupportedMediaError } from "@bunbooru/core";
 
 import { createApp } from "../src/server";
 
@@ -40,9 +41,11 @@ function stubCore(overrides: Partial<AssetService> = {}): Core {
       list: async () => emptyPage,
       getById: async () => null,
       create: async () => ({ asset: sampleAsset, deduped: false }),
+      update: async () => null,
       openFile: async () => null,
       ...overrides,
     },
+    events: createCoreEvents(),
   };
 }
 
@@ -254,6 +257,75 @@ describe("GET /api/v1/assets/:id", () => {
 
   it("rejects a non-numeric id with 422", async () => {
     const res = await request("/api/v1/assets/abc");
+    expect(res.status).toBe(422);
+  });
+});
+
+describe("PATCH /api/v1/assets/:id", () => {
+  it("forwards the rating+source patch to the service and returns the asset", async () => {
+    let receivedId: number | undefined;
+    let receivedPatch: AssetUpdate | undefined;
+    const updated: Asset = { ...sampleAsset, rating: "explicit", source: "https://example.com" };
+    const core = stubCore({
+      update: async (id, patch) => {
+        receivedId = id;
+        receivedPatch = patch;
+        return updated;
+      },
+    });
+    const res = await buildApp(core).handle(
+      new Request("http://localhost/api/v1/assets/1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rating: "explicit", source: "https://example.com" }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(receivedId).toBe(1);
+    expect(receivedPatch).toEqual({ rating: "explicit", source: "https://example.com" });
+    const body = (await res.json()) as { rating: string; source: string };
+    expect(body.rating).toBe("explicit");
+  });
+
+  it("accepts the unrated rating", async () => {
+    let receivedPatch: AssetUpdate | undefined;
+    const core = stubCore({
+      update: async (_id, patch) => {
+        receivedPatch = patch;
+        return { ...sampleAsset, rating: "unrated" };
+      },
+    });
+    const res = await buildApp(core).handle(
+      new Request("http://localhost/api/v1/assets/1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rating: "unrated" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(receivedPatch).toEqual({ rating: "unrated" });
+  });
+
+  it("returns 404 when the asset is absent", async () => {
+    const res = await buildApp(stubCore({ update: async () => null })).handle(
+      new Request("http://localhost/api/v1/assets/999", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rating: "safe" }),
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects an invalid rating with 422", async () => {
+    const res = await buildApp(stubCore()).handle(
+      new Request("http://localhost/api/v1/assets/1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rating: "bogus" }),
+      }),
+    );
     expect(res.status).toBe(422);
   });
 });

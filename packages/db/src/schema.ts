@@ -27,8 +27,12 @@ import {
 // 2^53 — then store as bigint and serialize to string in the API (JSON has no
 // 64-bit int type), never JS BigInt (it isn't JSON-serializable).
 
-/** Content maturity rating, mirroring the booru convention. */
-export const ratingEnum = pgEnum("rating", ["safe", "questionable", "explicit"]);
+/**
+ * Content maturity rating. `unrated` is the default: a freshly uploaded post is
+ * unrated until someone classifies it. Appended last so adding it is a plain
+ * `ALTER TYPE ... ADD VALUE` (no enum reorder).
+ */
+export const ratingEnum = pgEnum("rating", ["safe", "questionable", "explicit", "unrated"]);
 
 /** Tag taxonomy bucket — drives colour/namespace in the UI. */
 export const tagCategoryEnum = pgEnum("tag_category", [
@@ -73,7 +77,7 @@ export const assets = pgTable(
     sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
     sha256: text("sha256").notNull().unique(),
     md5: text("md5").notNull(),
-    rating: ratingEnum("rating").notNull().default("questionable"),
+    rating: ratingEnum("rating").notNull().default("unrated"),
     source: text("source"),
     uploaderId: bigint("uploader_id", { mode: "number" }).references(() => users.id, {
       onDelete: "set null",

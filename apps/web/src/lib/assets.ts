@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { AssetDto } from "@bunbooru/api";
 
@@ -35,6 +35,26 @@ export function useAsset(id: number) {
       // of the generic error/retry UI; other errors still throw via unwrap.
       if (res.status === 404) return null;
       return unwrap(res);
+    },
+  });
+}
+
+/** Mutable asset metadata a client may patch (rating/source). */
+export type AssetPatch = { rating?: AssetDto["rating"]; source?: string | null };
+
+/**
+ * Edit an asset's metadata via `PATCH /assets/:id` (Eden). On success refreshes
+ * both the detail query and the gallery lists so the change shows everywhere.
+ */
+export function useUpdateAsset(id: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (patch: AssetPatch) => unwrap(await api.api.v1.assets({ id: String(id) }).patch(patch)),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["asset", id] }),
+        queryClient.invalidateQueries({ queryKey: ["assets"] }),
+      ]);
     },
   });
 }

@@ -15,4 +15,5 @@ export {
   createAssetRepository,
   type AssetPage,
   type AssetRepository,
+  type AssetUpdate,
 } from "./repositories/asset-repository";

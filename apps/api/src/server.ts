@@ -1,6 +1,6 @@
 import { Elysia, t } from "elysia";
 
-import { CORE_PACKAGE, MAX_PER_PAGE, type Asset, type Core } from "@bunbooru/core";
+import { CORE_PACKAGE, MAX_PER_PAGE, type Asset, type AssetUpdate, type Core } from "@bunbooru/core";
 import { PLUGIN_SDK_VERSION } from "@bunbooru/plugin-sdk";
 
 import { envConfig } from "./env-config";
@@ -25,6 +25,22 @@ export type AssetDto = Omit<Asset, "createdAt" | "updatedAt"> & {
   createdAt: string;
   updatedAt: string;
 };
+
+/** Accepted rating values on write — mirrors the DB `rating` enum (incl. `unrated`). */
+const ratingSchema = t.Union([
+  t.Literal("unrated"),
+  t.Literal("safe"),
+  t.Literal("questionable"),
+  t.Literal("explicit"),
+]);
+
+/** Source URL/text — capped, and nullable so a client can explicitly clear it. */
+const sourceSchema = t.Union([t.String({ maxLength: 2048 }), t.Null()]);
+
+/** Asset id path param, shared by the `/assets/:id*` routes. */
+const idParam = t.Object({
+  id: t.Numeric({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER, multipleOf: 1 }),
+});
 
 /** Project a domain {@link Asset} onto its JSON wire form. */
 function serializeAsset(asset: Asset): AssetDto {
@@ -166,6 +182,7 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
             const { asset, deduped } = await core.assetService.create({
               bytes,
               rating: body.rating,
+              source: body.source,
             });
             set.status = deduped ? 200 : 201;
             return serializeAsset(asset);
@@ -173,9 +190,8 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
           {
             body: t.Object({
               file: t.File(),
-              rating: t.Optional(
-                t.Union([t.Literal("safe"), t.Literal("questionable"), t.Literal("explicit")]),
-              ),
+              rating: t.Optional(ratingSchema),
+              source: t.Optional(sourceSchema),
             }),
           },
         )
@@ -188,9 +204,26 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
             if (!asset) throw new HttpError(404, "Asset not found");
             return serializeAsset(asset);
           },
+          { params: idParam },
+        )
+        // Patch an asset's mutable metadata (rating/source). Set on the post after
+        // upload (Danbooru-style) or edited later from the detail page. Only the
+        // provided fields change; `source: null` clears it.
+        .patch(
+          "/assets/:id",
+          async ({ params, body }) => {
+            const patch: AssetUpdate = {};
+            if (body.rating !== undefined) patch.rating = body.rating;
+            if (body.source !== undefined) patch.source = body.source;
+            const asset = await core.assetService.update(params.id, patch);
+            if (!asset) throw new HttpError(404, "Asset not found");
+            return serializeAsset(asset);
+          },
           {
-            params: t.Object({
-              id: t.Numeric({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER, multipleOf: 1 }),
+            params: idParam,
+            body: t.Object({
+              rating: t.Optional(ratingSchema),
+              source: t.Optional(sourceSchema),
             }),
           },
         )
@@ -203,11 +236,7 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
             if (!file) throw new HttpError(404, "Asset not found");
             return new Response(file.stream, { headers: { "content-type": file.mimeType } });
           },
-          {
-            params: t.Object({
-              id: t.Numeric({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER, multipleOf: 1 }),
-            }),
-          },
+          { params: idParam },
         ),
     );
 }

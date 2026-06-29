@@ -1,7 +1,8 @@
-import type { Asset, AssetRepository, NewAsset } from "@bunbooru/db";
+import type { Asset, AssetRepository, AssetUpdate, NewAsset } from "@bunbooru/db";
 import type { StorageProvider } from "@bunbooru/storage";
 
 import { UnsupportedMediaError } from "../errors";
+import type { CoreEvents } from "../events";
 import { compileAssetSearch } from "../search/asset-query";
 
 /** Default and ceiling page sizes — the ceiling bounds the cost of one query. */
@@ -82,6 +83,8 @@ export interface AssetService {
   getById(id: number): Promise<Asset | null>;
   /** Ingest an upload: dedupe by content hash, else store + persist. */
   create(input: CreateAssetInput): Promise<CreateAssetResult>;
+  /** Patch an asset's mutable metadata (rating/source); null if it doesn't exist. */
+  update(id: number, patch: AssetUpdate): Promise<Asset | null>;
   /** Open an asset's stored bytes for streaming, or null if the asset is absent. */
   openFile(id: number): Promise<AssetFile | null>;
 }
@@ -102,6 +105,7 @@ function contentKey(sha256: string, ext: string): string {
 export function createAssetService(
   repository: AssetRepository,
   storage: StorageProvider,
+  events?: CoreEvents,
 ): AssetService {
   return {
     async list(options = {}) {
@@ -177,9 +181,9 @@ export function createAssetService(
         ...(rating ? { rating } : {}),
       };
 
+      let asset: Asset;
       try {
-        const asset = await repository.create(input);
-        return { asset, deduped: false };
+        asset = await repository.create(input);
       } catch (error) {
         // Lost a dedupe race (another request inserted this sha256 first). The
         // content is identical, so `storageKey` is the SAME object the winner
@@ -188,6 +192,27 @@ export function createAssetService(
         if (raced) return { asset: raced, deduped: true };
         throw error;
       }
+
+      // Announce the new asset so plugins (auto-tag, similar-finder, thumbnails,
+      // …) can react. Kept OUTSIDE the race `try` so a (hypothetical) emit throw
+      // can't be misread as a dedupe hit. Fire-and-forget + error-isolated in the
+      // bus, so a listener can never fail or delay the upload. Not on a dedupe.
+      events?.emit("asset.created", {
+        id: asset.id,
+        sha256: asset.sha256,
+        mimeType: asset.mimeType,
+        width: asset.width,
+        height: asset.height,
+        sizeBytes: asset.sizeBytes,
+        rating: asset.rating,
+        source: asset.source,
+        createdAt: asset.createdAt,
+      });
+      return { asset, deduped: false };
+    },
+
+    update(id, patch) {
+      return repository.update(id, patch);
     },
 
     async openFile(id) {

@@ -66,6 +66,12 @@ function fakeRepo(initial: Asset[] = []): AssetRepository {
       rows.push(row);
       return row;
     },
+    update: async (id, patch) => {
+      const row = rows.find((r) => r.id === id);
+      if (!row) return null;
+      Object.assign(row, patch, { updatedAt: new Date(0) });
+      return row;
+    },
   };
 }
 
