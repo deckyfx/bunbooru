@@ -38,3 +38,6 @@ TODOS.md
 
 # Local service data (Postgres/Redis bind mounts)
 /data/
+
+# CodeRabbit CLI review output
+.cr/

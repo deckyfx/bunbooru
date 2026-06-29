@@ -58,6 +58,16 @@ describe.skipIf(!DATABASE_URL)("AssetRepository (integration)", () => {
     expect(created.uploaderId).toBeNull();
   });
 
+  it("looks up an asset by id and by sha256 (null when absent)", async () => {
+    const input = seed("lookup");
+    const created = await repo.create(input);
+
+    expect((await repo.findById(created.id))?.id).toBe(created.id);
+    expect((await repo.findBySha256(input.sha256))?.id).toBe(created.id);
+    expect(await repo.findById(999_999)).toBeNull();
+    expect(await repo.findBySha256("0".repeat(64))).toBeNull();
+  });
+
   it("rejects a duplicate sha256 (unique content key)", async () => {
     await repo.create(seed("dupe"));
     // Same sha256, different md5 — assert the *named* constraint so the test

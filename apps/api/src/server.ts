@@ -4,6 +4,7 @@ import { CORE_PACKAGE, MAX_PER_PAGE, type Asset, type Core } from "@bunbooru/cor
 import { PLUGIN_SDK_VERSION } from "@bunbooru/plugin-sdk";
 
 import { envConfig } from "./env-config";
+import { HttpError } from "./lib/errors";
 import { logger } from "./lib/logger";
 import { readRequestId, safeMessage, statusFor } from "./lib/http";
 
@@ -11,6 +12,8 @@ import { readRequestId, safeMessage, statusFor } from "./lib/http";
 export interface AppDependencies {
   /** Assembled Core services (see `createCore` in `@bunbooru/core`). */
   core: Core;
+  /** Reject uploads larger than this many bytes (logged, then 413). */
+  maxUploadBytes: number;
 }
 
 /**
@@ -45,7 +48,7 @@ function serializeAsset(asset: Asset): AssetDto {
  * global error handler that never leaks stack traces. API routes are versioned
  * under `/api/v1`.
  */
-export function createApp({ core }: AppDependencies) {
+export function createApp({ core, maxUploadBytes }: AppDependencies) {
   return new Elysia()
     // Stamp every request (matched or not, so 404s are covered too) with an id,
     // echoed back as `x-request-id`. Propagate a caller/proxy-supplied id when it
@@ -138,6 +141,51 @@ export function createApp({ core }: AppDependencies) {
               ),
             }),
           },
+        )
+        // Upload an image. The bytes are sniffed server-side (format/dimensions),
+        // hashed, deduped on sha256, then stored + persisted. 201 for a new asset,
+        // 200 when an identical upload already existed.
+        .post(
+          "/assets",
+          async ({ body, set, requestId }) => {
+            const { file } = body;
+            if (file.size > maxUploadBytes) {
+              // Surface the attempt — a rejected upload never reaches the DB.
+              logger.warn("oversize_upload_rejected", {
+                requestId,
+                size: file.size,
+                limit: maxUploadBytes,
+                mime: file.type,
+              });
+              throw new HttpError(413, `Upload exceeds the ${maxUploadBytes}-byte limit`);
+            }
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            const { asset, deduped } = await core.assetService.create({
+              bytes,
+              rating: body.rating,
+            });
+            set.status = deduped ? 200 : 201;
+            return serializeAsset(asset);
+          },
+          {
+            body: t.Object({
+              file: t.File(),
+              rating: t.Optional(
+                t.Union([t.Literal("safe"), t.Literal("questionable"), t.Literal("explicit")]),
+              ),
+            }),
+          },
+        )
+        // Stream an asset's stored bytes. Kept separate from the JSON metadata so
+        // the binary never has to be base64'd into a JSON payload.
+        .get(
+          "/assets/:id/file",
+          async ({ params }) => {
+            const file = await core.assetService.openFile(params.id);
+            if (!file) throw new HttpError(404, "Asset not found");
+            return new Response(file.stream, { headers: { "content-type": file.mimeType } });
+          },
+          { params: t.Object({ id: t.Numeric({ minimum: 1, multipleOf: 1 }) }) },
         ),
     );
 }

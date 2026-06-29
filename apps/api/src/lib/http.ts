@@ -1,12 +1,15 @@
+import { UnsupportedMediaError } from "@bunbooru/core";
+
 import { HttpError } from "./errors";
 
 /**
  * Map an Elysia error/code to an HTTP status. {@link HttpError} carries its own
- * status; otherwise known Elysia codes map to standard statuses, defaulting to
- * 500.
+ * status; Core domain errors map to their semantic status; otherwise known
+ * Elysia codes map to standard statuses, defaulting to 500.
  */
 export function statusFor(code: string | number, error: unknown): number {
   if (error instanceof HttpError) return error.status;
+  if (error instanceof UnsupportedMediaError) return 415;
   switch (code) {
     case "NOT_FOUND":
       return 404;

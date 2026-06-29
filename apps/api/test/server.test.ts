@@ -1,13 +1,20 @@
 import { describe, expect, it } from "bun:test";
 
-import type { Asset, AssetListPage, Core, ListAssetsOptions } from "@bunbooru/core";
+import type {
+  Asset,
+  AssetListPage,
+  AssetService,
+  Core,
+  ListAssetsOptions,
+} from "@bunbooru/core";
+import { UnsupportedMediaError } from "@bunbooru/core";
 
 import { createApp } from "../src/server";
 
 /** A fixed asset row for asserting wire serialization. */
 const sampleAsset: Asset = {
   id: 1,
-  storageKey: "ab/cd/abcd.png",
+  storageKey: "assets/ab/cd/abcd.png",
   mimeType: "image/png",
   width: 800,
   height: 600,
@@ -21,29 +28,41 @@ const sampleAsset: Asset = {
   updatedAt: new Date("2026-01-02T00:00:00.000Z"),
 };
 
-/** Build a Core whose asset service returns `page` and records the options it got. */
-function stubCore(
-  page: AssetListPage,
-  onList?: (options: ListAssetsOptions) => void,
-): Core {
+const emptyPage: AssetListPage = { assets: [], total: 0, page: 1, perPage: 20, pageCount: 0 };
+
+/** Small upload cap so the oversize path is cheap to exercise. */
+const MAX_UPLOAD_BYTES = 1024;
+
+/** Build a Core, overriding only the asset-service methods a test cares about. */
+function stubCore(overrides: Partial<AssetService> = {}): Core {
   return {
     assetService: {
-      list: async (options = {}) => {
-        onList?.(options);
-        return page;
-      },
+      list: async () => emptyPage,
+      getById: async () => null,
+      create: async () => ({ asset: sampleAsset, deduped: false }),
+      openFile: async () => null,
+      ...overrides,
     },
   };
 }
 
-const emptyPage: AssetListPage = { assets: [], total: 0, page: 1, perPage: 20, pageCount: 0 };
+/** Build the app with the test upload cap. */
+function buildApp(core: Core) {
+  return createApp({ core, maxUploadBytes: MAX_UPLOAD_BYTES });
+}
 
-/** Default app with an empty-page stub, for routes that don't touch assets. */
-const app = createApp({ core: stubCore(emptyPage) });
+const app = buildApp(stubCore());
 
-/** Drive an app in-process — no port, no listen() — via Elysia's handle(). */
+/** Drive the default app in-process — no port, no listen() — via Elysia's handle(). */
 function request(path: string): Promise<Response> {
   return app.handle(new Request(`http://localhost${path}`));
+}
+
+/** A multipart upload request carrying `bytes` as a file field. */
+function uploadRequest(bytes: Uint8Array, type = "image/png"): Request {
+  const form = new FormData();
+  form.append("file", new File([bytes], "upload.png", { type }));
+  return new Request("http://localhost/api/v1/assets", { method: "POST", body: form });
 }
 
 describe("health", () => {
@@ -110,23 +129,15 @@ describe("error handling", () => {
 
     const body = (await res.json()) as { error?: { message?: string; requestId?: string } };
     expect(body.error?.message).toBeString();
-    // request id is echoed both in the header and the body, and they match
     expect(body.error?.requestId).toBe(res.headers.get("x-request-id") ?? "");
-    // never leak internals
     expect(JSON.stringify(body)).not.toContain("stack");
   });
 });
 
 describe("GET /api/v1/assets", () => {
   it("returns a page and serializes timestamps as ISO strings", async () => {
-    const page: AssetListPage = {
-      assets: [sampleAsset],
-      total: 1,
-      page: 1,
-      perPage: 20,
-      pageCount: 1,
-    };
-    const res = await createApp({ core: stubCore(page) }).handle(
+    const page: AssetListPage = { assets: [sampleAsset], total: 1, page: 1, perPage: 20, pageCount: 1 };
+    const res = await buildApp(stubCore({ list: async () => page })).handle(
       new Request("http://localhost/api/v1/assets"),
     );
 
@@ -137,34 +148,102 @@ describe("GET /api/v1/assets", () => {
     };
     expect(body.total).toBe(1);
     expect(body.assets[0]?.id).toBe(1);
-    // Date -> ISO string over the wire (matches the AssetDto contract).
     expect(body.assets[0]?.createdAt).toBe("2026-01-01T00:00:00.000Z");
     expect(body.assets[0]?.updatedAt).toBe("2026-01-02T00:00:00.000Z");
   });
 
   it("coerces and forwards page/per_page to the service", async () => {
     let received: ListAssetsOptions | undefined;
-    const res = await createApp({
-      core: stubCore(emptyPage, (options) => {
-        received = options;
+    const res = await buildApp(
+      stubCore({
+        list: async (options = {}) => {
+          received = options;
+          return emptyPage;
+        },
       }),
-    }).handle(new Request("http://localhost/api/v1/assets?page=2&per_page=5"));
+    ).handle(new Request("http://localhost/api/v1/assets?page=2&per_page=5"));
 
     expect(res.status).toBe(200);
     expect(received).toEqual({ page: 2, perPage: 5 });
   });
 
   it("rejects an out-of-range page with 422", async () => {
-    const res = await createApp({ core: stubCore(emptyPage) }).handle(
-      new Request("http://localhost/api/v1/assets?page=0"),
-    );
+    const res = await request("/api/v1/assets?page=0");
     expect(res.status).toBe(422);
   });
 
   it("rejects a fractional page with 422", async () => {
-    const res = await createApp({ core: stubCore(emptyPage) }).handle(
-      new Request("http://localhost/api/v1/assets?page=1.5"),
+    const res = await request("/api/v1/assets?page=1.5");
+    expect(res.status).toBe(422);
+  });
+});
+
+describe("POST /api/v1/assets", () => {
+  it("stores a new upload and returns 201 with the asset", async () => {
+    let receivedBytes: number | undefined;
+    const core = stubCore({
+      create: async ({ bytes }) => {
+        receivedBytes = bytes.byteLength;
+        return { asset: sampleAsset, deduped: false };
+      },
+    });
+    const res = await buildApp(core).handle(uploadRequest(new Uint8Array([1, 2, 3, 4])));
+
+    expect(res.status).toBe(201);
+    expect(receivedBytes).toBe(4);
+    const body = (await res.json()) as { id: number; createdAt: unknown };
+    expect(body.id).toBe(1);
+    expect(body.createdAt).toBe("2026-01-01T00:00:00.000Z"); // ISO wire form
+  });
+
+  it("returns 200 when the upload deduplicates to an existing asset", async () => {
+    const core = stubCore({ create: async () => ({ asset: sampleAsset, deduped: true }) });
+    const res = await buildApp(core).handle(uploadRequest(new Uint8Array([1, 2, 3])));
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects an oversize upload with 413", async () => {
+    const tooBig = new Uint8Array(MAX_UPLOAD_BYTES + 1);
+    const res = await buildApp(stubCore()).handle(uploadRequest(tooBig));
+    expect(res.status).toBe(413);
+  });
+
+  it("maps an unsupported media type to 415", async () => {
+    const core = stubCore({
+      create: async () => {
+        throw new UnsupportedMediaError();
+      },
+    });
+    const res = await buildApp(core).handle(uploadRequest(new Uint8Array([0, 1, 2])));
+    expect(res.status).toBe(415);
+  });
+});
+
+describe("GET /api/v1/assets/:id/file", () => {
+  it("streams the stored bytes with the asset's content type", async () => {
+    const body = new Response("IMGBYTES").body;
+    if (!body) throw new Error("expected a response body");
+    const core = stubCore({
+      openFile: async () => ({ stream: body, mimeType: "image/png", sizeBytes: 8 }),
+    });
+    const res = await buildApp(core).handle(
+      new Request("http://localhost/api/v1/assets/1/file"),
     );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(await res.text()).toBe("IMGBYTES");
+  });
+
+  it("returns 404 when the asset is absent", async () => {
+    const res = await buildApp(stubCore({ openFile: async () => null })).handle(
+      new Request("http://localhost/api/v1/assets/999/file"),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a non-numeric id with 422", async () => {
+    const res = await request("/api/v1/assets/abc/file");
     expect(res.status).toBe(422);
   });
 });

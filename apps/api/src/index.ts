@@ -1,6 +1,6 @@
 import { createCore } from "@bunbooru/core";
 
-import { envConfig } from "./env-config";
+import { envConfig, MAX_REQUEST_BODY_BYTES } from "./env-config";
 import { logger } from "./lib/logger";
 import { createApp } from "./server";
 
@@ -11,15 +11,21 @@ import { createApp } from "./server";
  * builds the HTTP app over it, then serves it. Auth middleware and the plugin
  * loader attach here in later PRs.
  */
-const core = createCore({ databaseUrl: envConfig.DATABASE_URL });
-const app = createApp({ core });
-
-app.listen(envConfig.SERVER_PORT, (server) => {
-  logger.info("server_started", {
-    url: `http://${server.hostname}:${server.port}`,
-    env: envConfig.NODE_ENV,
-  });
+const core = createCore({
+  databaseUrl: envConfig.DATABASE_URL,
+  storageRoot: envConfig.STORAGE_ROOT,
 });
+const app = createApp({ core, maxUploadBytes: envConfig.MAX_UPLOAD_BYTES });
+
+app.listen(
+  { port: envConfig.SERVER_PORT, maxRequestBodySize: MAX_REQUEST_BODY_BYTES },
+  (server) => {
+    logger.info("server_started", {
+      url: `http://${server.hostname}:${server.port}`,
+      env: envConfig.NODE_ENV,
+    });
+  },
+);
 
 /** Stop the server cleanly so `docker stop` (SIGTERM) drains in-flight requests. */
 const shutdown = async (): Promise<void> => {

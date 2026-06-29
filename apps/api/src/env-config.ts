@@ -1,3 +1,12 @@
+import { resolve } from "node:path";
+
+/**
+ * Hard ceiling for the HTTP request body (2 GiB). The per-upload policy
+ * (`MAX_UPLOAD_BYTES`) must stay at or below this — enforced in the getter so a
+ * bad env value fails fast at startup rather than silently at the server layer.
+ */
+export const MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024 * 1024;
+
 /**
  * Typed, singleton access to the API's environment configuration.
  *
@@ -43,6 +52,39 @@ class EnvConfig {
       throw new Error("DATABASE_URL is required (e.g. postgres://user:pass@host:5432/db)");
     }
     return url;
+  }
+
+  /**
+   * Filesystem root for stored asset binaries. Required in production; in dev it
+   * defaults to an **absolute** `<cwd>/data/storage` so the location is
+   * deterministic and doesn't silently move with the process working directory.
+   */
+  get STORAGE_ROOT(): string {
+    const raw = Bun.env.STORAGE_ROOT?.trim();
+    if (raw) return raw;
+    if (this.NODE_ENV === "production") {
+      throw new Error("STORAGE_ROOT is required outside development");
+    }
+    return resolve(process.cwd(), "data/storage");
+  }
+
+  /**
+   * Max accepted upload size in bytes (default 100 MB). Larger uploads are
+   * rejected with 413 and logged. Must stay at or below {@link MAX_REQUEST_BODY_BYTES}.
+   */
+  get MAX_UPLOAD_BYTES(): number {
+    const raw = Bun.env.MAX_UPLOAD_BYTES;
+    if (raw === undefined || raw === "") return 100 * 1024 * 1024;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1) {
+      throw new Error(`MAX_UPLOAD_BYTES must be a positive integer, got "${raw}"`);
+    }
+    if (n > MAX_REQUEST_BODY_BYTES) {
+      throw new Error(
+        `MAX_UPLOAD_BYTES (${n}) cannot exceed the request-body ceiling (${MAX_REQUEST_BODY_BYTES})`,
+      );
+    }
+    return n;
   }
 
   /**
