@@ -20,10 +20,13 @@ function formatBytes(bytes: number): string {
 
 export function PostDetailPage() {
   const { id } = useParams({ from: "/posts/$id" });
-  const postId = Number(id);
-  const validId = Number.isInteger(postId) && postId >= 1;
+  // Validate the raw segment as plain decimal digits: `Number("1e2")`/`"0x10"`
+  // would otherwise coerce to a different, valid-looking id and fetch the wrong
+  // asset. Require a safe integer so it round-trips through the API unchanged.
+  const validId = /^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id));
+  const postId = validId ? Number(id) : 0;
 
-  const { data: asset, isLoading, isError } = useAsset(validId ? postId : 0);
+  const { data: asset, isLoading, isError } = useAsset(postId);
 
   if (!validId) {
     return (

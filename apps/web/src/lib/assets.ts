@@ -28,6 +28,13 @@ export function useAsset(id: number) {
   return useQuery({
     queryKey: ["asset", id],
     enabled: Number.isInteger(id) && id > 0,
-    queryFn: async () => unwrap(await api.api.v1.assets({ id: String(id) }).get()),
+    queryFn: async () => {
+      const res = await api.api.v1.assets({ id: String(id) }).get();
+      // A 404 is "this asset doesn't exist" — a normal not-found state, not a
+      // query failure. Return null so the detail page renders NotFound instead
+      // of the generic error/retry UI; other errors still throw via unwrap.
+      if (res.status === 404) return null;
+      return unwrap(res);
+    },
   });
 }

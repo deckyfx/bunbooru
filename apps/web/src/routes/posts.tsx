@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 
 import { Link } from "@tanstack/react-router";
 
@@ -51,6 +51,13 @@ export function PostsPage() {
   const { data, isLoading, isError, refetch } = useAssetsPage(page);
   const classic = boardMode === "classic";
   const pageCount = data?.pageCount ?? 0;
+
+  // If the total shrinks (e.g. deletions) so the current page no longer exists,
+  // snap back to the last valid page — otherwise we'd render "No posts yet" for
+  // an out-of-range page with no active pagination item.
+  useEffect(() => {
+    if (pageCount > 0 && page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
 
   // Classic = uniform square grid; fluid = masonry (mixed aspect ratios).
   const gridStyle: CSSProperties = classic

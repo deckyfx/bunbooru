@@ -185,7 +185,11 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
             if (!asset) throw new HttpError(404, "Asset not found");
             return serializeAsset(asset);
           },
-          { params: t.Object({ id: t.Numeric({ minimum: 1, multipleOf: 1 }) }) },
+          {
+            params: t.Object({
+              id: t.Numeric({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER, multipleOf: 1 }),
+            }),
+          },
         )
         // Stream an asset's stored bytes. Kept separate from the JSON metadata so
         // the binary never has to be base64'd into a JSON payload.
@@ -196,7 +200,11 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
             if (!file) throw new HttpError(404, "Asset not found");
             return new Response(file.stream, { headers: { "content-type": file.mimeType } });
           },
-          { params: t.Object({ id: t.Numeric({ minimum: 1, multipleOf: 1 }) }) },
+          {
+            params: t.Object({
+              id: t.Numeric({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER, multipleOf: 1 }),
+            }),
+          },
         ),
     );
 }

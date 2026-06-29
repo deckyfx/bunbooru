@@ -44,8 +44,23 @@ function chunk(type: string, data: Uint8Array): Uint8Array {
   return out;
 }
 
-/** Encode a `width × height` solid-RGB PNG. */
-function solidPng(width: number, height: number, rgb: [number, number, number]): Uint8Array {
+/** A PNG `tEXt` chunk (`keyword\0text`) — an ancillary chunk decoders ignore. */
+function textChunk(keyword: string, text: string): Uint8Array {
+  return chunk("tEXt", new TextEncoder().encode(`${keyword}\0${text}`));
+}
+
+/**
+ * Encode a `width × height` solid-RGB PNG. An optional `nonce` is embedded as a
+ * `tEXt` chunk so otherwise-identical images (same size + colour) still produce
+ * distinct bytes — without it the generator only has lcm(5, 360) = 1800 unique
+ * outputs and the upload service would dedupe everything past that.
+ */
+function solidPng(
+  width: number,
+  height: number,
+  rgb: [number, number, number],
+  nonce?: string,
+): Uint8Array {
   const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
   const ihdr = new Uint8Array(13);
   const view = new DataView(ihdr.buffer);
@@ -65,7 +80,9 @@ function solidPng(width: number, height: number, rgb: [number, number, number]):
     }
   }
   const idat = new Uint8Array(deflateSync(raw));
-  const parts = [signature, chunk("IHDR", ihdr), chunk("IDAT", idat), chunk("IEND", new Uint8Array(0))];
+  const parts = [signature, chunk("IHDR", ihdr), chunk("IDAT", idat)];
+  if (nonce !== undefined) parts.push(textChunk("Comment", nonce));
+  parts.push(chunk("IEND", new Uint8Array(0)));
   const png = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let offset = 0;
   for (const part of parts) {
@@ -121,7 +138,9 @@ let created = 0;
 let deduped = 0;
 for (let i = 0; i < count; i++) {
   const [width, height] = SHAPES[i % SHAPES.length] ?? [600, 600];
-  const bytes = solidPng(width, height, hslToRgb((i * 47) % 360, 0.62, 0.58));
+  // Per-image nonce keeps every byte stream unique, so a large `count` actually
+  // creates `count` assets instead of deduping once the shape/hue cycle repeats.
+  const bytes = solidPng(width, height, hslToRgb((i * 47) % 360, 0.62, 0.58), `seed-${i}`);
   const result = await core.assetService.create({ bytes });
   if (result.deduped) deduped++;
   else created++;
