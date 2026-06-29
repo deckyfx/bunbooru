@@ -11,7 +11,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p apps/web/tsconfig.json",
     "test": "NODE_ENV=test bun test",
-    "dev": "bun run --cwd apps/api dev",
+    "dev": "bun --watch apps/api/src/index.ts",
     "dev:web": "bun run --cwd apps/web dev",
     "db:generate": "bun run --cwd packages/db db:generate",
     "db:studio": "bun run --cwd packages/db db:studio",

@@ -1,10 +1,20 @@
+import { useEffect, useState } from "react";
+
 import { Link, useParams } from "@tanstack/react-router";
 import { Download } from "lucide-react";
 
 import { AssetImage } from "../components/asset-image";
+import { RatingControl, type Rating } from "../components/rating-control";
 import { SearchBox } from "../components/popover/search-box";
 import { assetFileUrl } from "../lib/api";
-import { useAsset } from "../lib/assets";
+import { useAsset, useUpdateAsset, type AssetDto } from "../lib/assets";
+
+/** ISO timestamp → `YYYY-MM-DD`. Tolerates a string or Date so a stray value
+ *  never crashes the page. */
+function formatDate(value: string | Date): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString().slice(0, 10);
+}
 
 /** Human-readable byte size. */
 function formatBytes(bytes: number): string {
@@ -45,21 +55,16 @@ export function PostDetailPage() {
           <p className="text-[12px] text-muted">No tags yet.</p>
         </div>
 
-        <div>
-          <h3 className="mb-1 font-bold">Information</h3>
-          <dl className="space-y-0.5 text-[12px]">
-            <Info label="ID" value={`#${postId}`} />
-            {asset ? (
-              <>
-                <Info label="Size" value={`${asset.width} × ${asset.height}`} />
-                <Info label="File" value={`${asset.mimeType} · ${formatBytes(asset.sizeBytes)}`} />
-                <Info label="Rating" value={asset.rating} />
-                <Info label="Posted" value={asset.createdAt.slice(0, 10)} />
-                <Info label="Source" value={asset.source ?? "—"} />
-              </>
-            ) : null}
-          </dl>
-        </div>
+        {asset ? (
+          <AssetInfo key={asset.id} asset={asset} />
+        ) : (
+          <div>
+            <h3 className="mb-1 font-bold">Information</h3>
+            <dl className="space-y-0.5 text-[12px]">
+              <Info label="ID" value={`#${postId}`} />
+            </dl>
+          </div>
+        )}
       </aside>
 
       <section className="min-w-0 flex-1">
@@ -124,6 +129,107 @@ function Info({ label, value }: { label: string; value: string }) {
     <div className="flex justify-between gap-2">
       <dt className="shrink-0 text-muted">{label}</dt>
       <dd className="min-w-0 flex-1 truncate text-right">{value}</dd>
+    </div>
+  );
+}
+
+/** Information panel with an inline editor for the mutable fields (rating/source). */
+function AssetInfo({ asset }: { asset: AssetDto }) {
+  const update = useUpdateAsset(asset.id);
+  const [editing, setEditing] = useState(false);
+  const [rating, setRating] = useState<Rating>(asset.rating);
+  const [source, setSource] = useState(asset.source ?? "");
+
+  // Re-sync local fields whenever the asset refetches (e.g. after a save) or its
+  // identity changes; drop out of edit mode so stale edits can't carry to another
+  // post. (The parent also remounts via key={asset.id}, but this is belt-and-braces.)
+  useEffect(() => {
+    setRating(asset.rating);
+    setSource(asset.source ?? "");
+    setEditing(false);
+  }, [asset.id, asset.rating, asset.source]);
+
+  async function save() {
+    try {
+      await update.mutateAsync({ rating, source: source.trim() || null });
+      setEditing(false);
+    } catch {
+      // `update.isError` drives the inline error message; stay in edit mode.
+    }
+  }
+
+  function cancel() {
+    update.reset(); // drop any prior error so reopening starts clean
+    setRating(asset.rating);
+    setSource(asset.source ?? "");
+    setEditing(false);
+  }
+
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <h3 className="font-bold">Information</h3>
+        {editing ? null : (
+          <button
+            type="button"
+            onClick={() => {
+              update.reset();
+              setEditing(true);
+            }}
+            className="text-[11px] text-link hover:underline"
+          >
+            Edit
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="space-y-2 text-[12px]">
+          <div>
+            <div className="mb-1 text-muted">Rating</div>
+            <RatingControl value={rating} onChange={setRating} disabled={update.isPending} />
+          </div>
+          <div>
+            <div className="mb-1 text-muted">Source</div>
+            <input
+              type="url"
+              disabled={update.isPending}
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              placeholder="https://…"
+              className="block w-full rounded border border-line p-1 outline-none focus:border-link disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </div>
+          {update.isError ? <p className="text-tag-artist">Couldn’t save. Please try again.</p> : null}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={update.isPending}
+              className="rounded bg-link px-3 py-1 text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={cancel}
+              disabled={update.isPending}
+              className="rounded border border-line px-3 py-1 hover:border-link"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <dl className="space-y-0.5 text-[12px]">
+          <Info label="ID" value={`#${asset.id}`} />
+          <Info label="Size" value={`${asset.width} × ${asset.height}`} />
+          <Info label="File" value={`${asset.mimeType} · ${formatBytes(asset.sizeBytes)}`} />
+          <Info label="Rating" value={asset.rating} />
+          <Info label="Posted" value={formatDate(asset.createdAt)} />
+          <Info label="Source" value={asset.source ?? "—"} />
+        </dl>
+      )}
     </div>
   );
 }

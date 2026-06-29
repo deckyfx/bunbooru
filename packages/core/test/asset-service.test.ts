@@ -57,13 +57,20 @@ function fakeRepo(initial: Asset[] = []): AssetRepository {
         sizeBytes: input.sizeBytes,
         sha256: input.sha256,
         md5: input.md5,
-        rating: input.rating ?? "questionable",
+        rating: input.rating ?? "unrated",
         source: input.source ?? null,
         uploaderId: input.uploaderId ?? null,
         createdAt: new Date(0),
         updatedAt: new Date(0),
       };
       rows.push(row);
+      return row;
+    },
+    update: async (id, patch) => {
+      const row = rows.find((r) => r.id === id);
+      if (!row) return null;
+      // Mirror the real repo: every update bumps updatedAt.
+      Object.assign(row, patch, { updatedAt: new Date(row.updatedAt.getTime() + 1) });
       return row;
     },
   };

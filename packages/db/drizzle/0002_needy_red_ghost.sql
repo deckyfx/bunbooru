@@ -1,0 +1,1 @@
+ALTER TABLE "assets" ALTER COLUMN "rating" SET DEFAULT 'unrated';

@@ -1,6 +1,7 @@
 import { createAssetRepository, createDb, type DB } from "@bunbooru/db";
 import { createFilesystemStorageProvider, type StorageProvider } from "@bunbooru/storage";
 
+import { createCoreEvents, type CoreEvents } from "./events";
 import { createAssetService, type AssetService } from "./services/asset-service";
 
 /**
@@ -10,6 +11,8 @@ import { createAssetService, type AssetService } from "./services/asset-service"
  */
 export interface Core {
   assetService: AssetService;
+  /** Typed pub/sub bus — Core emits domain events (e.g. `asset.created`); plugins subscribe. */
+  events: CoreEvents;
 }
 
 /** Runtime configuration needed to stand up the Core. */
@@ -27,8 +30,9 @@ export interface CoreConfig {
  * connection and a throwaway storage root.
  */
 export function assembleCore(db: DB, storage: StorageProvider): Core {
-  const assetService = createAssetService(createAssetRepository(db), storage);
-  return { assetService };
+  const events = createCoreEvents();
+  const assetService = createAssetService(createAssetRepository(db), storage, events);
+  return { assetService, events };
 }
 
 /**

@@ -43,7 +43,9 @@ export function RootLayout() {
   const isHome = useRouterState({ select: (s) => s.location.pathname === "/" });
 
   return (
-    <div className="min-h-screen">
+    // Flex column so the footer can be pushed to the bottom of the viewport even
+    // when the page content is short (e.g. the empty gallery).
+    <div className="flex min-h-screen flex-col">
       {!isHome && (
         <header className="border-b border-line bg-surface">
           <div className="flex items-center gap-4 px-4 py-1.5">
@@ -82,20 +84,24 @@ export function RootLayout() {
                   Go
                 </button>
               </form>
+              <ThemeSwitcher />
               <AccountLinks />
             </div>
           </div>
         </header>
       )}
 
-      <main className={isHome ? "mx-auto max-w-6xl px-3 py-4" : "px-4 py-4"}>
+      {/* flex-1 makes the content area absorb spare height so the footer hugs
+          the bottom instead of floating up under short pages. */}
+      <main className={`flex-1 ${isHome ? "mx-auto w-full max-w-6xl px-3 py-4" : "px-4 py-4"}`}>
         <Outlet />
       </main>
 
-      <footer className="mx-auto flex max-w-6xl flex-col items-center gap-2 px-3 py-6 text-[12px] text-muted">
-        <ThemeSwitcher />
-        <VisitorCounter />
-        <div>Running Bunbooru ver {VERSION}</div>
+      <footer className="mt-auto border-t border-line bg-surface">
+        <div className="mx-auto flex max-w-6xl flex-col items-center gap-1 px-3 py-3 text-[12px] text-muted">
+          <VisitorCounter />
+          <div>Running Bunbooru ver {VERSION}</div>
+        </div>
       </footer>
     </div>
   );

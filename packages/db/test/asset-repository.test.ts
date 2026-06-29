@@ -55,7 +55,7 @@ describe.skipIf(!TEST_DATABASE_URL)("AssetRepository (integration)", () => {
   it("defaults rating and nullable columns", async () => {
     const created = await repo.create(seed("defaults"));
 
-    expect(created.rating).toBe("questionable"); // schema default
+    expect(created.rating).toBe("unrated"); // schema default
     expect(created.source).toBeNull();
     expect(created.uploaderId).toBeNull();
   });

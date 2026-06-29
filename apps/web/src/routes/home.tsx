@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
 import { Counter } from "../components/counter";
+import { ThemeSwitcher } from "../components/theme-switcher";
 
 /** Dummy site stats — wired to the API once endpoints exist. */
 const POST_COUNT = "1234567890";
@@ -78,6 +79,8 @@ export function HomePage() {
           <a href="#" className="hover:underline">
             Sign up
           </a>
+          <span aria-hidden>·</span>
+          <ThemeSwitcher />
         </div>
       </section>
     </div>

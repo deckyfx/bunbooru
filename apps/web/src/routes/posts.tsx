@@ -1,33 +1,16 @@
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 
 import { Link } from "@tanstack/react-router";
+import { ImageOff } from "lucide-react";
 
 import { DropdownMenu } from "../components/menu/dropdown-menu";
+import { HoverPopover } from "../components/popover/hover-popover";
+import { PostHoverCard } from "../components/popover/post-hover-card";
 import { SearchBox } from "../components/popover/search-box";
-import { TagGroups } from "../components/tags/tag-groups";
-import { TagRow } from "../components/tags/tag-row";
 import { AssetImage } from "../components/asset-image";
 import { assetFileUrl } from "../lib/api";
 import { useAssetsPage } from "../lib/assets";
-import { lookupTag } from "../lib/tags";
 import { MAX_COLUMNS, MIN_COLUMNS, useGalleryStore } from "../stores/gallery";
-
-/** Placeholder sidebar tags (a live tag index lands with the search thrust). */
-const SIDEBAR_TAGS = [
-  "original",
-  "hatsune_miku",
-  "kantai_collection",
-  "wlop",
-  "1girl",
-  "solo",
-  "long_hair",
-  "highres",
-  "absurdres",
-];
-
-const RELATED_TAGS = [...new Set(SIDEBAR_TAGS.flatMap((name) => lookupTag(name).related))]
-  .filter((name) => !SIDEBAR_TAGS.includes(name))
-  .slice(0, 12);
 
 const COLUMN_CHOICES = Array.from(
   { length: MAX_COLUMNS - MIN_COLUMNS + 1 },
@@ -71,15 +54,7 @@ export function PostsPage() {
         <SearchBox placeholder="Search" className="w-full" />
         <section>
           <h3 className="mb-1 font-bold">Tags</h3>
-          <TagGroups names={SIDEBAR_TAGS} />
-        </section>
-        <section>
-          <h3 className="mb-1 font-bold">Related Tags</h3>
-          <ul className="space-y-0.5">
-            {RELATED_TAGS.map((name) => (
-              <TagRow key={name} name={name} />
-            ))}
-          </ul>
+          <p className="text-[12px] text-muted">No tags yet.</p>
         </section>
       </aside>
 
@@ -137,31 +112,41 @@ export function PostsPage() {
             </button>
           </div>
         ) : !data || data.assets.length === 0 ? (
-          <div className="py-12 text-center">
-            <p className="mb-2 font-bold">No posts yet</p>
-            <Link to="/uploads/new" className="text-link hover:underline">
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <ImageOff className="h-16 w-16 text-line" strokeWidth={1.25} aria-hidden="true" />
+            <p className="font-bold">No posts yet</p>
+            <p className="text-[12px] text-muted">Your gallery is empty.</p>
+            <Link
+              to="/uploads/new"
+              className="rounded border border-line px-3 py-1.5 text-link hover:border-link"
+            >
               Upload the first one »
             </Link>
           </div>
         ) : (
           <div style={gridStyle}>
             {data.assets.map((asset) => (
-              <Link
+              <HoverPopover
                 key={asset.id}
-                to="/posts/$id"
-                params={{ id: String(asset.id) }}
-                className={`relative block w-full overflow-hidden rounded border-2 border-line hover:border-link ${
-                  classic ? "" : "mb-2 break-inside-avoid"
-                }`}
-                style={{ aspectRatio: classic ? "1 / 1" : `${asset.width} / ${asset.height}` }}
+                interactive={false}
+                className={classic ? "block" : "mb-2 block break-inside-avoid"}
+                placement="top"
+                render={() => <PostHoverCard asset={asset} />}
               >
-                <AssetImage
-                  src={assetFileUrl(asset.id)}
-                  alt={`Post ${asset.id}`}
-                  loading="lazy"
-                  className="h-full w-full object-cover"
-                />
-              </Link>
+                <Link
+                  to="/posts/$id"
+                  params={{ id: String(asset.id) }}
+                  className="relative block w-full overflow-hidden rounded border-2 border-line hover:border-link"
+                  style={{ aspectRatio: classic ? "1 / 1" : `${asset.width} / ${asset.height}` }}
+                >
+                  <AssetImage
+                    src={assetFileUrl(asset.id)}
+                    alt={`Post ${asset.id}`}
+                    loading="lazy"
+                    className="h-full w-full object-cover"
+                  />
+                </Link>
+              </HoverPopover>
             ))}
           </div>
         )}

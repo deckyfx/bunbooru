@@ -36,14 +36,13 @@ TODOS.md
 .claude/scheduled_tasks.*
 .claude/settings.local.json
 
-# Local service data (Postgres/Redis bind mounts)
+# Local service data: Postgres/Redis bind mounts AND uploaded asset binaries
+# (STORAGE_ROOT defaults to data/storage). The whole dir stays out of git.
 /data/
+
+# Legacy/alternate storage roots (kept ignored for older checkouts).
+/storage/
+/apps/api/storage/
 
 # CodeRabbit CLI review output (bin/cr.ts)
 .cr/
-
-# Local asset storage (filesystem provider). STORAGE_ROOT resolves from the cwd,
-# so cover both repo-root runs and starting the API from apps/api/. Anchored on
-# purpose — a bare `storage/` would also ignore the `packages/storage` source.
-/storage/
-/apps/api/storage/

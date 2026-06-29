@@ -8,6 +8,20 @@
       "when": 1782662875472,
       "tag": "0000_small_maximus",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782739422222,
+      "tag": "0001_bored_harpoon",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782739440972,
+      "tag": "0002_needy_red_ghost",
+      "breakpoints": true
     }
   ]
 }
