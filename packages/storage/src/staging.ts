@@ -35,8 +35,10 @@ export function createFilesystemStaging(config: FilesystemStagingConfig): Stagin
       const path = resolveKey(key);
       await mkdir(dirname(path), { recursive: true });
       // O_CREAT|O_WRONLY: create the file if missing, never truncate, and
-      // positional-write the chunk at `offset` (so re-sending a chunk at the
-      // same offset is idempotent).
+      // positional-write the chunk at `offset`. Concurrent writers to the same
+      // key are NOT serialized here — the caller (UploadService) holds a
+      // per-session lock so only one writer touches a given staging object at a
+      // time; this layer just places bytes at a position.
       const handle = await open(path, constants.O_CREAT | constants.O_WRONLY);
       try {
         // FileHandle.write may short-write, so loop until the whole chunk lands

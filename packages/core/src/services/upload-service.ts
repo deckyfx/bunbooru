@@ -1,11 +1,40 @@
 import type { Asset, UploadSessionRepository } from "@bunbooru/db";
 import type { StagingStore } from "@bunbooru/storage";
 
-import { UploadConflictError, UploadRangeError } from "../errors";
+import { UnsupportedMediaError, UploadConflictError, UploadRangeError } from "../errors";
 import type { AssetService } from "./asset-service";
 
 /** Abandoned sessions are reclaimed after this long. */
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+/**
+ * Per-key in-process mutex: serializes async work for a given key by chaining
+ * each call onto the previous one for that key. Used to make a session's
+ * read→write→commit sequence atomic within this process, so two concurrent
+ * PATCHes on the same token can't interleave and overwrite each other's staged
+ * bytes. Single-process scope only; a multi-instance deployment would also need
+ * a DB advisory lock (follow-up). The map entry is dropped once its chain drains
+ * so it can't grow without bound.
+ */
+function createKeyedMutex() {
+  const chains = new Map<string, Promise<unknown>>();
+  return function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prior = chains.get(key) ?? Promise.resolve();
+    // Run after the prior holder settles (success or failure both release).
+    const run = prior.then(fn, fn);
+    // Store a rejection-swallowed tail so a failed call doesn't surface as an
+    // unhandled rejection or poison the next waiter; callers still see `run`.
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    chains.set(key, tail);
+    void tail.then(() => {
+      if (chains.get(key) === tail) chains.delete(key);
+    });
+    return run;
+  };
+}
 
 /** Input to open a resumable upload. */
 export interface BeginUploadInput {
@@ -59,6 +88,10 @@ export function createUploadService(
   maxUploadBytes: number,
   now: () => Date = () => new Date(),
 ): UploadService {
+  // Serializes each session's write+commit so concurrent PATCHes on one token
+  // can't corrupt the staged file (see {@link createKeyedMutex}).
+  const withSessionLock = createKeyedMutex();
+
   async function gcExpired(at: Date = now()): Promise<number> {
     const stagingKeys = await sessions.deleteExpired(at);
     await Promise.all(stagingKeys.map((key) => staging.remove(key).catch(() => undefined)));
@@ -95,52 +128,65 @@ export function createUploadService(
       return session ? { offset: session.uploadedSize, size: session.declaredSize } : null;
     },
 
-    async appendChunk(token, offset, data) {
-      const session = await sessions.findByToken(token);
-      if (!session) {
-        throw new UploadRangeError("unknown or expired upload session");
-      }
-      if (offset !== session.uploadedSize) {
-        // Client is out of sync (double-send or resumed wrong): it must HEAD to
-        // re-read the offset and continue from there.
-        throw new UploadConflictError(
-          `offset mismatch: session is at ${session.uploadedSize}, got ${offset}`,
-        );
-      }
-      const newOffset = offset + data.byteLength;
-      if (newOffset > session.declaredSize) {
-        throw new UploadRangeError(`chunk would exceed declared size ${session.declaredSize}`);
-      }
+    appendChunk(token, offset, data) {
+      // Hold the per-session lock across the whole read→validate→write→commit
+      // sequence so a second concurrent PATCH on this token can't pass the same
+      // offset check and overwrite our staged bytes before our commit lands.
+      return withSessionLock(token, async (): Promise<AppendChunkResult> => {
+        const session = await sessions.findByToken(token);
+        if (!session) {
+          throw new UploadRangeError("unknown or expired upload session");
+        }
+        if (offset !== session.uploadedSize) {
+          // Client is out of sync (double-send or resumed wrong): it must HEAD to
+          // re-read the offset and continue from there.
+          throw new UploadConflictError(
+            `offset mismatch: session is at ${session.uploadedSize}, got ${offset}`,
+          );
+        }
+        const newOffset = offset + data.byteLength;
+        if (newOffset > session.declaredSize) {
+          throw new UploadRangeError(`chunk would exceed declared size ${session.declaredSize}`);
+        }
 
-      // The positional write is idempotent, so a losing concurrent writer wrote
-      // the same range harmlessly; the compare-and-swap below is what actually
-      // serializes the commit.
-      await staging.writeChunk(session.stagingKey, offset, data);
-      const committed = await sessions.setOffset(token, offset, newOffset);
-      if (!committed) {
-        // Another PATCH advanced this session between our read and write — the
-        // client must re-HEAD the offset and resume.
-        throw new UploadConflictError("offset advanced concurrently; re-sync and retry");
-      }
+        // The session lock guarantees we're the only writer for this token, so
+        // the write and the compare-and-swap commit happen as one unit; the CAS
+        // remains as a cheap cross-process guard.
+        await staging.writeChunk(session.stagingKey, offset, data);
+        const committed = await sessions.setOffset(token, offset, newOffset);
+        if (!committed) {
+          // Another writer advanced this session out from under us (only possible
+          // across processes); the client must re-HEAD the offset and resume.
+          throw new UploadConflictError("offset advanced concurrently; re-sync and retry");
+        }
 
-      if (newOffset < session.declaredSize) {
-        return { status: "incomplete", offset: newOffset };
-      }
+        if (newOffset < session.declaredSize) {
+          return { status: "incomplete", offset: newOffset };
+        }
 
-      // Complete: finalize through the asset pipeline, then clean up the session
-      // and staging file whether reading/finalizing succeeds or throws (e.g. the
-      // assembled bytes aren't a decodable image → UnsupportedMediaError → 415).
-      try {
-        const bytes = await staging.readAll(session.stagingKey);
-        const { asset, deduped } = await assetService.create({
-          bytes,
-          uploaderId: session.uploaderId,
-        });
-        return { status: "complete", asset, deduped };
-      } finally {
-        await sessions.delete(token).catch(() => undefined);
-        await staging.remove(session.stagingKey).catch(() => undefined);
-      }
+        // Complete: finalize through the asset pipeline. Clean up only on success
+        // or a permanent failure (the assembled bytes aren't a decodable image →
+        // UnsupportedMediaError → 415). A transient failure (DB/storage hiccup)
+        // leaves the staged bytes + session intact so the upload can be retried
+        // rather than forcing a full re-upload; abandoned ones expire via GC.
+        let permanent = true;
+        try {
+          const bytes = await staging.readAll(session.stagingKey);
+          const { asset, deduped } = await assetService.create({
+            bytes,
+            uploaderId: session.uploaderId,
+          });
+          return { status: "complete", asset, deduped };
+        } catch (error) {
+          permanent = error instanceof UnsupportedMediaError;
+          throw error;
+        } finally {
+          if (permanent) {
+            await sessions.delete(token).catch(() => undefined);
+            await staging.remove(session.stagingKey).catch(() => undefined);
+          }
+        }
+      });
     },
 
     async cancel(token) {

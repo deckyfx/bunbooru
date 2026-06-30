@@ -283,9 +283,14 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         .patch(
           "/uploads/:token",
           async ({ params, body, request, set }) => {
-            const header = request.headers.get("upload-offset");
+            // Decimal-only: `Number()` would accept "", whitespace, "1e3", "0x10";
+            // a TUS-style offset header must be a plain non-negative integer.
+            const header = request.headers.get("upload-offset")?.trim();
+            if (!header || !/^\d+$/.test(header)) {
+              throw new HttpError(400, "Missing or invalid Upload-Offset header");
+            }
             const offset = Number(header);
-            if (header === null || !Number.isSafeInteger(offset) || offset < 0) {
+            if (!Number.isSafeInteger(offset)) {
               throw new HttpError(400, "Missing or invalid Upload-Offset header");
             }
             // Require a raw-bytes content-type so a JSON/form/text body can't be

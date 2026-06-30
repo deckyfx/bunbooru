@@ -19,7 +19,12 @@ export interface UploadResult {
 }
 
 export interface UploadOptions {
-  /** Progress as a 0..1 fraction of bytes committed. */
+  /**
+   * Progress as a 0..1 fraction. This is an optimistic *bytes-sent* signal (the
+   * XHR upload reports bytes pushed to the network, not bytes the server has
+   * durably committed), so it's smoothed to be **monotonic non-decreasing** —
+   * it never regresses when a chunk is retried or resumed from a lower offset.
+   */
   onProgress?: (fraction: number) => void;
   signal?: AbortSignal;
 }
@@ -29,7 +34,10 @@ const MAX_CHUNK_RETRIES = 3;
 
 /** Upload a file resumably; resolves with the finalized asset. */
 export async function uploadAsset(file: File, options: UploadOptions = {}): Promise<UploadResult> {
-  const { onProgress, signal } = options;
+  const { signal } = options;
+  // Clamp progress to be monotonic: a retry/resume sends from a lower offset, so
+  // the raw sent-bytes fraction can dip — never report a value below the peak.
+  const onProgress = monotonic(options.onProgress);
   const session = await beginSession(file, signal);
   let offset = session.offset;
   let attempts = 0;
@@ -53,7 +61,7 @@ export async function uploadAsset(file: File, options: UploadOptions = {}): Prom
         });
         if (serverOffset === null) throw error; // session gone — unrecoverable
         offset = serverOffset;
-        await delay(300 * attempts);
+        await delay(300 * attempts, signal);
       }
     }
     // The completing chunk returns the asset above; reaching here means the
@@ -113,10 +121,16 @@ function patchChunk(
 
     xhr.addEventListener("load", () => {
       if (xhr.status === 204) {
+        // The server's committed offset is authoritative; never guess. A missing
+        // or nonsensical value means a protocol/server bug — fail loudly rather
+        // than resume from a fabricated offset and desync the staged file.
         const next = Number(xhr.getResponseHeader("Upload-Offset"));
-        const committed = Number.isFinite(next) ? next : offset + slice.size;
-        onProgress?.(committed / totalSize);
-        resolve({ kind: "incomplete", offset: committed });
+        if (!Number.isInteger(next) || next <= offset || next > totalSize) {
+          reject(new Error("Chunk upload response did not include a valid committed offset."));
+          return;
+        }
+        onProgress?.(next / totalSize);
+        resolve({ kind: "incomplete", offset: next });
         return;
       }
       if (xhr.status === 200 || xhr.status === 201) {
@@ -168,6 +182,35 @@ function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Wrap a progress callback so it only ever moves forward. Without this, a
+ * retry/resume from a lower offset would make the bar jump backward.
+ */
+function monotonic(
+  onProgress: ((fraction: number) => void) | undefined,
+): ((fraction: number) => void) | undefined {
+  if (!onProgress) return undefined;
+  let peak = 0;
+  return (fraction) => {
+    if (fraction > peak) {
+      peak = fraction;
+      onProgress(fraction);
+    }
+  };
+}
+
+/** Abortable sleep: rejects immediately with an AbortError if `signal` fires. */
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new DOMException("Upload aborted", "AbortError"));
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(new DOMException("Upload aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
