@@ -324,8 +324,9 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // superadmin milestone rather than as an open, unauthenticated write.
         // `tagService.setCategory` is ready for that route.
         // --- Traffic counters ----------------------------------------------
-        // Record a view of a post (debounced to once per visitor-session, so a
-        // refresh doesn't inflate it). The web fires this once per detail view.
+        // Record a view of a post (throttled to at most once per window per
+        // visitor, so refreshes don't inflate it). The web fires this once per
+        // detail view.
         .post(
           "/assets/:id/view",
           async ({ params, visitorId }) => {
