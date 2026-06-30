@@ -42,6 +42,9 @@ const idParam = t.Object({
   id: t.Numeric({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER, multipleOf: 1 }),
 });
 
+/** Upload-session token path param (bounded; storage layer also guards traversal). */
+const tokenParam = t.Object({ token: t.String({ maxLength: 100 }) });
+
 /** Project a domain {@link Asset} onto its JSON wire form. */
 function serializeAsset(asset: Asset): AssetDto {
   return {
@@ -237,6 +240,96 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
             return new Response(file.stream, { headers: { "content-type": file.mimeType } });
           },
           { params: idParam },
+        )
+        // --- Resumable chunked uploads -------------------------------------
+        // Open a session for a file; the client PATCHes chunks until complete.
+        // The one-shot POST /assets above remains for small/non-browser uploads.
+        .post(
+          "/uploads",
+          async ({ body, set }) => {
+            if (body.size > maxUploadBytes) {
+              throw new HttpError(413, `Upload exceeds the ${maxUploadBytes}-byte limit`);
+            }
+            set.status = 201;
+            return core.uploadService.begin({
+              filename: body.filename,
+              size: body.size,
+              mimeType: body.mimeType ?? null,
+            });
+          },
+          {
+            body: t.Object({
+              filename: t.String({ maxLength: 1024 }),
+              size: t.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+              mimeType: t.Optional(t.String({ maxLength: 255 })),
+            }),
+          },
+        )
+        // Report the committed offset so a client can resume after an interruption.
+        .head(
+          "/uploads/:token",
+          async ({ params, set }) => {
+            const info = await core.uploadService.offsetOf(params.token);
+            if (!info) throw new HttpError(404, "Upload session not found");
+            set.headers["upload-offset"] = String(info.offset);
+            set.headers["upload-length"] = String(info.size);
+            set.status = 200;
+            return "";
+          },
+          { params: tokenParam },
+        )
+        // Append a raw binary chunk at `Upload-Offset`: 204 + new offset while
+        // incomplete; 201 (or 200 deduped) with the asset once the file finalizes.
+        .patch(
+          "/uploads/:token",
+          async ({ params, body, request, set }) => {
+            // Decimal-only: `Number()` would accept "", whitespace, "1e3", "0x10";
+            // a TUS-style offset header must be a plain non-negative integer.
+            const header = request.headers.get("upload-offset")?.trim();
+            if (!header || !/^\d+$/.test(header)) {
+              throw new HttpError(400, "Missing or invalid Upload-Offset header");
+            }
+            const offset = Number(header);
+            if (!Number.isSafeInteger(offset)) {
+              throw new HttpError(400, "Missing or invalid Upload-Offset header");
+            }
+            // Require a raw-bytes content-type so a JSON/form/text body can't be
+            // appended verbatim into the staged file.
+            const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+            if (
+              contentType !== "application/octet-stream" &&
+              contentType !== "application/offset+octet-stream"
+            ) {
+              throw new HttpError(415, "Chunk body must be sent as raw bytes (application/octet-stream)");
+            }
+            // Elysia hands an octet-stream body back as ArrayBuffer/Uint8Array;
+            // fall back to the raw request stream if it wasn't pre-parsed.
+            const chunk =
+              body instanceof Uint8Array
+                ? body
+                : body instanceof ArrayBuffer
+                  ? new Uint8Array(body)
+                  : new Uint8Array(await request.arrayBuffer());
+            const result = await core.uploadService.appendChunk(params.token, offset, chunk);
+            if (result.status === "incomplete") {
+              set.headers["upload-offset"] = String(result.offset);
+              set.status = 204;
+              return "";
+            }
+            set.status = result.deduped ? 200 : 201;
+            return serializeAsset(result.asset);
+          },
+          { params: tokenParam },
+        )
+        // Cancel a session and delete its staged bytes.
+        .delete(
+          "/uploads/:token",
+          async ({ params, set }) => {
+            await core.uploadService.cancel(params.token);
+            set.status = 204;
+            return "";
+          },
+          { params: tokenParam },
         ),
     );
 }

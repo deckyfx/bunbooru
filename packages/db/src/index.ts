@@ -17,3 +17,7 @@ export {
   type AssetRepository,
   type AssetUpdate,
 } from "./repositories/asset-repository";
+export {
+  createUploadSessionRepository,
+  type UploadSessionRepository,
+} from "./repositories/upload-session-repository";

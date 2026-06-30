@@ -1,8 +1,16 @@
-import { createAssetRepository, createDb, type DB } from "@bunbooru/db";
-import { createFilesystemStorageProvider, type StorageProvider } from "@bunbooru/storage";
+import { join } from "node:path";
+
+import { createAssetRepository, createDb, createUploadSessionRepository, type DB } from "@bunbooru/db";
+import {
+  createFilesystemStaging,
+  createFilesystemStorageProvider,
+  type StagingStore,
+  type StorageProvider,
+} from "@bunbooru/storage";
 
 import { createCoreEvents, type CoreEvents } from "./events";
 import { createAssetService, type AssetService } from "./services/asset-service";
+import { createUploadService, type UploadService } from "./services/upload-service";
 
 /**
  * The assembled Core: the application services the API (and later, plugins via
@@ -11,6 +19,8 @@ import { createAssetService, type AssetService } from "./services/asset-service"
  */
 export interface Core {
   assetService: AssetService;
+  /** Resumable chunked uploads — stages chunks, then finalizes via `assetService`. */
+  uploadService: UploadService;
   /** Typed pub/sub bus — Core emits domain events (e.g. `asset.created`); plugins subscribe. */
   events: CoreEvents;
 }
@@ -21,6 +31,8 @@ export interface CoreConfig {
   databaseUrl: string;
   /** Filesystem root under which asset binaries are stored. */
   storageRoot: string;
+  /** Reject uploads larger than this many bytes (resumable sessions are bounded up front). */
+  maxUploadBytes: number;
 }
 
 /**
@@ -29,10 +41,21 @@ export interface CoreConfig {
  * Separated from {@link createCore} so integration tests can inject a shared
  * connection and a throwaway storage root.
  */
-export function assembleCore(db: DB, storage: StorageProvider): Core {
+export function assembleCore(
+  db: DB,
+  storage: StorageProvider,
+  staging: StagingStore,
+  maxUploadBytes: number,
+): Core {
   const events = createCoreEvents();
   const assetService = createAssetService(createAssetRepository(db), storage, events);
-  return { assetService, events };
+  const uploadService = createUploadService(
+    createUploadSessionRepository(db),
+    staging,
+    assetService,
+    maxUploadBytes,
+  );
+  return { assetService, uploadService, events };
 }
 
 /**
@@ -45,5 +68,9 @@ export function createCore(config: CoreConfig): Core {
   return assembleCore(
     createDb(config.databaseUrl),
     createFilesystemStorageProvider({ root: config.storageRoot }),
+    // Staging lives under the (writable) storage root so resumable chunks land
+    // on the same host volume as the final assets.
+    createFilesystemStaging({ root: join(config.storageRoot, "uploads-staging") }),
+    config.maxUploadBytes,
   );
 }

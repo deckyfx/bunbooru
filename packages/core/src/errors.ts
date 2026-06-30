@@ -11,3 +11,19 @@ export class UnsupportedMediaError extends Error {
     this.name = "UnsupportedMediaError";
   }
 }
+
+/** A chunk's declared offset doesn't match the session's current offset. API → 409. */
+export class UploadConflictError extends Error {
+  constructor(message = "Upload offset does not match the session") {
+    super(message);
+    this.name = "UploadConflictError";
+  }
+}
+
+/** A chunk would push the upload past its declared size, or the session is unknown. API → 400. */
+export class UploadRangeError extends Error {
+  constructor(message = "Upload chunk is out of range") {
+    super(message);
+    this.name = "UploadRangeError";
+  }
+}

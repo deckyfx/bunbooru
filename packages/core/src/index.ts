@@ -49,8 +49,17 @@ export {
   type ListAssetsOptions,
 } from "./services/asset-service";
 
+// Resumable chunked uploads — stage chunks, finalize through the asset pipeline.
+export {
+  createUploadService,
+  type AppendChunkResult,
+  type BeginUploadInput,
+  type UploadBegun,
+  type UploadService,
+} from "./services/upload-service";
+
 // Typed domain errors the API maps to HTTP status codes.
-export { UnsupportedMediaError } from "./errors";
+export { UnsupportedMediaError, UploadConflictError, UploadRangeError } from "./errors";
 
 /** Internal packages the Core composes over — mirrors this package's dependencies. */
 export const CORE_DEPENDENCIES = [
