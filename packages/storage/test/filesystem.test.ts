@@ -72,36 +72,47 @@ describe("FilesystemStorageProvider", () => {
   });
 
   it("lists stored objects under a prefix with a modified time", async () => {
-    await storage.store("assets/aa/one.bin", bytes("1"));
-    await storage.store("assets/bb/two.bin", bytes("2"));
-    await storage.store("other/three.bin", bytes("3"));
+    // Clean up in `finally` so a failed assertion can't leave files in the
+    // shared root and cascade into later list/stat tests.
+    try {
+      await storage.store("assets/aa/one.bin", bytes("1"));
+      await storage.store("assets/bb/two.bin", bytes("2"));
+      await storage.store("other/three.bin", bytes("3"));
 
-    const seen = new Map<string, Date>();
-    for await (const object of storage.list("assets/")) seen.set(object.key, object.modifiedAt);
+      const seen = new Map<string, Date>();
+      for await (const object of storage.list("assets/")) seen.set(object.key, object.modifiedAt);
 
-    expect([...seen.keys()].sort()).toEqual(["assets/aa/one.bin", "assets/bb/two.bin"]);
-    expect(seen.get("assets/aa/one.bin")).toBeInstanceOf(Date);
-    // Clean up so the shared-root list stays predictable for other tests.
-    await storage.delete("assets/aa/one.bin");
-    await storage.delete("assets/bb/two.bin");
-    await storage.delete("other/three.bin");
+      expect([...seen.keys()].sort()).toEqual(["assets/aa/one.bin", "assets/bb/two.bin"]);
+      expect(seen.get("assets/aa/one.bin")).toBeInstanceOf(Date);
+    } finally {
+      await storage.delete("assets/aa/one.bin");
+      await storage.delete("assets/bb/two.bin");
+      await storage.delete("other/three.bin");
+    }
   });
 
   it("statModifiedAt returns a Date for a stored object and null when absent", async () => {
-    await storage.store("assets/dd/stat.bin", bytes("x"));
-    expect(await storage.statModifiedAt("assets/dd/stat.bin")).toBeInstanceOf(Date);
-    expect(await storage.statModifiedAt("assets/dd/missing.bin")).toBeNull();
-    await storage.delete("assets/dd/stat.bin");
+    try {
+      await storage.store("assets/dd/stat.bin", bytes("x"));
+      expect(await storage.statModifiedAt("assets/dd/stat.bin")).toBeInstanceOf(Date);
+      expect(await storage.statModifiedAt("assets/dd/missing.bin")).toBeNull();
+    } finally {
+      await storage.delete("assets/dd/stat.bin");
+    }
   });
 
   it("ingestLocalFile moves a local file into the store, consuming the source", async () => {
     const localPath = join(root, "incoming.bin");
-    await Bun.write(localPath, "ingest me");
-    await storage.ingestLocalFile?.(localPath, "assets/cc/ingested.bin");
-    // Source consumed; content now lives at the key.
-    expect(await Bun.file(localPath).exists()).toBe(false);
-    expect(await read(await storage.stream("assets/cc/ingested.bin"))).toBe("ingest me");
-    await storage.delete("assets/cc/ingested.bin");
+    try {
+      await Bun.write(localPath, "ingest me");
+      await storage.ingestLocalFile?.(localPath, "assets/cc/ingested.bin");
+      // Source consumed; content now lives at the key.
+      expect(await Bun.file(localPath).exists()).toBe(false);
+      expect(await read(await storage.stream("assets/cc/ingested.bin"))).toBe("ingest me");
+    } finally {
+      await storage.delete("assets/cc/ingested.bin");
+      await rm(localPath, { force: true }); // in case ingest failed before consuming it
+    }
   });
 
   it("exposes no public URL for a private filesystem backend", async () => {

@@ -65,11 +65,15 @@ export function createFilesystemStorageProvider(
     },
 
     async *list(prefix = "") {
-      // Walk files under `root` matching the prefix; keys are paths relative to
-      // `root` (so they round-trip back through resolveKey). `**/*` is files-only
-      // by default. A file deleted between scan and stat yields lastModified 0,
-      // which an age filter treats as old — harmless, since delete is idempotent.
-      const glob = new Bun.Glob(`${prefix}**/*`);
+      // Walk files under `root` whose key starts with `prefix`; keys are paths
+      // relative to `root` (so they round-trip back through resolveKey). `**/*`
+      // is files-only by default. Escape glob metacharacters in `prefix` so it's
+      // matched literally (the contract is "starts with", not a glob) — a `*` or
+      // `[` in a key prefix must not change which keys are returned. A file
+      // deleted between scan and stat yields lastModified 0, which an age filter
+      // treats as old — harmless, since delete is idempotent.
+      const escapedPrefix = prefix.replace(/[*?[\]{}!\\]/g, "\\$&");
+      const glob = new Bun.Glob(`${escapedPrefix}**/*`);
       for await (const rel of glob.scan({ cwd: root, onlyFiles: true })) {
         yield { key: rel, modifiedAt: new Date(Bun.file(resolve(root, rel)).lastModified) };
       }

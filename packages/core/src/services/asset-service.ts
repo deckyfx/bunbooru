@@ -15,8 +15,9 @@ const MAX_PIXELS = 100_000_000; // ~100 MP
 /** Key prefix under which all asset blobs live (see {@link contentKey}). */
 const ASSET_KEY_PREFIX = "assets/";
 
-/** Default batch size for the orphan-blob sweep (bounds per-batch work). */
+/** Default and hard-ceiling batch size for the orphan-blob sweep (bounds per-batch work). */
 const ORPHAN_GC_BATCH = 500;
+const MAX_ORPHAN_GC_BATCH = 5_000;
 
 /** Canonical MIME by Bun-sniffed image format — also the accept-list. */
 const MIME_BY_FORMAT: Partial<Record<string, string>> = {
@@ -321,10 +322,12 @@ export function createAssetService(
     },
 
     async gcOrphanedBlobs(olderThan, batchSize = ORPHAN_GC_BATCH) {
-      // Normalize the bound so a NaN/Infinity/0 can't turn this into one giant
-      // unbounded batch, defeating the bounded-work contract.
-      const limit =
+      // Normalize the bound so a NaN/Infinity/0 — or an absurdly large finite
+      // value — can't turn this into one giant unbounded batch (and IN query),
+      // defeating the bounded-work contract.
+      const requested =
         Number.isFinite(batchSize) && batchSize >= 1 ? Math.floor(batchSize) : ORPHAN_GC_BATCH;
+      const limit = Math.min(requested, MAX_ORPHAN_GC_BATCH);
       let removed = 0;
       let batch: StoredObject[] = [];
       // Resolve a batch: one query tells us which keys are still referenced; the
@@ -340,6 +343,15 @@ export function createAssetService(
             // content bumps mtime, with a row insert imminent). Skip anything no
             // longer old, or already gone — narrows the race to this stat→delete
             // gap. Only count deletes that actually succeed.
+            //
+            // A microsecond window remains (a rewrite landing between this stat
+            // and the delete) that a filesystem can't close atomically. It's
+            // accepted: keys are content-addressed, so the worst case is a row
+            // pointing at a now-missing-but-identical blob (openFile → 404, never
+            // wrong bytes), and it requires an old orphan being re-uploaded with
+            // byte-exact timing. Fully closing it needs cross-process coordination
+            // (provider conditional-delete or a DB key reservation) — a future
+            // step if it ever bites.
             const current = await storage.statModifiedAt(o.key);
             if (current === null || current >= olderThan) return false;
             try {
