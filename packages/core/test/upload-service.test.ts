@@ -115,7 +115,13 @@ function fakeStaging(): { store: StagingStore; removed: string[] } {
         for (let i = 0; i < data.byteLength; i++) buf[offset + i] = data[i] ?? 0;
         files.set(key, buf);
       },
-      open: (key) => new Blob([Uint8Array.from(files.get(key) ?? [])]),
+      open: (key) => {
+        // Mirror the real Bun.file-backed store: a missing key is an error, not a
+        // silent empty blob (which could mask a finalize/GC opening a stale key).
+        const file = files.get(key);
+        if (!file) throw new Error(`missing staged file: ${key}`);
+        return new Blob([Uint8Array.from(file)]);
+      },
       remove: async (key) => {
         files.delete(key);
         removed.push(key);
