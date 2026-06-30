@@ -185,6 +185,48 @@ describe("createAssetService.create (upload)", () => {
   });
 });
 
+describe("createAssetService.createFromSource (streaming)", () => {
+  it("produces identical hashes/metadata/key as the in-memory create path", async () => {
+    // Same content through both entry points must yield the same asset — proving
+    // the streaming hash/sniff/store pipeline matches the in-memory one.
+    const viaBytes = await createAssetService(fakeRepo(), fakeStorage().provider).create({
+      bytes: PNG_1x1,
+    });
+    // A multi-part Blob forces the source to stream in more than one chunk.
+    const split = Math.floor(PNG_1x1.byteLength / 2);
+    const blob = new Blob([PNG_1x1.subarray(0, split), PNG_1x1.subarray(split)]);
+    const { provider, stored } = fakeStorage();
+    const viaSource = await createAssetService(fakeRepo(), provider).createFromSource(blob);
+
+    expect(viaSource.deduped).toBe(false);
+    expect(viaSource.asset.sha256).toBe(viaBytes.asset.sha256);
+    expect(viaSource.asset.md5).toBe(viaBytes.asset.md5);
+    expect(viaSource.asset.width).toBe(1);
+    expect(viaSource.asset.height).toBe(1);
+    expect(viaSource.asset.mimeType).toBe("image/png");
+    expect(viaSource.asset.sizeBytes).toBe(PNG_1x1.byteLength);
+    expect(viaSource.asset.storageKey).toBe(viaBytes.asset.storageKey);
+    // The stored bytes round-trip exactly through the streamed store.
+    expect(stored.get(viaSource.asset.storageKey)).toEqual(PNG_1x1);
+  });
+
+  it("dedupes a source whose content already exists", async () => {
+    const { provider } = fakeStorage();
+    const service = createAssetService(fakeRepo(), provider);
+    const first = await service.create({ bytes: PNG_1x1 });
+    const second = await service.createFromSource(new Blob([PNG_1x1]));
+    expect(second.deduped).toBe(true);
+    expect(second.asset.id).toBe(first.asset.id);
+  });
+
+  it("rejects a non-image source with UnsupportedMediaError", async () => {
+    const service = createAssetService(fakeRepo(), fakeStorage().provider);
+    await expect(service.createFromSource(new Blob([new Uint8Array([1, 2, 3, 4])]))).rejects.toBeInstanceOf(
+      UnsupportedMediaError,
+    );
+  });
+});
+
 describe("createAssetService.getById / openFile", () => {
   it("getById returns the asset or null", async () => {
     const service = createAssetService(fakeRepo([asset(7)]), fakeStorage().provider);

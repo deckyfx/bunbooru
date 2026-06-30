@@ -7,8 +7,14 @@
  * contract without importing the package barrel (avoids an import cycle).
  */
 export interface StorageProvider {
-  /** Persist `data` under `key`. */
-  store(key: string, data: ReadableStream<Uint8Array> | Uint8Array): Promise<void>;
+  /**
+   * Persist `data` under `key`. Prefer a {@link Blob} (e.g. a file-backed
+   * `Bun.file()`) for large payloads — providers stream it to disk/remote
+   * without buffering the whole thing in memory. A raw `ReadableStream` is also
+   * accepted; pass `someFileBlob` rather than `someFileBlob.stream()` so the
+   * provider can use the most efficient native path.
+   */
+  store(key: string, data: Blob | ReadableStream<Uint8Array> | Uint8Array): Promise<void>;
   /** Remove the object at `key`. */
   delete(key: string): Promise<void>;
   /** Whether an object exists at `key`. */

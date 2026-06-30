@@ -45,6 +45,7 @@ function stubCore(
       list: async () => emptyPage,
       getById: async () => null,
       create: async () => ({ asset: sampleAsset, deduped: false }),
+      createFromSource: async () => ({ asset: sampleAsset, deduped: false }),
       update: async () => null,
       openFile: async () => null,
       ...overrides,

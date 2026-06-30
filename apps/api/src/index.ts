@@ -28,9 +28,32 @@ app.listen(
   },
 );
 
+// Periodically reclaim expired upload sessions + their staging files. Without
+// this, abandoned sessions only get swept opportunistically when the next upload
+// begins. `gcExpired()` is idempotent and self-contained — we just drive it on a
+// timer, isolate failures, and `unref()` so it never keeps the process alive.
+const gcIntervalMs = envConfig.UPLOAD_GC_INTERVAL_MS;
+const gcTimer =
+  gcIntervalMs > 0
+    ? setInterval(() => {
+        void core.uploadService
+          .gcExpired()
+          .then((removed) => {
+            if (removed > 0) logger.info("upload_gc_swept", { removed });
+          })
+          .catch((error) => {
+            logger.error("upload_gc_failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+      }, gcIntervalMs)
+    : undefined;
+gcTimer?.unref();
+
 /** Stop the server cleanly so `docker stop` (SIGTERM) drains in-flight requests. */
 const shutdown = async (): Promise<void> => {
   logger.info("server_stopping", {});
+  if (gcTimer) clearInterval(gcTimer);
   try {
     await app.stop();
     process.exit(0);

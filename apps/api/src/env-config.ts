@@ -8,6 +8,13 @@ import { resolve } from "node:path";
 export const MAX_REQUEST_BODY_BYTES = 2 * 1024 * 1024 * 1024;
 
 /**
+ * Largest delay a `setInterval`/`setTimeout` accepts (2^31 − 1 ms, ~24.8 days).
+ * Node and Bun truncate a larger delay to a 32-bit int, so it can wrap to a tiny
+ * value and fire almost immediately — a timer interval must be capped to this.
+ */
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+/**
  * Typed, singleton access to the API's environment configuration.
  *
  * Runtime values (host, port, credentials) are read here — never baked into
@@ -85,6 +92,27 @@ class EnvConfig {
     if (n > MAX_REQUEST_BODY_BYTES) {
       throw new Error(
         `MAX_UPLOAD_BYTES (${n}) cannot exceed the request-body ceiling (${MAX_REQUEST_BODY_BYTES})`,
+      );
+    }
+    return n;
+  }
+
+  /**
+   * How often (ms) to sweep expired resumable-upload sessions and their staging
+   * files (default 15 min). `0` disables the periodic sweep — sessions are then
+   * only reclaimed opportunistically when the next upload begins.
+   */
+  get UPLOAD_GC_INTERVAL_MS(): number {
+    // Trim first: an all-whitespace value would otherwise coerce to 0 and
+    // silently DISABLE the sweep instead of taking the default.
+    const raw = Bun.env.UPLOAD_GC_INTERVAL_MS?.trim();
+    if (raw === undefined || raw === "") return 15 * 60 * 1000;
+    const n = Number(raw);
+    // Cap at the timer ceiling: a larger setInterval delay wraps to a 32-bit int
+    // and can fire almost immediately — the opposite of the intended long sweep.
+    if (!Number.isInteger(n) || n < 0 || n > MAX_TIMER_DELAY_MS) {
+      throw new Error(
+        `UPLOAD_GC_INTERVAL_MS must be an integer between 0 and ${MAX_TIMER_DELAY_MS}, got "${raw}"`,
       );
     }
     return n;

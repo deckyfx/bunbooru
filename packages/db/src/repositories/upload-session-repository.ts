@@ -1,4 +1,4 @@
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, inArray, lt } from "drizzle-orm";
 
 import { uploadSessions, type NewUploadSession, type UploadSession } from "../schema";
 import type { DB } from "../client";
@@ -26,8 +26,14 @@ export interface UploadSessionRepository {
   ): Promise<UploadSession | null>;
   /** Delete a session by token (no-op if already gone). */
   delete(token: string): Promise<void>;
-  /** Delete sessions whose `expiresAt` is before `now`; returns their staging keys. */
-  deleteExpired(now: Date): Promise<string[]>;
+  /**
+   * Delete up to `limit` sessions whose `expiresAt` is before `now` (oldest
+   * first); returns each removed session's `token` (to serialize staging cleanup
+   * under its lock) and `stagingKey` (the object to remove). `limit` bounds the
+   * result set + downstream cleanup per call so a large backlog is drained in
+   * batches rather than one unbounded delete; omit it to delete all at once.
+   */
+  deleteExpired(now: Date, limit?: number): Promise<{ token: string; stagingKey: string }[]>;
 }
 
 /** Build an {@link UploadSessionRepository} over a {@link DB} handle. */
@@ -68,12 +74,25 @@ export function createUploadSessionRepository(db: DB): UploadSessionRepository {
       await db.delete(uploadSessions).where(eq(uploadSessions.token, token));
     },
 
-    async deleteExpired(now) {
-      const rows = await db
-        .delete(uploadSessions)
+    async deleteExpired(now, limit) {
+      if (limit === undefined) {
+        return db
+          .delete(uploadSessions)
+          .where(lt(uploadSessions.expiresAt, now))
+          .returning({ token: uploadSessions.token, stagingKey: uploadSessions.stagingKey });
+      }
+      // Postgres DELETE has no LIMIT, so pick the oldest `limit` expired ids in a
+      // subquery and delete exactly those.
+      const batch = db
+        .select({ id: uploadSessions.id })
+        .from(uploadSessions)
         .where(lt(uploadSessions.expiresAt, now))
-        .returning({ stagingKey: uploadSessions.stagingKey });
-      return rows.map((r) => r.stagingKey);
+        .orderBy(uploadSessions.expiresAt)
+        .limit(limit);
+      return db
+        .delete(uploadSessions)
+        .where(inArray(uploadSessions.id, batch))
+        .returning({ token: uploadSessions.token, stagingKey: uploadSessions.stagingKey });
     },
   };
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
-import { envConfig, MAX_REQUEST_BODY_BYTES } from "../src/env-config";
+import { envConfig, MAX_REQUEST_BODY_BYTES, MAX_TIMER_DELAY_MS } from "../src/env-config";
 
 const saved = {
   SERVER_PORT: Bun.env.SERVER_PORT,
@@ -8,6 +8,7 @@ const saved = {
   DATABASE_URL: Bun.env.DATABASE_URL,
   STORAGE_ROOT: Bun.env.STORAGE_ROOT,
   MAX_UPLOAD_BYTES: Bun.env.MAX_UPLOAD_BYTES,
+  UPLOAD_GC_INTERVAL_MS: Bun.env.UPLOAD_GC_INTERVAL_MS,
 };
 
 afterEach(() => {
@@ -119,5 +120,32 @@ describe("MAX_UPLOAD_BYTES", () => {
   it("throws when above the request-body ceiling", () => {
     Bun.env.MAX_UPLOAD_BYTES = String(MAX_REQUEST_BODY_BYTES + 1);
     expect(() => envConfig.MAX_UPLOAD_BYTES).toThrow();
+  });
+});
+
+describe("UPLOAD_GC_INTERVAL_MS", () => {
+  it("defaults to 15 minutes when unset", () => {
+    delete Bun.env.UPLOAD_GC_INTERVAL_MS;
+    expect(envConfig.UPLOAD_GC_INTERVAL_MS).toBe(15 * 60 * 1000);
+  });
+
+  it("parses a valid integer", () => {
+    Bun.env.UPLOAD_GC_INTERVAL_MS = "60000";
+    expect(envConfig.UPLOAD_GC_INTERVAL_MS).toBe(60_000);
+  });
+
+  it("accepts 0 to disable the sweep", () => {
+    Bun.env.UPLOAD_GC_INTERVAL_MS = "0";
+    expect(envConfig.UPLOAD_GC_INTERVAL_MS).toBe(0);
+  });
+
+  it("throws on a negative value", () => {
+    Bun.env.UPLOAD_GC_INTERVAL_MS = "-1";
+    expect(() => envConfig.UPLOAD_GC_INTERVAL_MS).toThrow();
+  });
+
+  it("throws above the timer ceiling", () => {
+    Bun.env.UPLOAD_GC_INTERVAL_MS = String(MAX_TIMER_DELAY_MS + 1);
+    expect(() => envConfig.UPLOAD_GC_INTERVAL_MS).toThrow();
   });
 });

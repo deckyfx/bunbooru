@@ -51,7 +51,7 @@ function fakeSessions(initial?: Partial<UploadSession>): {
       uploaderId: initial.uploaderId ?? null,
       createdAt: new Date(0),
       updatedAt: new Date(0),
-      expiresAt: new Date(Date.now() + 60_000),
+      expiresAt: initial.expiresAt ?? new Date(Date.now() + 60_000),
     });
   }
   let nextId = rows.size + 1;
@@ -86,7 +86,14 @@ function fakeSessions(initial?: Partial<UploadSession>): {
       delete: async (token) => {
         rows.delete(token);
       },
-      deleteExpired: async () => [],
+      deleteExpired: async (at: Date, limit?: number) => {
+        const expired = [...rows.values()]
+          .filter((r) => r.expiresAt < at)
+          .sort((a, b) => a.expiresAt.getTime() - b.expiresAt.getTime());
+        const batch = limit === undefined ? expired : expired.slice(0, limit);
+        for (const r of batch) rows.delete(r.token);
+        return batch.map((r) => ({ token: r.token, stagingKey: r.stagingKey }));
+      },
     },
   };
 }
@@ -108,7 +115,13 @@ function fakeStaging(): { store: StagingStore; removed: string[] } {
         for (let i = 0; i < data.byteLength; i++) buf[offset + i] = data[i] ?? 0;
         files.set(key, buf);
       },
-      readAll: async (key) => Uint8Array.from(files.get(key) ?? []),
+      open: (key) => {
+        // Mirror the real Bun.file-backed store: a missing key is an error, not a
+        // silent empty blob (which could mask a finalize/GC opening a stale key).
+        const file = files.get(key);
+        if (!file) throw new Error(`missing staged file: ${key}`);
+        return new Blob([Uint8Array.from(file)]);
+      },
       remove: async (key) => {
         files.delete(key);
         removed.push(key);
@@ -117,13 +130,18 @@ function fakeStaging(): { store: StagingStore; removed: string[] } {
   };
 }
 
-/** An {@link AssetService} whose `create` is driven by the test; rest unused. */
-function fakeAssetService(create: AssetService["create"]): AssetService {
+/**
+ * An {@link AssetService} whose finalize entry point is driven by the test. The
+ * upload service finalizes via `createFromSource`, so the handler is wired there
+ * (and to `create` for parity); the rest are unused.
+ */
+function fakeAssetService(finalize: AssetService["createFromSource"]): AssetService {
   const unused = () => {
     throw new Error("not used in upload-service tests");
   };
   return {
-    create,
+    createFromSource: finalize,
+    create: unused as AssetService["create"],
     list: unused as AssetService["list"],
     getById: unused as AssetService["getById"],
     update: unused as AssetService["update"],
@@ -160,7 +178,7 @@ describe("createUploadService.appendChunk", () => {
     // bytes are one writer's payload intact (all 1s or all 2s) — never an
     // interleaved mix, which is what a missing lock would produce.
     expect(sessions.get("tok")?.uploadedSize).toBe(4);
-    const staged = await staging.store.readAll("tok");
+    const staged = new Uint8Array(await staging.store.open("tok").arrayBuffer());
     expect(staged).toHaveLength(4);
     expect(new Set(staged).size).toBe(1);
     expect(staged[0] === 1 || staged[0] === 2).toBe(true);
@@ -273,5 +291,107 @@ describe("createUploadService.appendChunk", () => {
     expect(result).toEqual({ status: "complete", asset: sampleAsset, deduped: false });
     expect(sessions.get("tok")).toBeUndefined();
     expect(staging.removed).toEqual(["tok"]);
+  });
+});
+
+describe("createUploadService.gcExpired", () => {
+  const assetService = fakeAssetService(async () => ({ asset: sampleAsset, deduped: false }));
+
+  it("removes expired sessions and their staging files, returning the count", async () => {
+    const sessions = fakeSessions({ token: "old", expiresAt: new Date(Date.now() - 1000) });
+    const staging = fakeStaging();
+    const service = createUploadService(sessions.repo, staging.store, assetService, 1024);
+
+    const removed = await service.gcExpired();
+    expect(removed).toBe(1);
+    expect(sessions.get("old")).toBeUndefined();
+    expect(staging.removed).toEqual(["old"]); // stagingKey defaults to the token
+  });
+
+  it("leaves a still-valid session untouched", async () => {
+    const sessions = fakeSessions({ token: "fresh", expiresAt: new Date(Date.now() + 60_000) });
+    const staging = fakeStaging();
+    const service = createUploadService(sessions.repo, staging.store, assetService, 1024);
+
+    const removed = await service.gcExpired();
+    expect(removed).toBe(0);
+    expect(sessions.get("fresh")).toBeDefined();
+    expect(staging.removed).toEqual([]);
+  });
+
+  it("drains a backlog larger than the batch size across multiple batches", async () => {
+    const sessions = fakeSessions();
+    const staging = fakeStaging();
+    // gcBatchSize = 2 with 5 expired sessions → 3 batches (2 + 2 + 1).
+    const service = createUploadService(
+      sessions.repo,
+      staging.store,
+      assetService,
+      1024,
+      () => new Date(),
+      2,
+    );
+    const past = new Date(Date.now() - 1000);
+    for (let i = 0; i < 5; i++) {
+      await sessions.repo.create({
+        token: `t${i}`,
+        filename: "f.png",
+        mimeType: null,
+        declaredSize: 4,
+        uploadedSize: 0,
+        stagingKey: `t${i}`,
+        uploaderId: null,
+        expiresAt: past,
+      });
+    }
+
+    // A single unbounded delete would return only the first batch; draining all
+    // five proves gcExpired loops over batches.
+    const removed = await service.gcExpired();
+    expect(removed).toBe(5);
+    expect([...staging.removed].sort()).toEqual(["t0", "t1", "t2", "t3", "t4"]);
+    for (let i = 0; i < 5; i++) expect(sessions.get(`t${i}`)).toBeUndefined();
+  });
+
+  it("waits for an in-flight finalize before removing its staging file", async () => {
+    // The session is expired AND being finalized: GC must not delete the staged
+    // file out from under the finalize, which reads the lazy Blob under the lock.
+    const sessions = fakeSessions({ token: "tok", declaredSize: 4, expiresAt: new Date(Date.now() - 1000) });
+    const staging = fakeStaging();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let signalReached!: () => void;
+    const reached = new Promise<void>((r) => (signalReached = r));
+    const service = createUploadService(
+      sessions.repo,
+      staging.store,
+      fakeAssetService(async () => {
+        signalReached(); // finalize has entered, holding the session lock
+        await gate;
+        return { asset: sampleAsset, deduped: false };
+      }),
+      1024,
+    );
+
+    const finalizeP = service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]));
+    await reached;
+
+    // Sweep concurrently: it deletes the row, then queues the staging removal
+    // behind the held lock — so the file is NOT removed while finalize runs.
+    const gcP = service.gcExpired();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    // The row is already deleted, so the sweep HAS progressed past its bulk
+    // delete and is now blocked on the staging lock — without this, the "not
+    // removed" check could pass simply because GC hadn't reached cleanup yet.
+    expect(sessions.get("tok")).toBeUndefined();
+    expect(staging.removed).not.toContain("tok");
+
+    release();
+    const result = await finalizeP;
+    await gcP;
+    expect(result).toEqual({ status: "complete", asset: sampleAsset, deduped: false });
+    expect(staging.removed).toContain("tok"); // removed only after finalize finished
   });
 });
