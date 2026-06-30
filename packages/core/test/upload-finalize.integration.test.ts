@@ -43,6 +43,7 @@ function memoryRepo(): AssetRepository {
         md5: input.md5,
         rating: input.rating ?? "unrated",
         source: input.source ?? null,
+        viewCount: 0,
         uploaderId: input.uploaderId ?? null,
         createdAt: new Date(0),
         updatedAt: new Date(0),

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   createAssetRepository,
   createDb,
+  createStatsRepository,
   createTagRepository,
   createUploadSessionRepository,
   type DB,
@@ -16,6 +17,7 @@ import {
 
 import { createCoreEvents, type CoreEvents } from "./events";
 import { createAssetService, type AssetService } from "./services/asset-service";
+import { createStatsService, type StatsService } from "./services/stats-service";
 import { createTagService, type TagService } from "./services/tag-service";
 import { createUploadService, type UploadService } from "./services/upload-service";
 
@@ -30,6 +32,8 @@ export interface Core {
   uploadService: UploadService;
   /** Tag taxonomy + asset↔tag application (normalization, set/diff, postCount). */
   tagService: TagService;
+  /** Traffic counters — per-post views (debounced) + daily unique visitors. */
+  statsService: StatsService;
   /** Typed pub/sub bus — Core emits domain events (e.g. `asset.created`); plugins subscribe. */
   events: CoreEvents;
 }
@@ -65,7 +69,8 @@ export function assembleCore(
     maxResumableUploadBytes,
   );
   const tagService = createTagService(createTagRepository(db));
-  return { assetService, uploadService, tagService, events };
+  const statsService = createStatsService(createStatsRepository(db));
+  return { assetService, uploadService, tagService, statsService, events };
 }
 
 /**

@@ -3,6 +3,7 @@ import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import pkg from "../../package.json";
 import { ThemeSwitcher } from "../components/theme-switcher";
 import { VisitorCounter } from "../components/visitor-counter";
+import { useRecordVisit } from "../lib/stats";
 import { useApplyTheme } from "../stores/theme";
 
 const VERSION = pkg.version;
@@ -40,6 +41,7 @@ function AccountLinks({ className }: { className?: string }) {
  */
 export function RootLayout() {
   useApplyTheme();
+  useRecordVisit(); // count this visitor once per app load (server dedupes per day)
   const isHome = useRouterState({ select: (s) => s.location.pathname === "/" });
 
   return (

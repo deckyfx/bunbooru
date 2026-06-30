@@ -7,6 +7,7 @@ import type {
   AssetUpdate,
   Core,
   ListAssetsOptions,
+  StatsService,
   Tag,
   TagService,
   UploadService,
@@ -27,6 +28,7 @@ const sampleAsset: Asset = {
   md5: "a1b2c3d4".repeat(4), // 32-char lowercase hex
   rating: "safe",
   source: null,
+  viewCount: 0,
   uploaderId: null,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   updatedAt: new Date("2026-01-02T00:00:00.000Z"),
@@ -51,6 +53,7 @@ function stubCore(
   overrides: Partial<AssetService> = {},
   uploadOverrides: Partial<UploadService> = {},
   tagOverrides: Partial<TagService> = {},
+  statsOverrides: Partial<StatsService> = {},
 ): Core {
   return {
     assetService: {
@@ -77,6 +80,12 @@ function stubCore(
       autocomplete: async () => [sampleTag],
       setCategory: async () => sampleTag,
       ...tagOverrides,
+    },
+    statsService: {
+      recordView: async () => true,
+      recordVisit: async () => undefined,
+      getStats: async () => ({ posts: 0, visitorsToday: 0 }),
+      ...statsOverrides,
     },
     events: createCoreEvents(),
   };
@@ -593,5 +602,59 @@ describe("tags", () => {
     ).handle(new Request("http://localhost/api/v1/tags?q=1gi"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([tagJson]);
+  });
+});
+
+describe("traffic counters", () => {
+  it("POST /assets/:id/view records a view (404 when the asset is missing)", async () => {
+    const ok = await buildApp(stubCore({ getById: async () => sampleAsset })).handle(
+      new Request("http://localhost/api/v1/assets/1/view", { method: "POST" }),
+    );
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ counted: true });
+
+    const missing = await buildApp(stubCore({ getById: async () => null })).handle(
+      new Request("http://localhost/api/v1/assets/999/view", { method: "POST" }),
+    );
+    expect(missing.status).toBe(404);
+  });
+
+  it("GET /stats returns site counters", async () => {
+    const res = await buildApp(
+      stubCore({}, {}, {}, { getStats: async () => ({ posts: 12, visitorsToday: 3 }) }),
+    ).handle(new Request("http://localhost/api/v1/stats"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ posts: 12, visitorsToday: 3 });
+  });
+
+  it("attributes a visit to the x-visitor-id header, or a generated id when absent", async () => {
+    const seen: string[] = [];
+    const core = stubCore(
+      {},
+      {},
+      {},
+      {
+        recordVisit: async (visitorId) => {
+          seen.push(visitorId);
+        },
+      },
+    );
+
+    // A valid header is used as the visitor id, as-is.
+    const withHeader = await buildApp(core).handle(
+      new Request("http://localhost/api/v1/stats/visit", {
+        method: "POST",
+        headers: { "x-visitor-id": "abcdef12-3456-7890-abcd-ef1234567890" },
+      }),
+    );
+    expect(await withHeader.json()).toEqual({ ok: true });
+    expect(seen[0]).toBe("abcdef12-3456-7890-abcd-ef1234567890");
+
+    // An absent/invalid header falls back to a generated opaque id (still recorded).
+    await buildApp(core).handle(
+      new Request("http://localhost/api/v1/stats/visit", { method: "POST" }),
+    );
+    expect(seen[1]).toMatch(/^[0-9a-f-]{8,64}$/i);
+    expect(seen[1]).not.toBe(seen[0]);
   });
 });

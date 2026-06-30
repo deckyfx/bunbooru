@@ -60,6 +60,14 @@ const idParam = t.Object({
 /** Upload-session token path param (bounded; storage layer also guards traversal). */
 const tokenParam = t.Object({ token: t.String({ maxLength: 100 }) });
 
+/** Opaque visitor-id shape: hex + dashes (UUID-like), length-bounded vs abuse. */
+const VISITOR_ID_RE = /^[0-9a-fA-F-]{8,64}$/;
+
+/** A valid client-supplied `x-visitor-id`, or null if absent/malformed. */
+function readVisitorId(header: string | null): string | null {
+  return header !== null && VISITOR_ID_RE.test(header) ? header : null;
+}
+
 /** Project a domain {@link Asset} onto its JSON wire form. */
 function serializeAsset(asset: Asset): AssetDto {
   return {
@@ -145,6 +153,15 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
     .get("/health", () => ({ status: "ok" as const }))
     .group("/api/v1", (api) =>
       api
+        // Opaque visitor id for the traffic counters — never an IP. The client
+        // owns a stable id (localStorage) and sends it as `x-visitor-id`, so we
+        // simply read+validate it; this avoids the race a server-minted cookie
+        // would have across a first-load request burst. A request without a valid
+        // header (a non-web client) gets a throwaway per-request id, so its views/
+        // visits just aren't deduped across requests.
+        .derive(({ request }) => ({
+          visitorId: readVisitorId(request.headers.get("x-visitor-id")) ?? crypto.randomUUID(),
+        }))
         .get("/health", () => ({ status: "ok" as const }))
         // Newest-first page of assets. `page`/`per_page` are coerced and
         // range-checked here; the service clamps defensively as well.
@@ -306,6 +323,27 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // NOT exposed yet — it's an admin operation, so it lands with the auth /
         // superadmin milestone rather than as an open, unauthenticated write.
         // `tagService.setCategory` is ready for that route.
+        // --- Traffic counters ----------------------------------------------
+        // Record a view of a post (debounced to once per visitor-session, so a
+        // refresh doesn't inflate it). The web fires this once per detail view.
+        .post(
+          "/assets/:id/view",
+          async ({ params, visitorId }) => {
+            const asset = await core.assetService.getById(params.id);
+            if (!asset) throw new HttpError(404, "Asset not found");
+            const counted = await core.statsService.recordView(visitorId, params.id);
+            return { counted };
+          },
+          { params: idParam },
+        )
+        // Record that this visitor was here today (idempotent per day). The web
+        // fires it once on app load.
+        .post("/stats/visit", async ({ visitorId }) => {
+          await core.statsService.recordVisit(visitorId);
+          return { ok: true as const };
+        })
+        // Site-wide counters for the UI (total posts + today's unique visitors).
+        .get("/stats", () => core.statsService.getStats())
         // --- Resumable chunked uploads -------------------------------------
         // Open a session for a file; the client PATCHes chunks until complete.
         // The one-shot POST /assets above remains for small/non-browser uploads.
