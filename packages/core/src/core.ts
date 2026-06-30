@@ -1,6 +1,12 @@
 import { join } from "node:path";
 
-import { createAssetRepository, createDb, createUploadSessionRepository, type DB } from "@bunbooru/db";
+import {
+  createAssetRepository,
+  createDb,
+  createTagRepository,
+  createUploadSessionRepository,
+  type DB,
+} from "@bunbooru/db";
 import {
   createFilesystemStaging,
   createFilesystemStorageProvider,
@@ -10,6 +16,7 @@ import {
 
 import { createCoreEvents, type CoreEvents } from "./events";
 import { createAssetService, type AssetService } from "./services/asset-service";
+import { createTagService, type TagService } from "./services/tag-service";
 import { createUploadService, type UploadService } from "./services/upload-service";
 
 /**
@@ -21,6 +28,8 @@ export interface Core {
   assetService: AssetService;
   /** Resumable chunked uploads — stages chunks, then finalizes via `assetService`. */
   uploadService: UploadService;
+  /** Tag taxonomy + asset↔tag application (normalization, set/diff, postCount). */
+  tagService: TagService;
   /** Typed pub/sub bus — Core emits domain events (e.g. `asset.created`); plugins subscribe. */
   events: CoreEvents;
 }
@@ -55,7 +64,8 @@ export function assembleCore(
     assetService,
     maxResumableUploadBytes,
   );
-  return { assetService, uploadService, events };
+  const tagService = createTagService(createTagRepository(db));
+  return { assetService, uploadService, tagService, events };
 }
 
 /**

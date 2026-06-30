@@ -6,6 +6,7 @@ import { Download } from "lucide-react";
 import { AssetImage } from "../components/asset-image";
 import { RatingControl, type Rating } from "../components/rating-control";
 import { SearchBox } from "../components/popover/search-box";
+import { PostTagPanel } from "../components/tags/post-tag-panel";
 import { assetFileUrl } from "../lib/api";
 import { useAsset, useUpdateAsset, type AssetDto } from "../lib/assets";
 
@@ -50,10 +51,9 @@ export function PostDetailPage() {
       <aside className="w-64 shrink-0 space-y-4">
         <SearchBox placeholder="Search" className="w-full" />
 
-        <div>
-          <h3 className="mb-1 font-bold">Tags</h3>
-          <p className="text-[12px] text-muted">No tags yet.</p>
-        </div>
+        {/* Only mount the tag panel for a real asset — its query 404s otherwise,
+            and editing tags on a non-existent post makes no sense. */}
+        {asset ? <PostTagPanel key={asset.id} assetId={asset.id} /> : null}
 
         {asset ? (
           <AssetInfo key={asset.id} asset={asset} />

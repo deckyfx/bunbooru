@@ -21,3 +21,7 @@ export {
   createUploadSessionRepository,
   type UploadSessionRepository,
 } from "./repositories/upload-session-repository";
+export {
+  createTagRepository,
+  type TagRepository,
+} from "./repositories/tag-repository";

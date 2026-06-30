@@ -18,7 +18,7 @@ export const CORE_PACKAGE = "@bunbooru/core" as const;
 export type { StorageProvider };
 
 // Domain row types, re-exported so downstream apps depend on Core, not db directly.
-export type { Asset, AssetUpdate, Rating, Tag, User } from "@bunbooru/db";
+export type { Asset, AssetUpdate, Rating, Tag, TagCategory, User } from "@bunbooru/db";
 
 // Core assembly — the single wiring entry point for the API composition root.
 export {
@@ -57,6 +57,16 @@ export {
   type UploadBegun,
   type UploadService,
 } from "./services/upload-service";
+
+// Tag domain — normalization + asset↔tag application (data access in @bunbooru/db).
+export {
+  createTagService,
+  normalizeTagName,
+  DEFAULT_TAG_LIMIT,
+  MAX_TAG_LENGTH,
+  MAX_TAG_LIMIT,
+  type TagService,
+} from "./services/tag-service";
 
 // Typed domain errors the API maps to HTTP status codes.
 export { UnsupportedMediaError, UploadConflictError, UploadRangeError } from "./errors";
