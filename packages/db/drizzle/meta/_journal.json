@@ -36,6 +36,13 @@
       "when": 1782777080179,
       "tag": "0004_useful_exiles",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1782830961248,
+      "tag": "0005_tag_post_count_trigger",
+      "breakpoints": true
     }
   ]
 }

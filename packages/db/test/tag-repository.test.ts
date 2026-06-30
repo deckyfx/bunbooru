@@ -103,6 +103,23 @@ describe.skipIf(!TEST_DATABASE_URL)("TagRepository (integration)", () => {
     expect(counts["smile"]).toBe(1); // added to a1
   });
 
+  it("decrements postCount when an asset is deleted (cascade trigger)", async () => {
+    const assetId = await seedAsset("a");
+    const rows = await tags.getOrCreateByNames(["1girl", "solo"]);
+    await tags.setAssetTags(
+      assetId,
+      rows.map((t) => t.id),
+    );
+    expect((await tags.findByName("1girl"))?.postCount).toBe(1);
+
+    // Deleting the asset cascades the asset_tags rows; the trigger must keep
+    // post_count in sync (a manual setAssetTags decrement alone wouldn't fire).
+    await db.execute(sql`DELETE FROM assets WHERE id = ${assetId}`);
+
+    expect((await tags.findByName("1girl"))?.postCount).toBe(0);
+    expect((await tags.findByName("solo"))?.postCount).toBe(0);
+  });
+
   it("re-applying the same set is a no-op (postCount unchanged)", async () => {
     const assetId = await seedAsset("a");
     const rows = await tags.getOrCreateByNames(["1girl"]);

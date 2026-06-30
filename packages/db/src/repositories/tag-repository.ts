@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, like, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, like } from "drizzle-orm";
 
 import { assets, assetTags, tags, type Tag, type TagCategory } from "../schema";
 import type { DB } from "../client";
@@ -96,21 +96,16 @@ export function createTagRepository(db: DB): TagRepository {
         const toAdd = desired.filter((id) => !currentIds.has(id));
         const toRemove = [...currentIds].filter((id) => !desiredIds.has(id));
 
+        // Link/unlink only — `tags.post_count` is maintained by the
+        // asset_tags AFTER INSERT/DELETE trigger (migration 0005), so it stays
+        // correct here AND on ON DELETE CASCADE when an asset is removed.
         if (toAdd.length > 0) {
           await tx.insert(assetTags).values(toAdd.map((tagId) => ({ assetId, tagId })));
-          await tx
-            .update(tags)
-            .set({ postCount: sql`${tags.postCount} + 1` })
-            .where(inArray(tags.id, toAdd));
         }
         if (toRemove.length > 0) {
           await tx
             .delete(assetTags)
             .where(and(eq(assetTags.assetId, assetId), inArray(assetTags.tagId, toRemove)));
-          await tx
-            .update(tags)
-            .set({ postCount: sql`${tags.postCount} - 1` })
-            .where(inArray(tags.id, toRemove));
         }
       });
     },

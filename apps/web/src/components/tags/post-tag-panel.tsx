@@ -23,7 +23,7 @@ function tokens(text: string): string[] {
  * the token being typed.
  */
 export function PostTagPanel({ assetId }: { assetId: number }) {
-  const { data: tags, isLoading } = useAssetTags(assetId);
+  const { data: tags, isLoading, isError } = useAssetTags(assetId);
   const setTags = useSetAssetTags(assetId);
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState("");
@@ -149,6 +149,8 @@ export function PostTagPanel({ assetId }: { assetId: number }) {
         </div>
       ) : isLoading ? (
         <p className="text-[12px] text-muted">Loading…</p>
+      ) : isError ? (
+        <p className="text-[12px] text-tag-artist">Couldn’t load tags right now. Please try again.</p>
       ) : !tags || tags.length === 0 ? (
         <p className="text-[12px] text-muted">No tags yet.</p>
       ) : (
