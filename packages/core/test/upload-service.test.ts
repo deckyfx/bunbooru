@@ -86,10 +86,13 @@ function fakeSessions(initial?: Partial<UploadSession>): {
       delete: async (token) => {
         rows.delete(token);
       },
-      deleteExpired: async (at: Date) => {
-        const expired = [...rows.values()].filter((r) => r.expiresAt < at);
-        for (const r of expired) rows.delete(r.token);
-        return expired.map((r) => ({ token: r.token, stagingKey: r.stagingKey }));
+      deleteExpired: async (at: Date, limit?: number) => {
+        const expired = [...rows.values()]
+          .filter((r) => r.expiresAt < at)
+          .sort((a, b) => a.expiresAt.getTime() - b.expiresAt.getTime());
+        const batch = limit === undefined ? expired : expired.slice(0, limit);
+        for (const r of batch) rows.delete(r.token);
+        return batch.map((r) => ({ token: r.token, stagingKey: r.stagingKey }));
       },
     },
   };
@@ -308,6 +311,40 @@ describe("createUploadService.gcExpired", () => {
     expect(removed).toBe(0);
     expect(sessions.get("fresh")).toBeDefined();
     expect(staging.removed).toEqual([]);
+  });
+
+  it("drains a backlog larger than the batch size across multiple batches", async () => {
+    const sessions = fakeSessions();
+    const staging = fakeStaging();
+    // gcBatchSize = 2 with 5 expired sessions → 3 batches (2 + 2 + 1).
+    const service = createUploadService(
+      sessions.repo,
+      staging.store,
+      assetService,
+      1024,
+      () => new Date(),
+      2,
+    );
+    const past = new Date(Date.now() - 1000);
+    for (let i = 0; i < 5; i++) {
+      await sessions.repo.create({
+        token: `t${i}`,
+        filename: "f.png",
+        mimeType: null,
+        declaredSize: 4,
+        uploadedSize: 0,
+        stagingKey: `t${i}`,
+        uploaderId: null,
+        expiresAt: past,
+      });
+    }
+
+    // A single unbounded delete would return only the first batch; draining all
+    // five proves gcExpired loops over batches.
+    const removed = await service.gcExpired();
+    expect(removed).toBe(5);
+    expect([...staging.removed].sort()).toEqual(["t0", "t1", "t2", "t3", "t4"]);
+    for (let i = 0; i < 5; i++) expect(sessions.get(`t${i}`)).toBeUndefined();
   });
 
   it("waits for an in-flight finalize before removing its staging file", async () => {

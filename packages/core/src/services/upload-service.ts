@@ -87,30 +87,39 @@ export function createUploadService(
   assetService: AssetService,
   maxUploadBytes: number,
   now: () => Date = () => new Date(),
+  gcBatchSize = 500,
 ): UploadService {
   // Serializes each session's write+commit so concurrent PATCHes on one token
   // can't corrupt the staged file (see {@link createKeyedMutex}).
   const withSessionLock = createKeyedMutex();
 
   async function gcExpired(at: Date = now()): Promise<number> {
-    const expired = await sessions.deleteExpired(at);
-    // Remove each staging file UNDER its session lock: a finalize reads the lazy
-    // file-backed staged Blob across several passes while holding this lock, so an
-    // unlocked sweep could delete the file mid-finalize and corrupt the upload.
-    // Serializing here makes the removal wait for any in-flight finalize (which,
-    // on success, has already removed the file — making this a harmless no-op).
-    await Promise.all(
-      expired.map(({ token, stagingKey }) =>
-        withSessionLock(token, () => staging.remove(stagingKey).catch(() => undefined)),
-      ),
-    );
-    return expired.length;
+    let total = 0;
+    // Drain the backlog in bounded batches: one sweep never pulls an unbounded
+    // result set or fans out unbounded concurrent staging removals.
+    for (;;) {
+      const expired = await sessions.deleteExpired(at, gcBatchSize);
+      if (expired.length === 0) break;
+      // Remove each staging file UNDER its session lock: a finalize reads the lazy
+      // file-backed staged Blob across several passes while holding this lock, so
+      // an unlocked sweep could delete the file mid-finalize and corrupt the
+      // upload. Serializing makes the removal wait for any in-flight finalize
+      // (which, on success, has already removed the file — a harmless no-op).
+      await Promise.all(
+        expired.map(({ token, stagingKey }) =>
+          withSessionLock(token, () => staging.remove(stagingKey).catch(() => undefined)),
+        ),
+      );
+      total += expired.length;
+      if (expired.length < gcBatchSize) break;
+    }
+    return total;
   }
 
   return {
     async begin({ filename, size, mimeType, uploaderId }) {
-      // Bound the size up front: completion reads the whole staged file into
-      // memory, so reject oversized sessions before creating DB/staging state.
+      // Bound the declared size up front (storage/abuse ceiling), before creating
+      // any DB/staging state — finalize streams, so this isn't a memory limit.
       if (!Number.isSafeInteger(size) || size < 1 || size > maxUploadBytes) {
         throw new UploadRangeError(`invalid upload size: ${size}`);
       }
