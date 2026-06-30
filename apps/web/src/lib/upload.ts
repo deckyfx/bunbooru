@@ -43,7 +43,13 @@ export async function uploadAsset(file: File, options: UploadOptions = {}): Prom
   let attempts = 0;
 
   try {
-    while (offset < file.size) {
+    // Loop until the server finalizes (returns the asset). Each pass sends the
+    // next data slice; once `offset === file.size` it sends a zero-length PATCH
+    // at the declared size, which (re)drives finalization. That makes a transient
+    // finalize failure recoverable: the server keeps the staged bytes + session
+    // committed at the full size, and this empty terminal PATCH retries it
+    // instead of giving up after the bytes are already all uploaded.
+    while (true) {
       throwIfAborted(signal);
       const slice = file.slice(offset, Math.min(offset + CHUNK_SIZE, file.size));
       try {
@@ -64,9 +70,6 @@ export async function uploadAsset(file: File, options: UploadOptions = {}): Prom
         await delay(300 * attempts, signal);
       }
     }
-    // The completing chunk returns the asset above; reaching here means the
-    // server never finalized (shouldn't happen for a non-empty file).
-    throw new Error("Upload finished but the server did not finalize it.");
   } catch (error) {
     // Any terminal failure after the session exists: the token is about to be
     // lost to the caller, so best-effort cancel it server-side (abort or not).

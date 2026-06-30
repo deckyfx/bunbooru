@@ -186,6 +186,37 @@ describe("createUploadService.appendChunk", () => {
     expect(staging.removed).toHaveLength(0);
   });
 
+  it("re-finalizes on a retried terminal chunk after a transient failure", async () => {
+    const sessions = fakeSessions({ token: "tok", declaredSize: 4 });
+    const staging = fakeStaging();
+    let calls = 0;
+    const service = createUploadService(
+      sessions.repo,
+      staging.store,
+      fakeAssetService(async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("transient storage failure");
+        return { asset: sampleAsset, deduped: false };
+      }),
+      1024,
+    );
+
+    // First terminal chunk fills the file but finalize fails transiently: the
+    // bytes + session are kept (offset stays committed at the declared size).
+    await expect(service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]))).rejects.toThrow(
+      "transient",
+    );
+    expect(sessions.get("tok")?.uploadedSize).toBe(4);
+    expect(staging.removed).toHaveLength(0);
+
+    // The client re-drives finalization with a zero-length PATCH at the declared
+    // size; this time it succeeds and cleans up.
+    const result = await service.appendChunk("tok", 4, new Uint8Array(0));
+    expect(result).toEqual({ status: "complete", asset: sampleAsset, deduped: false });
+    expect(sessions.get("tok")).toBeUndefined();
+    expect(staging.removed).toEqual(["tok"]);
+  });
+
   it("cleans up the session + staging when the bytes are undecodable (permanent)", async () => {
     const sessions = fakeSessions({ token: "tok", declaredSize: 4 });
     const staging = fakeStaging();
@@ -204,6 +235,28 @@ describe("createUploadService.appendChunk", () => {
     // Permanent failure: no point keeping undecodable bytes around.
     expect(sessions.get("tok")).toBeUndefined();
     expect(staging.removed).toEqual(["tok"]);
+  });
+
+  it("serializes cancel against an in-flight append (no interleave)", async () => {
+    const sessions = fakeSessions({ token: "tok", declaredSize: 4 });
+    const staging = fakeStaging();
+    const service = createUploadService(
+      sessions.repo,
+      staging.store,
+      fakeAssetService(async () => ({ asset: sampleAsset, deduped: false })),
+      1024,
+    );
+
+    // append is registered on the session lock first, so it runs to completion
+    // (finalize → delete session) before cancel's lookup; cancel then finds no
+    // session rather than racing the delete/remove mid-append.
+    const [appendResult, cancelResult] = await Promise.all([
+      service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4])),
+      service.cancel("tok"),
+    ]);
+    expect(appendResult).toEqual({ status: "complete", asset: sampleAsset, deduped: false });
+    expect(cancelResult).toBe(false);
+    expect(sessions.get("tok")).toBeUndefined();
   });
 
   it("finalizes into an asset and cleans up on success", async () => {

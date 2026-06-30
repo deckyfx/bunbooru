@@ -189,14 +189,20 @@ export function createUploadService(
       });
     },
 
-    async cancel(token) {
-      const session = await sessions.findByToken(token);
-      if (!session) return false;
-      // Delete the DB row first: if removing the staged file fails, we must not
-      // leave a session advertising a resumable upload whose bytes are gone.
-      await sessions.delete(token);
-      await staging.remove(session.stagingKey).catch(() => undefined);
-      return true;
+    cancel(token) {
+      // Serialize cancellation under the same per-session lock as appendChunk so
+      // it can't interleave with an in-flight append (e.g. delete the row or wipe
+      // the staged file while a chunk write/commit is mid-flight). It runs only
+      // between appends, never during one.
+      return withSessionLock(token, async () => {
+        const session = await sessions.findByToken(token);
+        if (!session) return false;
+        // Delete the DB row first: if removing the staged file fails, we must not
+        // leave a session advertising a resumable upload whose bytes are gone.
+        await sessions.delete(token);
+        await staging.remove(session.stagingKey).catch(() => undefined);
+        return true;
+      });
     },
 
     gcExpired,
