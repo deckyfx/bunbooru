@@ -29,6 +29,8 @@ function memoryRepo(): AssetRepository {
     count: async () => 0,
     findById: async (id) => rows.find((r) => r.id === id) ?? null,
     findBySha256: async (sha256) => rows.find((r) => r.sha256 === sha256) ?? null,
+    findReferencedStorageKeys: async (keys) =>
+      new Set(rows.filter((r) => keys.includes(r.storageKey)).map((r) => r.storageKey)),
     create: async (input: NewAsset) => {
       const row: Asset = {
         id: nextId++,
@@ -135,7 +137,10 @@ describe("resumable upload finalize (real filesystem)", () => {
       await staging.writeChunk(key, off, png.subarray(off, Math.min(off + chunkSize, png.byteLength)));
     }
 
-    const { asset, deduped } = await assets.createFromSource(staging.open(key));
+    const { asset, deduped } = await assets.createFromSource({
+      kind: "file",
+      path: staging.path(key),
+    });
 
     expect(deduped).toBe(false);
     expect([asset.width, asset.height]).toEqual([400, 300]);
@@ -144,14 +149,35 @@ describe("resumable upload finalize (real filesystem)", () => {
     // Streamed hash equals the hash over the full in-memory buffer.
     expect(asset.sha256).toBe(referenceSha);
 
-    // The bytes round-trip exactly through the streamed store.
+    // The bytes round-trip exactly through the store.
     expect(await storage.exists(asset.storageKey)).toBe(true);
     const stored = new Uint8Array(
       await new Response(await storage.stream(asset.storageKey)).arrayBuffer(),
     );
     expect(stored).toEqual(new Uint8Array(png));
+  });
 
-    await staging.remove(key);
+  it("finalizes via a move (ingestLocalFile) when given the staging path, consuming the staged file", async () => {
+    root = await mkdtemp(join(tmpdir(), "bunbooru-finalize-"));
+    const staging = createFilesystemStaging({ root: join(root, "staging") });
+    const storage = createFilesystemStorageProvider({ root: join(root, "assets") });
+    const assets = createAssetService(memoryRepo(), storage);
+
+    const png = solidPng(120, 90);
+    await staging.writeChunk("mv", 0, png);
+    const stagedPath = staging.path("mv");
+    expect(await Bun.file(stagedPath).exists()).toBe(true);
+
+    const { asset } = await assets.createFromSource({ kind: "file", path: stagedPath });
+
+    // The staged file was MOVED into the store (not copied): source gone, blob present.
+    expect(await Bun.file(stagedPath).exists()).toBe(false);
+    expect([asset.width, asset.height]).toEqual([120, 90]);
+    expect(await storage.exists(asset.storageKey)).toBe(true);
+    const stored = new Uint8Array(
+      await new Response(await storage.stream(asset.storageKey)).arrayBuffer(),
+    );
+    expect(stored).toEqual(new Uint8Array(png));
   });
 
   it("rejects an undecodable staged file with UnsupportedMediaError", async () => {
@@ -161,8 +187,8 @@ describe("resumable upload finalize (real filesystem)", () => {
     const assets = createAssetService(memoryRepo(), storage);
 
     await staging.writeChunk("bad", 0, new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]));
-    await expect(assets.createFromSource(staging.open("bad"))).rejects.toBeInstanceOf(
-      UnsupportedMediaError,
-    );
+    await expect(
+      assets.createFromSource({ kind: "file", path: staging.path("bad") }),
+    ).rejects.toBeInstanceOf(UnsupportedMediaError);
   });
 });

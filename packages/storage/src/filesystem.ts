@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rename, rm } from "node:fs/promises";
+import { copyFile, mkdir, rename, rm, unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 import type { StorageProvider } from "./provider";
@@ -59,6 +59,22 @@ export function createFilesystemStorageProvider(
       return Bun.file(resolveKey(key)).exists();
     },
 
+    async statModifiedAt(key) {
+      const file = Bun.file(resolveKey(key));
+      return (await file.exists()) ? new Date(file.lastModified) : null;
+    },
+
+    async *list(prefix = "") {
+      // Walk files under `root` matching the prefix; keys are paths relative to
+      // `root` (so they round-trip back through resolveKey). `**/*` is files-only
+      // by default. A file deleted between scan and stat yields lastModified 0,
+      // which an age filter treats as old — harmless, since delete is idempotent.
+      const glob = new Bun.Glob(`${prefix}**/*`);
+      for await (const rel of glob.scan({ cwd: root, onlyFiles: true })) {
+        yield { key: rel, modifiedAt: new Date(Bun.file(resolve(root, rel)).lastModified) };
+      }
+    },
+
     async stream(key) {
       const file = Bun.file(resolveKey(key));
       if (!(await file.exists())) {
@@ -80,6 +96,29 @@ export function createFilesystemStorageProvider(
       const target = resolveKey(to);
       await mkdir(dirname(target), { recursive: true });
       await rename(source, target);
+    },
+
+    async ingestLocalFile(localPath, key) {
+      const target = resolveKey(key);
+      await mkdir(dirname(target), { recursive: true });
+      try {
+        // Same filesystem → atomic rename, no copy (the whole point).
+        await rename(localPath, target);
+      } catch (error) {
+        // Cross-device (EXDEV): rename can't span filesystems, so fall back to a
+        // copy + remove of the source to preserve the "consumes the source" contract.
+        if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+        try {
+          await copyFile(localPath, target);
+          await unlink(localPath);
+        } catch (fallbackError) {
+          // Don't leave a half-committed object: if the copy landed but the
+          // source removal failed, roll the target back so callers see a clean
+          // failure (no orphan blob at `key`).
+          await rm(target, { force: true });
+          throw fallbackError;
+        }
+      }
     },
 
     async getPublicUrl() {

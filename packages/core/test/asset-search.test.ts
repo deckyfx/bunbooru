@@ -25,6 +25,10 @@ const noopStorage: StorageProvider = {
   store: async () => undefined,
   delete: async () => undefined,
   exists: async () => false,
+  statModifiedAt: async () => null,
+  list: async function* () {
+    throw new Error("unused");
+  },
   stream: async () => {
     throw new Error("unused");
   },

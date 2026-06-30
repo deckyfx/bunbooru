@@ -14,7 +14,7 @@ import { createApp } from "./server";
 const core = createCore({
   databaseUrl: envConfig.DATABASE_URL,
   storageRoot: envConfig.STORAGE_ROOT,
-  maxUploadBytes: envConfig.MAX_UPLOAD_BYTES,
+  maxResumableUploadBytes: envConfig.MAX_RESUMABLE_UPLOAD_BYTES,
 });
 const app = createApp({ core, maxUploadBytes: envConfig.MAX_UPLOAD_BYTES });
 
@@ -28,32 +28,58 @@ app.listen(
   },
 );
 
-// Periodically reclaim expired upload sessions + their staging files. Without
-// this, abandoned sessions only get swept opportunistically when the next upload
-// begins. `gcExpired()` is idempotent and self-contained — we just drive it on a
-// timer, isolate failures, and `unref()` so it never keeps the process alive.
-const gcIntervalMs = envConfig.UPLOAD_GC_INTERVAL_MS;
-const gcTimer =
-  gcIntervalMs > 0
-    ? setInterval(() => {
-        void core.uploadService
-          .gcExpired()
-          .then((removed) => {
-            if (removed > 0) logger.info("upload_gc_swept", { removed });
-          })
-          .catch((error) => {
-            logger.error("upload_gc_failed", {
-              error: error instanceof Error ? error.message : String(error),
-            });
-          });
-      }, gcIntervalMs)
-    : undefined;
-gcTimer?.unref();
+// Never reclaim a blob written within this window — its row insert may simply
+// not have landed yet (the store→insert gap is milliseconds, so 1h is ample).
+const ORPHAN_GC_GRACE_MS = 60 * 60 * 1000;
+
+/**
+ * Drive an idempotent background sweep every `intervalMs` (`<= 0` disables it).
+ * Failures are isolated (logged, never thrown), the count is logged when > 0,
+ * and the timer is `unref()`'d so it never keeps the process alive. Returns the
+ * timer so shutdown can clear it.
+ */
+function startSweep(
+  intervalMs: number,
+  label: string,
+  run: () => Promise<number>,
+): ReturnType<typeof setInterval> | undefined {
+  if (intervalMs <= 0) return undefined;
+  // Guard against overlap: a slow sweep (e.g. a full-store orphan scan) must not
+  // have a second run start on top of it. The async wrapper also turns a
+  // synchronous throw from `run()` into a rejection we actually catch.
+  let inFlight = false;
+  const sweep = async (): Promise<void> => {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      const removed = await run();
+      if (removed > 0) logger.info(`${label}_swept`, { removed });
+    } catch (error) {
+      logger.error(`${label}_failed`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      inFlight = false;
+    }
+  };
+  const timer = setInterval(() => void sweep(), intervalMs);
+  timer.unref();
+  return timer;
+}
+
+// Two cadences: expired upload sessions + their staging files get swept often
+// (cheap), while orphaned asset blobs get a slow sweep (a full store scan).
+const sweepTimers = [
+  startSweep(envConfig.UPLOAD_GC_INTERVAL_MS, "upload_gc", () => core.uploadService.gcExpired()),
+  startSweep(envConfig.ASSET_ORPHAN_GC_INTERVAL_MS, "asset_orphan_gc", () =>
+    core.assetService.gcOrphanedBlobs(new Date(Date.now() - ORPHAN_GC_GRACE_MS)),
+  ),
+].filter((t): t is ReturnType<typeof setInterval> => t !== undefined);
 
 /** Stop the server cleanly so `docker stop` (SIGTERM) drains in-flight requests. */
 const shutdown = async (): Promise<void> => {
   logger.info("server_stopping", {});
-  if (gcTimer) clearInterval(gcTimer);
+  for (const timer of sweepTimers) clearInterval(timer);
   try {
     await app.stop();
     process.exit(0);

@@ -1,5 +1,5 @@
 import type { Asset, AssetRepository, AssetUpdate, NewAsset } from "@bunbooru/db";
-import type { StorageProvider } from "@bunbooru/storage";
+import type { StorageProvider, StoredObject } from "@bunbooru/storage";
 
 import { UnsupportedMediaError } from "../errors";
 import type { CoreEvents } from "../events";
@@ -11,6 +11,12 @@ export const MAX_PER_PAGE = 100;
 
 /** Decompression-bomb guard: reject images whose pixel count exceeds this. */
 const MAX_PIXELS = 100_000_000; // ~100 MP
+
+/** Key prefix under which all asset blobs live (see {@link contentKey}). */
+const ASSET_KEY_PREFIX = "assets/";
+
+/** Default batch size for the orphan-blob sweep (bounds per-batch work). */
+const ORPHAN_GC_BATCH = 500;
 
 /** Canonical MIME by Bun-sniffed image format — also the accept-list. */
 const MIME_BY_FORMAT: Partial<Record<string, string>> = {
@@ -56,6 +62,15 @@ export interface CreateAssetMeta {
   uploaderId?: number | null;
 }
 
+/**
+ * The bytes to ingest via {@link AssetService.createFromSource}. A `file` source
+ * names a local path the service both hashes and may *move* into storage — the
+ * Blob is derived from that path, so the bytes that are hashed/sniffed and the
+ * bytes that land in storage can never diverge. A `blob` source is hashed and
+ * always copied (no move).
+ */
+export type IngestSource = { kind: "blob"; blob: Blob } | { kind: "file"; path: string };
+
 /** Raw upload: the in-memory bytes plus optional metadata the client may set. */
 export interface CreateAssetInput extends CreateAssetMeta {
   bytes: Uint8Array;
@@ -92,12 +107,24 @@ export interface AssetService {
    * streams hash → sniff → store without buffering the whole object into memory.
    * Used by the resumable upload finalize path; {@link create} wraps this for
    * in-memory bytes. Same pipeline, so both paths dedupe/sniff/emit identically.
+   * A `file` {@link IngestSource} lets a same-filesystem provider finalize by
+   * moving the file into storage instead of copying it.
    */
-  createFromSource(source: Blob, meta?: CreateAssetMeta): Promise<CreateAssetResult>;
+  createFromSource(source: IngestSource, meta?: CreateAssetMeta): Promise<CreateAssetResult>;
   /** Patch an asset's mutable metadata (rating/source); null if it doesn't exist. */
   update(id: number, patch: AssetUpdate): Promise<Asset | null>;
   /** Open an asset's stored bytes for streaming, or null if the asset is absent. */
   openFile(id: number): Promise<AssetFile | null>;
+  /**
+   * Reclaim orphaned asset blobs — stored objects no asset row references, left
+   * by a rare non-race insert failure after the blob was written (content keys
+   * are deduped, so they're benign but waste space). Only objects last modified
+   * before `olderThan` are removed, so an in-flight upload's just-written blob
+   * (stored, row not yet inserted) is never reclaimed. Returns how many were
+   * removed. Runs in bounded batches over the whole store, so call it on a slow
+   * cadence (it's an O(stored-objects) scan), not the frequent session sweep.
+   */
+  gcOrphanedBlobs(olderThan: Date, batchSize?: number): Promise<number>;
 }
 
 /** Clamp to an integer ≥ 1, falling back to `fallback` for missing/invalid input. */
@@ -130,7 +157,12 @@ export function createAssetService(
   async function ingest(
     source: Blob,
     { rating, source: sourceUrl, uploaderId }: CreateAssetMeta = {},
+    localPath?: string,
   ): Promise<CreateAssetResult> {
+    // Capture the size now: the move fast-path below consumes the source file, so
+    // reading `source.size` afterwards (a fresh stat) would see a vanished file.
+    const sizeBytes = source.size;
+
     // One streaming pass computes both content hashes without buffering the blob.
     const shaHasher = new Bun.CryptoHasher("sha256");
     const md5Hasher = new Bun.CryptoHasher("md5");
@@ -159,17 +191,25 @@ export function createAssetService(
 
     const md5 = md5Hasher.digest("hex");
     const storageKey = contentKey(sha256, ext);
-    // Hand the blob (not a stream) to storage: a file-backed `Bun.file()` is
-    // written natively without buffering the whole object, and the provider
-    // picks the most efficient path.
-    await storage.store(storageKey, source);
+    // Persist the bytes. When the caller hands us the source's local path AND the
+    // provider can ingest a local file (same-filesystem), MOVE it into place —
+    // no copy. Otherwise stream the blob in. The move consumes the source, so a
+    // (rare) insert failure below can't fall back to the staged file for retry;
+    // the moved-but-unreferenced blob is reclaimed by orphan-blob GC.
+    if (localPath !== undefined && storage.ingestLocalFile) {
+      await storage.ingestLocalFile(localPath, storageKey);
+    } else {
+      // Hand the blob (not a stream) to storage: a file-backed `Bun.file()` is
+      // written natively without buffering the whole object.
+      await storage.store(storageKey, source);
+    }
 
     const input: NewAsset = {
       storageKey,
       mimeType,
       width: meta.width,
       height: meta.height,
-      sizeBytes: source.size,
+      sizeBytes,
       sha256,
       md5,
       source: sourceUrl ?? null,
@@ -258,7 +298,11 @@ export function createAssetService(
     },
 
     createFromSource(source, meta = {}) {
-      return ingest(source, meta);
+      // For a file source, derive the Blob from the SAME path we may move into
+      // storage, so the hashed/sniffed bytes and the stored bytes can't diverge.
+      return source.kind === "file"
+        ? ingest(Bun.file(source.path), meta, source.path)
+        : ingest(source.blob, meta);
     },
 
     update(id, patch) {
@@ -274,6 +318,47 @@ export function createAssetService(
       if (!(await storage.exists(asset.storageKey))) return null;
       const stream = await storage.stream(asset.storageKey);
       return { stream, mimeType: asset.mimeType, sizeBytes: asset.sizeBytes };
+    },
+
+    async gcOrphanedBlobs(olderThan, batchSize = ORPHAN_GC_BATCH) {
+      // Normalize the bound so a NaN/Infinity/0 can't turn this into one giant
+      // unbounded batch, defeating the bounded-work contract.
+      const limit =
+        Number.isFinite(batchSize) && batchSize >= 1 ? Math.floor(batchSize) : ORPHAN_GC_BATCH;
+      let removed = 0;
+      let batch: StoredObject[] = [];
+      // Resolve a batch: one query tells us which keys are still referenced; the
+      // rest, if old enough to clear the grace window, are deletion candidates.
+      const flush = async (): Promise<void> => {
+        if (batch.length === 0) return;
+        const referenced = await repository.findReferencedStorageKeys(batch.map((o) => o.key));
+        const candidates = batch.filter((o) => !referenced.has(o.key) && o.modifiedAt < olderThan);
+        const deleted = await Promise.all(
+          candidates.map(async (o) => {
+            // Re-confirm age immediately before deleting: between enumeration and
+            // now the key may have been rewritten (a re-upload of identical
+            // content bumps mtime, with a row insert imminent). Skip anything no
+            // longer old, or already gone — narrows the race to this stat→delete
+            // gap. Only count deletes that actually succeed.
+            const current = await storage.statModifiedAt(o.key);
+            if (current === null || current >= olderThan) return false;
+            try {
+              await storage.delete(o.key);
+              return true;
+            } catch {
+              return false;
+            }
+          }),
+        );
+        removed += deleted.filter(Boolean).length;
+        batch = [];
+      };
+      for await (const object of storage.list(ASSET_KEY_PREFIX)) {
+        batch.push(object);
+        if (batch.length >= limit) await flush();
+      }
+      await flush();
+      return removed;
     },
   };
 }

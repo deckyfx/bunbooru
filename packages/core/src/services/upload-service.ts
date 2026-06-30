@@ -187,12 +187,18 @@ export function createUploadService(
         // UnsupportedMediaError → 415). A transient failure (DB/storage hiccup)
         // leaves the staged bytes + session intact so the upload can be retried
         // rather than forcing a full re-upload; abandoned ones expire via GC.
+        // Caveat: when finalize takes the MOVE fast path, the staged file is
+        // consumed before the row insert, so a (rare) transient insert failure
+        // can't be retried from staging — the moved blob becomes an orphan that
+        // orphan-blob GC reclaims, and the session expires via session GC.
         let permanent = true;
         try {
-          // Finalize from the staged file as a streaming source — hashes, sniffs,
-          // and stores without reading the whole (up to multi-GB) file into memory.
+          // Finalize from the staged file as a file source — the asset service
+          // hashes/sniffs/stores it without reading the whole (up to multi-GB)
+          // file into memory, and a same-filesystem store MOVES it into place (no
+          // copy) rather than streaming a full copy.
           const { asset, deduped } = await assetService.createFromSource(
-            staging.open(session.stagingKey),
+            { kind: "file", path: staging.path(session.stagingKey) },
             { uploaderId: session.uploaderId },
           );
           return { status: "complete", asset, deduped };
