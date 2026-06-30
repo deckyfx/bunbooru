@@ -1,7 +1,14 @@
 import type { StatsRepository } from "@bunbooru/db";
 
-/** Debounce window for counting a repeat view from the same visitor. */
-const VIEW_SESSION_WINDOW_MS = 30 * 60 * 1000; // 30 min
+/**
+ * Throttle window for repeat views from the same visitor: a view counts at most
+ * once per this interval *since the last counted view*. This is a fixed-window
+ * throttle, not an idle-reset debounce — refresh-spam within the window is
+ * suppressed, but a genuine re-view once the window has elapsed counts again
+ * (the desired behaviour for a view counter; an idle-reset would under-count an
+ * engaged reader who keeps the page open).
+ */
+const VIEW_THROTTLE_WINDOW_MS = 30 * 60 * 1000; // 30 min
 
 /** A snapshot of site-wide traffic counters for the UI. */
 export interface SiteStats {
@@ -12,12 +19,12 @@ export interface SiteStats {
 }
 
 /**
- * Traffic counting: per-post views (debounced per visitor-session) and daily
- * unique visitors. Stays HTTP-agnostic — the API supplies the opaque
- * `visitorId` (a first-party cookie id) and decides when to call these.
+ * Traffic counting: per-post views (throttled per visitor) and daily unique
+ * visitors. Stays HTTP-agnostic — the API supplies the opaque `visitorId` (a
+ * client-owned id) and decides when to call these.
  */
 export interface StatsService {
-  /** Record a view of `assetId`; returns whether it counted (false = debounced repeat). */
+  /** Record a view of `assetId`; returns whether it counted (false = throttled repeat). */
   recordView(visitorId: string, assetId: number): Promise<boolean>;
   /** Record that `visitorId` visited today. */
   recordVisit(visitorId: string): Promise<void>;
@@ -40,7 +47,7 @@ export function createStatsService(
 
   return {
     recordView(visitorId, assetId) {
-      return stats.recordView(visitorId, assetId, VIEW_SESSION_WINDOW_MS);
+      return stats.recordView(visitorId, assetId, VIEW_THROTTLE_WINDOW_MS);
     },
 
     recordVisit(visitorId) {

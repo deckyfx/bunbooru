@@ -81,6 +81,22 @@ describe.skipIf(!TEST_DATABASE_URL)("StatsRepository (integration)", () => {
     expect(await viewCountOf(id)).toBe(2);
   });
 
+  it("throttles per window since the last counted view (intermediate hits don't extend it)", async () => {
+    const id = await seedAsset("a");
+    expect(await stats.recordView("v1", id, HOUR)).toBe(true);
+    // A hit inside the window doesn't count — and leaves counted_at at the last
+    // *counted* view (it doesn't advance the throttle).
+    expect(await stats.recordView("v1", id, HOUR)).toBe(false);
+
+    // Backdate the last count past the window: the next hit counts, proving the
+    // window is measured from the last count, not the last hit.
+    await db.execute(
+      sql`UPDATE post_views SET counted_at = now() - interval '61 minutes' WHERE visitor_id = 'v1' AND asset_id = ${id}`,
+    );
+    expect(await stats.recordView("v1", id, HOUR)).toBe(true);
+    expect(await viewCountOf(id)).toBe(2);
+  });
+
   it("counts daily unique visitors idempotently", async () => {
     await stats.recordVisit("v1", "2026-03-15");
     await stats.recordVisit("v1", "2026-03-15"); // repeat same day → no-op

@@ -155,12 +155,12 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
       api
         // Opaque visitor id for the traffic counters — never an IP. The client
         // owns a stable id (localStorage) and sends it as `x-visitor-id`, so we
-        // simply read+validate it; this avoids the race a server-minted cookie
-        // would have across a first-load request burst. A request without a valid
-        // header (a non-web client) gets a throwaway per-request id, so its views/
-        // visits just aren't deduped across requests.
+        // read+validate it (no server-minted cookie → no first-load mint race).
+        // Left null when absent/invalid: the counter routes reject rather than
+        // synthesize a throwaway id, which would defeat dedup (every header-less
+        // request would count as a brand-new visitor/view).
         .derive(({ request }) => ({
-          visitorId: readVisitorId(request.headers.get("x-visitor-id")) ?? crypto.randomUUID(),
+          visitorId: readVisitorId(request.headers.get("x-visitor-id")),
         }))
         .get("/health", () => ({ status: "ok" as const }))
         // Newest-first page of assets. `page`/`per_page` are coerced and
@@ -329,6 +329,7 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         .post(
           "/assets/:id/view",
           async ({ params, visitorId }) => {
+            if (visitorId === null) throw new HttpError(400, "Missing or invalid x-visitor-id");
             const asset = await core.assetService.getById(params.id);
             if (!asset) throw new HttpError(404, "Asset not found");
             const counted = await core.statsService.recordView(visitorId, params.id);
@@ -339,6 +340,7 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // Record that this visitor was here today (idempotent per day). The web
         // fires it once on app load.
         .post("/stats/visit", async ({ visitorId }) => {
+          if (visitorId === null) throw new HttpError(400, "Missing or invalid x-visitor-id");
           await core.statsService.recordVisit(visitorId);
           return { ok: true as const };
         })

@@ -22,13 +22,23 @@ const VISITOR_KEY = "bunbooru:visitor";
  * a first-load request burst and count one human several times. Opaque, not an
  * IP; clearing site data resets it, exactly like a cookie.
  */
+let volatileVisitorId: string | null = null;
+
 function visitorId(): string {
-  let id = localStorage.getItem(VISITOR_KEY);
-  if (id === null || !/^[0-9a-f-]{8,64}$/i.test(id)) {
-    id = crypto.randomUUID();
-    localStorage.setItem(VISITOR_KEY, id);
+  // localStorage can throw (private mode, disabled, quota). A header callback
+  // that rejects would fail EVERY request, so fall back to an in-memory id —
+  // the server treats a missing/changed id as a new visitor, no worse than that.
+  try {
+    let id = localStorage.getItem(VISITOR_KEY);
+    if (id === null || !/^[0-9a-f-]{8,64}$/i.test(id)) {
+      id = crypto.randomUUID();
+      localStorage.setItem(VISITOR_KEY, id);
+    }
+    return id;
+  } catch {
+    volatileVisitorId ??= crypto.randomUUID();
+    return volatileVisitorId;
   }
-  return id;
 }
 
 export const api = treaty<App>(

@@ -30,10 +30,17 @@ export function useRecordVisit(): void {
   useEffect(() => {
     if (fired.current) return;
     fired.current = true;
-    void api.api.v1.stats.visit.post().then(() => {
-      // Refresh the footer/home counters so they include this visit.
-      void queryClient.invalidateQueries({ queryKey: ["site-stats"] });
-    });
+    api.api.v1.stats.visit
+      .post()
+      .then(() => {
+        // Refresh the footer/home counters so they include this visit.
+        void queryClient.invalidateQueries({ queryKey: ["site-stats"] });
+      })
+      .catch(() => {
+        // A transient failure shouldn't permanently drop the visit — allow a
+        // retry on the next mount (the endpoint is deduped per day).
+        fired.current = false;
+      });
   }, [queryClient]);
 }
 
@@ -48,15 +55,19 @@ export function useRecordView(assetId: number | undefined): void {
   useEffect(() => {
     if (assetId === undefined || fired.current === assetId) return;
     fired.current = assetId;
-    void api.api.v1
+    api.api.v1
       .assets({ id: String(assetId) })
       .view.post()
       .then((res) => {
-        // Only refetch the asset when the view actually counted (not a debounced
+        // Only refetch the asset when the view actually counted (not a throttled
         // repeat), so the detail page shows the incremented viewCount.
         if (res.data && "counted" in res.data && res.data.counted) {
           void queryClient.invalidateQueries({ queryKey: ["asset", assetId] });
         }
+      })
+      .catch(() => {
+        // Allow a retry on a later mount rather than dropping the view.
+        fired.current = null;
       });
   }, [assetId, queryClient]);
 }

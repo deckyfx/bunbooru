@@ -606,17 +606,25 @@ describe("tags", () => {
 });
 
 describe("traffic counters", () => {
-  it("POST /assets/:id/view records a view (404 when the asset is missing)", async () => {
+  it("POST /assets/:id/view records a view (404 absent asset, 400 absent visitor id)", async () => {
+    const headers = { "x-visitor-id": "abcdef12-3456-7890-abcd-ef1234567890" };
+
     const ok = await buildApp(stubCore({ getById: async () => sampleAsset })).handle(
-      new Request("http://localhost/api/v1/assets/1/view", { method: "POST" }),
+      new Request("http://localhost/api/v1/assets/1/view", { method: "POST", headers }),
     );
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ counted: true });
 
     const missing = await buildApp(stubCore({ getById: async () => null })).handle(
-      new Request("http://localhost/api/v1/assets/999/view", { method: "POST" }),
+      new Request("http://localhost/api/v1/assets/999/view", { method: "POST", headers }),
     );
     expect(missing.status).toBe(404);
+
+    // No visitor id → 400 (before any asset lookup).
+    const noVisitor = await buildApp(stubCore({ getById: async () => sampleAsset })).handle(
+      new Request("http://localhost/api/v1/assets/1/view", { method: "POST" }),
+    );
+    expect(noVisitor.status).toBe(400);
   });
 
   it("GET /stats returns site counters", async () => {
@@ -627,7 +635,7 @@ describe("traffic counters", () => {
     expect(await res.json()).toEqual({ posts: 12, visitorsToday: 3 });
   });
 
-  it("attributes a visit to the x-visitor-id header, or a generated id when absent", async () => {
+  it("attributes a visit to a valid x-visitor-id header and 400s when it's absent", async () => {
     const seen: string[] = [];
     const core = stubCore(
       {},
@@ -648,13 +656,14 @@ describe("traffic counters", () => {
       }),
     );
     expect(await withHeader.json()).toEqual({ ok: true });
-    expect(seen[0]).toBe("abcdef12-3456-7890-abcd-ef1234567890");
+    expect(seen).toEqual(["abcdef12-3456-7890-abcd-ef1234567890"]);
 
-    // An absent/invalid header falls back to a generated opaque id (still recorded).
-    await buildApp(core).handle(
+    // No header → 400 and nothing recorded (we never synthesize a throwaway id,
+    // which would count every header-less request as a fresh visitor).
+    const noHeader = await buildApp(core).handle(
       new Request("http://localhost/api/v1/stats/visit", { method: "POST" }),
     );
-    expect(seen[1]).toMatch(/^[0-9a-f-]{8,64}$/i);
-    expect(seen[1]).not.toBe(seen[0]);
+    expect(noHeader.status).toBe(400);
+    expect(seen).toEqual(["abcdef12-3456-7890-abcd-ef1234567890"]);
   });
 });

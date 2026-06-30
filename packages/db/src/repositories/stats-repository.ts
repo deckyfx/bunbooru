@@ -11,12 +11,12 @@ import type { DB } from "../client";
  */
 export interface StatsRepository {
   /**
-   * Record a view of `assetId` by `visitorId`, debounced to once per
-   * `sessionWindowMs`. Bumps `assets.view_count` only when it actually counts;
-   * returns whether it counted (false = a repeat within the window). Throws if
-   * the asset doesn't exist (FK) — callers verify first.
+   * Record a view of `assetId` by `visitorId`, throttled to at most once per
+   * `windowMs` *since the last counted view*. Bumps `assets.view_count` only
+   * when it counts; returns whether it counted (false = a repeat inside the
+   * window). Throws if the asset doesn't exist (FK) — callers verify first.
    */
-  recordView(visitorId: string, assetId: number, sessionWindowMs: number): Promise<boolean>;
+  recordView(visitorId: string, assetId: number, windowMs: number): Promise<boolean>;
   /** Record a visit for `day` (YYYY-MM-DD) by `visitorId`; idempotent per (day, visitor). */
   recordVisit(visitorId: string, day: string): Promise<void>;
   /** Count of unique visitors recorded for `day`. */
@@ -28,15 +28,16 @@ export interface StatsRepository {
 /** Build a {@link StatsRepository} over a {@link DB} handle. */
 export function createStatsRepository(db: DB): StatsRepository {
   return {
-    async recordView(visitorId, assetId, sessionWindowMs) {
+    async recordView(visitorId, assetId, windowMs) {
       return db.transaction(async (tx) => {
         const now = new Date();
-        const cutoff = new Date(now.getTime() - sessionWindowMs);
-        // Upsert the dedup row, but only "touch" an existing one when its last
-        // count is older than the window. Postgres returns a row from RETURNING
+        const cutoff = new Date(now.getTime() - windowMs);
+        // Upsert the throttle row, advancing `counted_at` only when the prior
+        // count is at/older than the cutoff. Postgres returns a row from RETURNING
         // exactly when it inserted OR the conditional DO UPDATE fired — i.e. when
-        // we should count. A repeat within the window matches the conflict with a
-        // false WHERE, updates nothing, and returns no row.
+        // we count. A repeat inside the window matches the conflict with a false
+        // WHERE, updates nothing (so `counted_at` stays at the last *counted*
+        // view — intermediate hits don't extend the window), and returns no row.
         const counted = await tx
           .insert(postViews)
           .values({ visitorId, assetId, countedAt: now })
