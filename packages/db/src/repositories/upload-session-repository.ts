@@ -26,8 +26,12 @@ export interface UploadSessionRepository {
   ): Promise<UploadSession | null>;
   /** Delete a session by token (no-op if already gone). */
   delete(token: string): Promise<void>;
-  /** Delete sessions whose `expiresAt` is before `now`; returns their staging keys. */
-  deleteExpired(now: Date): Promise<string[]>;
+  /**
+   * Delete sessions whose `expiresAt` is before `now`; returns each removed
+   * session's `token` (to serialize staging cleanup under its lock) and
+   * `stagingKey` (the object to remove).
+   */
+  deleteExpired(now: Date): Promise<{ token: string; stagingKey: string }[]>;
 }
 
 /** Build an {@link UploadSessionRepository} over a {@link DB} handle. */
@@ -69,11 +73,10 @@ export function createUploadSessionRepository(db: DB): UploadSessionRepository {
     },
 
     async deleteExpired(now) {
-      const rows = await db
+      return db
         .delete(uploadSessions)
         .where(lt(uploadSessions.expiresAt, now))
-        .returning({ stagingKey: uploadSessions.stagingKey });
-      return rows.map((r) => r.stagingKey);
+        .returning({ token: uploadSessions.token, stagingKey: uploadSessions.stagingKey });
     },
   };
 }

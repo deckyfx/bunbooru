@@ -103,7 +103,9 @@ class EnvConfig {
    * only reclaimed opportunistically when the next upload begins.
    */
   get UPLOAD_GC_INTERVAL_MS(): number {
-    const raw = Bun.env.UPLOAD_GC_INTERVAL_MS;
+    // Trim first: an all-whitespace value would otherwise coerce to 0 and
+    // silently DISABLE the sweep instead of taking the default.
+    const raw = Bun.env.UPLOAD_GC_INTERVAL_MS?.trim();
     if (raw === undefined || raw === "") return 15 * 60 * 1000;
     const n = Number(raw);
     // Cap at the timer ceiling: a larger setInterval delay wraps to a 32-bit int

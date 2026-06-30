@@ -93,9 +93,18 @@ export function createUploadService(
   const withSessionLock = createKeyedMutex();
 
   async function gcExpired(at: Date = now()): Promise<number> {
-    const stagingKeys = await sessions.deleteExpired(at);
-    await Promise.all(stagingKeys.map((key) => staging.remove(key).catch(() => undefined)));
-    return stagingKeys.length;
+    const expired = await sessions.deleteExpired(at);
+    // Remove each staging file UNDER its session lock: a finalize reads the lazy
+    // file-backed staged Blob across several passes while holding this lock, so an
+    // unlocked sweep could delete the file mid-finalize and corrupt the upload.
+    // Serializing here makes the removal wait for any in-flight finalize (which,
+    // on success, has already removed the file — making this a harmless no-op).
+    await Promise.all(
+      expired.map(({ token, stagingKey }) =>
+        withSessionLock(token, () => staging.remove(stagingKey).catch(() => undefined)),
+      ),
+    );
+    return expired.length;
   }
 
   return {

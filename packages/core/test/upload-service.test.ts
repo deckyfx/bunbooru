@@ -89,7 +89,7 @@ function fakeSessions(initial?: Partial<UploadSession>): {
       deleteExpired: async (at: Date) => {
         const expired = [...rows.values()].filter((r) => r.expiresAt < at);
         for (const r of expired) rows.delete(r.token);
-        return expired.map((r) => r.stagingKey);
+        return expired.map((r) => ({ token: r.token, stagingKey: r.stagingKey }));
       },
     },
   };
@@ -308,5 +308,43 @@ describe("createUploadService.gcExpired", () => {
     expect(removed).toBe(0);
     expect(sessions.get("fresh")).toBeDefined();
     expect(staging.removed).toEqual([]);
+  });
+
+  it("waits for an in-flight finalize before removing its staging file", async () => {
+    // The session is expired AND being finalized: GC must not delete the staged
+    // file out from under the finalize, which reads the lazy Blob under the lock.
+    const sessions = fakeSessions({ token: "tok", declaredSize: 4, expiresAt: new Date(Date.now() - 1000) });
+    const staging = fakeStaging();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let signalReached!: () => void;
+    const reached = new Promise<void>((r) => (signalReached = r));
+    const service = createUploadService(
+      sessions.repo,
+      staging.store,
+      fakeAssetService(async () => {
+        signalReached(); // finalize has entered, holding the session lock
+        await gate;
+        return { asset: sampleAsset, deduped: false };
+      }),
+      1024,
+    );
+
+    const finalizeP = service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]));
+    await reached;
+
+    // Sweep concurrently: it deletes the row, then queues the staging removal
+    // behind the held lock — so the file is NOT removed while finalize runs.
+    const gcP = service.gcExpired();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(staging.removed).not.toContain("tok");
+
+    release();
+    const result = await finalizeP;
+    await gcP;
+    expect(result).toEqual({ status: "complete", asset: sampleAsset, deduped: false });
+    expect(staging.removed).toContain("tok"); // removed only after finalize finished
   });
 });
