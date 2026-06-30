@@ -171,11 +171,12 @@ export function createUploadService(
         // rather than forcing a full re-upload; abandoned ones expire via GC.
         let permanent = true;
         try {
-          const bytes = await staging.readAll(session.stagingKey);
-          const { asset, deduped } = await assetService.create({
-            bytes,
-            uploaderId: session.uploaderId,
-          });
+          // Finalize from the staged file as a streaming source — hashes, sniffs,
+          // and stores without reading the whole (up to multi-GB) file into memory.
+          const { asset, deduped } = await assetService.createFromSource(
+            staging.open(session.stagingKey),
+            { uploaderId: session.uploaderId },
+          );
           return { status: "complete", asset, deduped };
         } catch (error) {
           permanent = error instanceof UnsupportedMediaError;

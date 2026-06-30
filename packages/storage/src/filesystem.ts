@@ -38,9 +38,13 @@ export function createFilesystemStorageProvider(
     async store(key, data) {
       const path = resolveKey(key);
       await mkdir(dirname(path), { recursive: true });
-      // Split the call so each branch matches a single Bun.write overload; the
-      // Response path streams to disk without buffering the whole body.
-      if (data instanceof Uint8Array) {
+      // Bun.write streams a Blob (incl. a file-backed `Bun.file()`) or a
+      // TypedArray to disk natively, without holding the whole payload in JS —
+      // this is the path large resumable uploads finalize through. A raw
+      // ReadableStream is wrapped to match a Bun.write overload; note that
+      // wrapping a *file-backed* stream this way can stall, which is exactly why
+      // callers pass the Blob itself (above), not `blob.stream()`.
+      if (data instanceof Blob || data instanceof Uint8Array) {
         await Bun.write(path, data);
       } else {
         await Bun.write(path, new Response(data));

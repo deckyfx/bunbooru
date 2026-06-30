@@ -49,12 +49,16 @@ export interface ListAssetsOptions {
   query?: string;
 }
 
-/** Raw upload: the bytes plus optional metadata the client may set. */
-export interface CreateAssetInput {
-  bytes: Uint8Array;
+/** Optional metadata a client may set on ingest — shared by both create paths. */
+export interface CreateAssetMeta {
   rating?: Asset["rating"];
   source?: string | null;
   uploaderId?: number | null;
+}
+
+/** Raw upload: the in-memory bytes plus optional metadata the client may set. */
+export interface CreateAssetInput extends CreateAssetMeta {
+  bytes: Uint8Array;
 }
 
 /** Upload outcome: the stored (or pre-existing) asset and whether it deduped. */
@@ -81,8 +85,15 @@ export interface AssetService {
   list(options?: ListAssetsOptions): Promise<AssetListPage>;
   /** One asset by id, or null. */
   getById(id: number): Promise<Asset | null>;
-  /** Ingest an upload: dedupe by content hash, else store + persist. */
+  /** Ingest an in-memory upload: dedupe by content hash, else store + persist. */
   create(input: CreateAssetInput): Promise<CreateAssetResult>;
+  /**
+   * Ingest an upload whose bytes are a (possibly file-backed) {@link Blob} —
+   * streams hash → sniff → store without buffering the whole object into memory.
+   * Used by the resumable upload finalize path; {@link create} wraps this for
+   * in-memory bytes. Same pipeline, so both paths dedupe/sniff/emit identically.
+   */
+  createFromSource(source: Blob, meta?: CreateAssetMeta): Promise<CreateAssetResult>;
   /** Patch an asset's mutable metadata (rating/source); null if it doesn't exist. */
   update(id: number, patch: AssetUpdate): Promise<Asset | null>;
   /** Open an asset's stored bytes for streaming, or null if the asset is absent. */
@@ -107,6 +118,102 @@ export function createAssetService(
   storage: StorageProvider,
   events?: CoreEvents,
 ): AssetService {
+  /**
+   * The shared ingest pipeline: hash → dedupe → sniff → store → insert → emit,
+   * over a (possibly file-backed) {@link Blob}. The blob is read in independent
+   * passes — one streaming hash pass, one lazy sniff, one streaming store — so
+   * the whole object never has to be resident in memory. Order is fixed: the
+   * content hash names the storage key and drives dedupe, and the sniffed format
+   * supplies the key's extension, so hashing precedes the sniff which precedes
+   * the store.
+   */
+  async function ingest(
+    source: Blob,
+    { rating, source: sourceUrl, uploaderId }: CreateAssetMeta = {},
+  ): Promise<CreateAssetResult> {
+    // One streaming pass computes both content hashes without buffering the blob.
+    const shaHasher = new Bun.CryptoHasher("sha256");
+    const md5Hasher = new Bun.CryptoHasher("md5");
+    for await (const chunk of source.stream()) {
+      shaHasher.update(chunk);
+      md5Hasher.update(chunk);
+    }
+    const sha256 = shaHasher.digest("hex");
+
+    // Dedupe on the content hash before the heavier decode/store work.
+    const existing = await repository.findBySha256(sha256);
+    if (existing) return { asset: existing, deduped: true };
+
+    // Sniff dimensions + true format from the bytes — never trust a client MIME.
+    // Bun.Image reads the blob lazily; `maxPixels` rejects decompression bombs
+    // before allocating the pixel buffer.
+    const meta = await new Bun.Image(source, { maxPixels: MAX_PIXELS })
+      .metadata()
+      .catch(() => null);
+    if (!meta) throw new UnsupportedMediaError();
+    const mimeType = MIME_BY_FORMAT[meta.format];
+    const ext = EXT_BY_FORMAT[meta.format];
+    if (!mimeType || !ext) {
+      throw new UnsupportedMediaError(`Unsupported image format: ${meta.format}`);
+    }
+
+    const md5 = md5Hasher.digest("hex");
+    const storageKey = contentKey(sha256, ext);
+    // Hand the blob (not a stream) to storage: a file-backed `Bun.file()` is
+    // written natively without buffering the whole object, and the provider
+    // picks the most efficient path.
+    await storage.store(storageKey, source);
+
+    const input: NewAsset = {
+      storageKey,
+      mimeType,
+      width: meta.width,
+      height: meta.height,
+      sizeBytes: source.size,
+      sha256,
+      md5,
+      source: sourceUrl ?? null,
+      uploaderId: uploaderId ?? null,
+      ...(rating ? { rating } : {}),
+    };
+
+    let asset: Asset;
+    try {
+      asset = await repository.create(input);
+    } catch (error) {
+      // Lost a dedupe race (another request inserted this sha256 first). The
+      // content is identical, so `storageKey` is the SAME object the winner
+      // references — must NOT delete it. Just reuse the winner.
+      const raced = await repository.findBySha256(sha256);
+      if (raced) return { asset: raced, deduped: true };
+      // A non-race insert failure leaves `storageKey` written but unreferenced.
+      // We deliberately do NOT delete it here: the key is content-addressed, so a
+      // concurrent upload of the same bytes may have written/own the same object
+      // and be about to insert its row — deleting would orphan that row (a row
+      // pointing at missing bytes, worse than a spare blob). Orphaned blobs are
+      // benign (space only; a later identical upload dedupes onto them) and are
+      // reclaimed by a separate reference-counted orphan-GC pass (follow-up).
+      throw error;
+    }
+
+    // Announce the new asset so plugins (auto-tag, similar-finder, thumbnails,
+    // …) can react. Kept OUTSIDE the race `try` so a (hypothetical) emit throw
+    // can't be misread as a dedupe hit. Fire-and-forget + error-isolated in the
+    // bus, so a listener can never fail or delay the upload. Not on a dedupe.
+    events?.emit("asset.created", {
+      id: asset.id,
+      sha256: asset.sha256,
+      mimeType: asset.mimeType,
+      width: asset.width,
+      height: asset.height,
+      sizeBytes: asset.sizeBytes,
+      rating: asset.rating,
+      source: asset.source,
+      createdAt: asset.createdAt,
+    });
+    return { asset, deduped: false };
+  }
+
   return {
     async list(options = {}) {
       const perPage = Math.min(toPositiveInt(options.perPage, DEFAULT_PER_PAGE), MAX_PER_PAGE);
@@ -141,74 +248,17 @@ export function createAssetService(
       return repository.findById(id);
     },
 
-    async create({ bytes, rating, source, uploaderId }) {
-      // Snapshot first: a Uint8Array is mutable and we await below, so a caller
-      // mutating the buffer mid-flight must not desync the stored bytes, hashes,
-      // and sniffed metadata. Bun.Image also borrows the bytes off-thread.
-      const data = new Uint8Array(bytes);
+    create({ bytes, rating, source, uploaderId }) {
+      // Snapshot the mutable buffer into an immutable, re-readable Blob so a
+      // caller mutating `bytes` mid-flight can't desync the hashes, sniff, and
+      // stored bytes. Copy into a fresh (ArrayBuffer-backed) view first — the
+      // input may be SharedArrayBuffer-backed, which isn't a valid BlobPart.
+      // Then go through the same streaming pipeline as a file-backed upload.
+      return ingest(new Blob([new Uint8Array(bytes)]), { rating, source, uploaderId });
+    },
 
-      // Dedupe on the content hash before any heavier work (decode, store).
-      const sha256 = new Bun.CryptoHasher("sha256").update(data).digest("hex");
-      const existing = await repository.findBySha256(sha256);
-      if (existing) return { asset: existing, deduped: true };
-
-      // Sniff dimensions + true format from the bytes — never trust a client MIME.
-      // `maxPixels` rejects decompression bombs before allocating the pixel buffer.
-      const meta = await new Bun.Image(data, { maxPixels: MAX_PIXELS })
-        .metadata()
-        .catch(() => null);
-      if (!meta) throw new UnsupportedMediaError();
-      const mimeType = MIME_BY_FORMAT[meta.format];
-      const ext = EXT_BY_FORMAT[meta.format];
-      if (!mimeType || !ext) {
-        throw new UnsupportedMediaError(`Unsupported image format: ${meta.format}`);
-      }
-
-      const md5 = new Bun.CryptoHasher("md5").update(data).digest("hex");
-      const storageKey = contentKey(sha256, ext);
-      await storage.store(storageKey, data);
-
-      const input: NewAsset = {
-        storageKey,
-        mimeType,
-        width: meta.width,
-        height: meta.height,
-        sizeBytes: data.byteLength,
-        sha256,
-        md5,
-        source: source ?? null,
-        uploaderId: uploaderId ?? null,
-        ...(rating ? { rating } : {}),
-      };
-
-      let asset: Asset;
-      try {
-        asset = await repository.create(input);
-      } catch (error) {
-        // Lost a dedupe race (another request inserted this sha256 first). The
-        // content is identical, so `storageKey` is the SAME object the winner
-        // references — must NOT delete it. Just reuse the winner.
-        const raced = await repository.findBySha256(sha256);
-        if (raced) return { asset: raced, deduped: true };
-        throw error;
-      }
-
-      // Announce the new asset so plugins (auto-tag, similar-finder, thumbnails,
-      // …) can react. Kept OUTSIDE the race `try` so a (hypothetical) emit throw
-      // can't be misread as a dedupe hit. Fire-and-forget + error-isolated in the
-      // bus, so a listener can never fail or delay the upload. Not on a dedupe.
-      events?.emit("asset.created", {
-        id: asset.id,
-        sha256: asset.sha256,
-        mimeType: asset.mimeType,
-        width: asset.width,
-        height: asset.height,
-        sizeBytes: asset.sizeBytes,
-        rating: asset.rating,
-        source: asset.source,
-        createdAt: asset.createdAt,
-      });
-      return { asset, deduped: false };
+    createFromSource(source, meta = {}) {
+      return ingest(source, meta);
     },
 
     update(id, patch) {

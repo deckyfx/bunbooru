@@ -14,8 +14,13 @@ import { resolveKeyWithinRoot } from "./resolve-key";
 export interface StagingStore {
   /** Write `data` at byte `offset` in the staging object `key` (creates it on first write). */
   writeChunk(key: string, offset: number, data: Uint8Array): Promise<void>;
-  /** Read the fully-assembled staging object back as bytes. */
-  readAll(key: string): Promise<Uint8Array>;
+  /**
+   * Open the fully-assembled staging object as a file-backed {@link Blob}. The
+   * blob is lazy: each `.stream()` reads the file afresh and `Bun.Image` accepts
+   * it directly, so finalize can hash/sniff/store without buffering the whole
+   * file into memory (important at the multi-GB upload ceiling).
+   */
+  open(key: string): Blob;
   /** Delete a staging object (no-op if already gone). */
   remove(key: string): Promise<void>;
 }
@@ -60,8 +65,8 @@ export function createFilesystemStaging(config: FilesystemStagingConfig): Stagin
       }
     },
 
-    async readAll(key) {
-      return Bun.file(resolveKey(key)).bytes();
+    open(key) {
+      return Bun.file(resolveKey(key));
     },
 
     async remove(key) {
