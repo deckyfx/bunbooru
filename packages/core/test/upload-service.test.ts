@@ -339,6 +339,10 @@ describe("createUploadService.gcExpired", () => {
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
+    // The row is already deleted, so the sweep HAS progressed past its bulk
+    // delete and is now blocked on the staging lock — without this, the "not
+    // removed" check could pass simply because GC hadn't reached cleanup yet.
+    expect(sessions.get("tok")).toBeUndefined();
     expect(staging.removed).not.toContain("tok");
 
     release();
