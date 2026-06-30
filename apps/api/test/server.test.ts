@@ -48,6 +48,7 @@ function stubCore(
       createFromSource: async () => ({ asset: sampleAsset, deduped: false }),
       update: async () => null,
       openFile: async () => null,
+      gcOrphanedBlobs: async () => 0,
       ...overrides,
     },
     uploadService: {

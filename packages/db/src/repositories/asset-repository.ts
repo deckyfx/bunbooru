@@ -1,4 +1,4 @@
-import { desc, eq, type SQL } from "drizzle-orm";
+import { desc, eq, inArray, type SQL } from "drizzle-orm";
 
 import { assets, type Asset, type NewAsset } from "../schema";
 import type { DB } from "../client";
@@ -29,6 +29,12 @@ export interface AssetRepository {
   findById(id: number): Promise<Asset | null>;
   /** One asset by its unique sha256 content key, or null (drives dedupe). */
   findBySha256(sha256: string): Promise<Asset | null>;
+  /**
+   * Of the given `storageKeys`, return the subset that some asset row references.
+   * Used by orphan-blob GC to tell which stored objects are still live in one
+   * batched query (avoids an N+1 existence check per object).
+   */
+  findReferencedStorageKeys(storageKeys: string[]): Promise<Set<string>>;
   /** Insert one asset, returning the persisted row. */
   create(input: NewAsset): Promise<Asset>;
   /** Patch a row's mutable metadata, returning the updated row or null if absent. */
@@ -70,6 +76,15 @@ export function createAssetRepository(db: DB): AssetRepository {
     async findBySha256(sha256) {
       const [row] = await db.select().from(assets).where(eq(assets.sha256, sha256)).limit(1);
       return row ?? null;
+    },
+
+    async findReferencedStorageKeys(storageKeys) {
+      if (storageKeys.length === 0) return new Set();
+      const rows = await db
+        .select({ storageKey: assets.storageKey })
+        .from(assets)
+        .where(inArray(assets.storageKey, storageKeys));
+      return new Set(rows.map((r) => r.storageKey));
     },
 
     async create(input) {

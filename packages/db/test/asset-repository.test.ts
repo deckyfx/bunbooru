@@ -70,6 +70,20 @@ describe.skipIf(!TEST_DATABASE_URL)("AssetRepository (integration)", () => {
     expect(await repo.findBySha256("0".repeat(64))).toBeNull();
   });
 
+  it("returns only the referenced subset of storage keys", async () => {
+    const a = await repo.create(seed("ref-a"));
+    const b = await repo.create(seed("ref-b"));
+
+    const referenced = await repo.findReferencedStorageKeys([
+      a.storageKey,
+      b.storageKey,
+      "key/orphan-not-stored",
+    ]);
+
+    expect(referenced).toEqual(new Set([a.storageKey, b.storageKey]));
+    expect(await repo.findReferencedStorageKeys([])).toEqual(new Set());
+  });
+
   it("rejects a duplicate sha256 (unique content key)", async () => {
     await repo.create(seed("dupe"));
     // Same sha256, different md5 — assert the *named* constraint so the test

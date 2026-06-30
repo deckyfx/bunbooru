@@ -31,8 +31,8 @@ export interface CoreConfig {
   databaseUrl: string;
   /** Filesystem root under which asset binaries are stored. */
   storageRoot: string;
-  /** Reject uploads larger than this many bytes (resumable sessions are bounded up front). */
-  maxUploadBytes: number;
+  /** Reject resumable uploads larger than this many bytes (bounded up front in `begin`). */
+  maxResumableUploadBytes: number;
 }
 
 /**
@@ -45,7 +45,7 @@ export function assembleCore(
   db: DB,
   storage: StorageProvider,
   staging: StagingStore,
-  maxUploadBytes: number,
+  maxResumableUploadBytes: number,
 ): Core {
   const events = createCoreEvents();
   const assetService = createAssetService(createAssetRepository(db), storage, events);
@@ -53,7 +53,7 @@ export function assembleCore(
     createUploadSessionRepository(db),
     staging,
     assetService,
-    maxUploadBytes,
+    maxResumableUploadBytes,
   );
   return { assetService, uploadService, events };
 }
@@ -71,6 +71,6 @@ export function createCore(config: CoreConfig): Core {
     // Staging lives under the (writable) storage root so resumable chunks land
     // on the same host volume as the final assets.
     createFilesystemStaging({ root: join(config.storageRoot, "uploads-staging") }),
-    config.maxUploadBytes,
+    config.maxResumableUploadBytes,
   );
 }

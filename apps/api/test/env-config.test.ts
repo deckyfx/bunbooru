@@ -8,6 +8,7 @@ const saved = {
   DATABASE_URL: Bun.env.DATABASE_URL,
   STORAGE_ROOT: Bun.env.STORAGE_ROOT,
   MAX_UPLOAD_BYTES: Bun.env.MAX_UPLOAD_BYTES,
+  MAX_RESUMABLE_UPLOAD_BYTES: Bun.env.MAX_RESUMABLE_UPLOAD_BYTES,
   UPLOAD_GC_INTERVAL_MS: Bun.env.UPLOAD_GC_INTERVAL_MS,
 };
 
@@ -120,6 +121,25 @@ describe("MAX_UPLOAD_BYTES", () => {
   it("throws when above the request-body ceiling", () => {
     Bun.env.MAX_UPLOAD_BYTES = String(MAX_REQUEST_BODY_BYTES + 1);
     expect(() => envConfig.MAX_UPLOAD_BYTES).toThrow();
+  });
+});
+
+describe("MAX_RESUMABLE_UPLOAD_BYTES", () => {
+  it("defaults to 10 GB when unset", () => {
+    delete Bun.env.MAX_RESUMABLE_UPLOAD_BYTES;
+    expect(envConfig.MAX_RESUMABLE_UPLOAD_BYTES).toBe(10 * 1024 * 1024 * 1024);
+  });
+
+  it("may exceed the request-body ceiling (chunked, not one-shot)", () => {
+    Bun.env.MAX_RESUMABLE_UPLOAD_BYTES = String(MAX_REQUEST_BODY_BYTES * 3);
+    expect(envConfig.MAX_RESUMABLE_UPLOAD_BYTES).toBe(MAX_REQUEST_BODY_BYTES * 3);
+  });
+
+  it("throws on a non-positive or non-integer value", () => {
+    Bun.env.MAX_RESUMABLE_UPLOAD_BYTES = "0";
+    expect(() => envConfig.MAX_RESUMABLE_UPLOAD_BYTES).toThrow();
+    Bun.env.MAX_RESUMABLE_UPLOAD_BYTES = "abc";
+    expect(() => envConfig.MAX_RESUMABLE_UPLOAD_BYTES).toThrow();
   });
 });
 

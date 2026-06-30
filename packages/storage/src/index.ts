@@ -6,7 +6,7 @@
  */
 export const STORAGE_PACKAGE = "@bunbooru/storage" as const;
 
-export type { StorageProvider } from "./provider";
+export type { StorageProvider, StoredObject } from "./provider";
 export {
   createFilesystemStorageProvider,
   type FilesystemStorageConfig,

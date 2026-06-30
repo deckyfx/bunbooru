@@ -15,12 +15,12 @@ export interface StagingStore {
   /** Write `data` at byte `offset` in the staging object `key` (creates it on first write). */
   writeChunk(key: string, offset: number, data: Uint8Array): Promise<void>;
   /**
-   * Open the fully-assembled staging object as a file-backed {@link Blob}. The
-   * blob is lazy: each `.stream()` reads the file afresh and `Bun.Image` accepts
-   * it directly, so finalize can hash/sniff/store without buffering the whole
-   * file into memory (important at the multi-GB upload ceiling).
+   * Absolute local filesystem path of the fully-assembled staging object.
+   * Staging is always local, so the asset pipeline reads the bytes from here
+   * (e.g. `Bun.file(path)`) and a same-filesystem {@link StorageProvider} can
+   * finalize by *moving* the file (rename) instead of copying it.
    */
-  open(key: string): Blob;
+  path(key: string): string;
   /** Delete a staging object (no-op if already gone). */
   remove(key: string): Promise<void>;
 }
@@ -65,8 +65,8 @@ export function createFilesystemStaging(config: FilesystemStagingConfig): Stagin
       }
     },
 
-    open(key) {
-      return Bun.file(resolveKey(key));
+    path(key) {
+      return resolveKey(key);
     },
 
     async remove(key) {

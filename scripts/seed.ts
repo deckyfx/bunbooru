@@ -121,7 +121,7 @@ const core = createCore({
   storageRoot: Bun.env.STORAGE_ROOT?.trim() || resolve(process.cwd(), "data/storage"),
   // The seeder uses assetService.create directly (not the resumable uploader),
   // so this bound is unused here; keep it generous.
-  maxUploadBytes: 100 * 1024 * 1024,
+  maxResumableUploadBytes: 100 * 1024 * 1024,
 });
 
 /** Aspect variety so the masonry layout has something to do. */

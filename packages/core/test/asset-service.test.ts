@@ -47,6 +47,8 @@ function fakeRepo(initial: Asset[] = []): AssetRepository {
     count: async () => rows.length,
     findById: async (id) => rows.find((r) => r.id === id) ?? null,
     findBySha256: async (sha256) => rows.find((r) => r.sha256 === sha256) ?? null,
+    findReferencedStorageKeys: async (keys) =>
+      new Set(rows.filter((r) => keys.includes(r.storageKey)).map((r) => r.storageKey)),
     create: async (input: NewAsset) => {
       const row: Asset = {
         id: nextId++,
@@ -76,19 +78,34 @@ function fakeRepo(initial: Asset[] = []): AssetRepository {
   };
 }
 
-/** In-memory storage provider that records what was stored. */
-function fakeStorage(): { provider: StorageProvider; stored: Map<string, Uint8Array> } {
+/** In-memory storage provider that records what was stored (+ a modified time). */
+function fakeStorage(): {
+  provider: StorageProvider;
+  stored: Map<string, Uint8Array>;
+  setModifiedAt: (key: string, at: Date) => void;
+  ingestCalls: { localPath: string; key: string }[];
+} {
   const stored = new Map<string, Uint8Array>();
+  const modified = new Map<string, Date>();
+  const ingestCalls: { localPath: string; key: string }[] = [];
   const provider: StorageProvider = {
     store: async (key, data) => {
       const bytes =
         data instanceof Uint8Array ? data : new Uint8Array(await new Response(data).arrayBuffer());
       stored.set(key, bytes);
+      modified.set(key, new Date(0));
     },
     delete: async (key) => {
       stored.delete(key);
+      modified.delete(key);
     },
     exists: async (key) => stored.has(key),
+    statModifiedAt: async (key) => (stored.has(key) ? (modified.get(key) ?? new Date(0)) : null),
+    list: async function* (prefix = "") {
+      for (const key of stored.keys()) {
+        if (key.startsWith(prefix)) yield { key, modifiedAt: modified.get(key) ?? new Date(0) };
+      }
+    },
     stream: async (key) => {
       const bytes = stored.get(key);
       if (!bytes) throw new Error(`not found: ${key}`);
@@ -98,9 +115,18 @@ function fakeStorage(): { provider: StorageProvider; stored: Map<string, Uint8Ar
     },
     copy: async () => undefined,
     move: async () => undefined,
+    ingestLocalFile: async (localPath, key) => {
+      // Simulate a move: the source is "consumed" and lands at `key`.
+      ingestCalls.push({ localPath, key });
+      stored.set(key, new Uint8Array());
+      modified.set(key, new Date(0));
+    },
     getPublicUrl: async () => null,
   };
-  return { provider, stored };
+  const setModifiedAt = (key: string, at: Date): void => {
+    modified.set(key, at);
+  };
+  return { provider, stored, setModifiedAt, ingestCalls };
 }
 
 const rows = Array.from({ length: 25 }, (_, i) => asset(i + 1));
@@ -196,7 +222,10 @@ describe("createAssetService.createFromSource (streaming)", () => {
     const split = Math.floor(PNG_1x1.byteLength / 2);
     const blob = new Blob([PNG_1x1.subarray(0, split), PNG_1x1.subarray(split)]);
     const { provider, stored } = fakeStorage();
-    const viaSource = await createAssetService(fakeRepo(), provider).createFromSource(blob);
+    const viaSource = await createAssetService(fakeRepo(), provider).createFromSource({
+      kind: "blob",
+      blob,
+    });
 
     expect(viaSource.deduped).toBe(false);
     expect(viaSource.asset.sha256).toBe(viaBytes.asset.sha256);
@@ -214,16 +243,64 @@ describe("createAssetService.createFromSource (streaming)", () => {
     const { provider } = fakeStorage();
     const service = createAssetService(fakeRepo(), provider);
     const first = await service.create({ bytes: PNG_1x1 });
-    const second = await service.createFromSource(new Blob([PNG_1x1]));
+    const second = await service.createFromSource({ kind: "blob", blob: new Blob([PNG_1x1]) });
     expect(second.deduped).toBe(true);
     expect(second.asset.id).toBe(first.asset.id);
   });
 
   it("rejects a non-image source with UnsupportedMediaError", async () => {
     const service = createAssetService(fakeRepo(), fakeStorage().provider);
-    await expect(service.createFromSource(new Blob([new Uint8Array([1, 2, 3, 4])]))).rejects.toBeInstanceOf(
-      UnsupportedMediaError,
-    );
+    await expect(
+      service.createFromSource({ kind: "blob", blob: new Blob([new Uint8Array([1, 2, 3, 4])]) }),
+    ).rejects.toBeInstanceOf(UnsupportedMediaError);
+  });
+
+  it("copies (does not move) a blob source — ingestLocalFile is only for files", async () => {
+    const { provider, ingestCalls, stored } = fakeStorage();
+    const service = createAssetService(fakeRepo(), provider);
+
+    const { asset } = await service.createFromSource({ kind: "blob", blob: new Blob([PNG_1x1]) });
+
+    // A blob source is always stored (copied); the move fast path is reserved
+    // for `file` sources (covered end-to-end in the finalize integration test).
+    expect(ingestCalls).toHaveLength(0);
+    expect(stored.has(asset.storageKey)).toBe(true);
+  });
+});
+
+describe("createAssetService.gcOrphanedBlobs", () => {
+  it("removes old unreferenced blobs, keeps referenced and recent ones", async () => {
+    const { provider, stored, setModifiedAt } = fakeStorage();
+    const service = createAssetService(fakeRepo(), provider);
+
+    // A real, referenced asset (stored under assets/.. with a row).
+    const { asset } = await service.create({ bytes: PNG_1x1 });
+    // An old orphan (no row) and a recent orphan (no row, inside the grace window).
+    stored.set("assets/zz/old-orphan", new Uint8Array([1]));
+    setModifiedAt("assets/zz/old-orphan", new Date(0));
+    stored.set("assets/zz/new-orphan", new Uint8Array([2]));
+    setModifiedAt("assets/zz/new-orphan", new Date(Date.now()));
+
+    const removed = await service.gcOrphanedBlobs(new Date(Date.now() - 60_000));
+
+    expect(removed).toBe(1);
+    expect(stored.has("assets/zz/old-orphan")).toBe(false); // reclaimed
+    expect(stored.has("assets/zz/new-orphan")).toBe(true); // protected by grace
+    expect(stored.has(asset.storageKey)).toBe(true); // referenced, kept regardless of age
+  });
+
+  it("sweeps a backlog larger than the batch size", async () => {
+    const { provider, stored, setModifiedAt } = fakeStorage();
+    const service = createAssetService(fakeRepo(), provider);
+    for (let i = 0; i < 3; i++) {
+      stored.set(`assets/x/${i}`, new Uint8Array([i]));
+      setModifiedAt(`assets/x/${i}`, new Date(0));
+    }
+
+    const removed = await service.gcOrphanedBlobs(new Date(Date.now() - 1000), 2);
+
+    expect(removed).toBe(3);
+    expect(stored.size).toBe(0);
   });
 });
 

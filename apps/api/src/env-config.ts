@@ -79,8 +79,10 @@ class EnvConfig {
   }
 
   /**
-   * Max accepted upload size in bytes (default 100 MB). Larger uploads are
-   * rejected with 413 and logged. Must stay at or below {@link MAX_REQUEST_BODY_BYTES}.
+   * Max size (bytes) for a **one-shot** `POST /assets` upload (default 100 MB).
+   * The whole file arrives in a single request body, so this must stay at or
+   * below {@link MAX_REQUEST_BODY_BYTES}. Resumable uploads use the separate,
+   * higher {@link MAX_RESUMABLE_UPLOAD_BYTES} since they arrive in chunks.
    */
   get MAX_UPLOAD_BYTES(): number {
     const raw = Bun.env.MAX_UPLOAD_BYTES;
@@ -93,6 +95,23 @@ class EnvConfig {
       throw new Error(
         `MAX_UPLOAD_BYTES (${n}) cannot exceed the request-body ceiling (${MAX_REQUEST_BODY_BYTES})`,
       );
+    }
+    return n;
+  }
+
+  /**
+   * Max size (bytes) for a **resumable** upload (default 10 GB). Resumable
+   * uploads PATCH small chunks and finalize by streaming from the staged file,
+   * so the whole-file size is bounded only by storage/abuse policy — NOT by the
+   * request-body ceiling or available memory. Hence this can (and by default
+   * does) exceed {@link MAX_REQUEST_BODY_BYTES}.
+   */
+  get MAX_RESUMABLE_UPLOAD_BYTES(): number {
+    const raw = Bun.env.MAX_RESUMABLE_UPLOAD_BYTES;
+    if (raw === undefined || raw === "") return 10 * 1024 * 1024 * 1024;
+    const n = Number(raw);
+    if (!Number.isSafeInteger(n) || n < 1) {
+      throw new Error(`MAX_RESUMABLE_UPLOAD_BYTES must be a positive integer, got "${raw}"`);
     }
     return n;
   }
@@ -113,6 +132,24 @@ class EnvConfig {
     if (!Number.isInteger(n) || n < 0 || n > MAX_TIMER_DELAY_MS) {
       throw new Error(
         `UPLOAD_GC_INTERVAL_MS must be an integer between 0 and ${MAX_TIMER_DELAY_MS}, got "${raw}"`,
+      );
+    }
+    return n;
+  }
+
+  /**
+   * How often (ms) to sweep orphaned asset blobs — stored objects no asset row
+   * references (default 24h). This is a full O(stored-objects) scan, so it runs
+   * on a slow cadence, separate from the frequent upload-session sweep. `0`
+   * disables it. Capped at the 32-bit timer ceiling.
+   */
+  get ASSET_ORPHAN_GC_INTERVAL_MS(): number {
+    const raw = Bun.env.ASSET_ORPHAN_GC_INTERVAL_MS?.trim();
+    if (raw === undefined || raw === "") return 24 * 60 * 60 * 1000;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_TIMER_DELAY_MS) {
+      throw new Error(
+        `ASSET_ORPHAN_GC_INTERVAL_MS must be an integer between 0 and ${MAX_TIMER_DELAY_MS}, got "${raw}"`,
       );
     }
     return n;

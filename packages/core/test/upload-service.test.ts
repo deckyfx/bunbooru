@@ -103,11 +103,16 @@ function fakeSessions(initial?: Partial<UploadSession>): {
  * microtask before mutating so two concurrent appends would interleave if the
  * service didn't serialize them — letting the lock test detect corruption.
  */
-function fakeStaging(): { store: StagingStore; removed: string[] } {
+function fakeStaging(): {
+  store: StagingStore;
+  removed: string[];
+  read: (key: string) => number[] | undefined;
+} {
   const files = new Map<string, number[]>();
   const removed: string[] = [];
   return {
     removed,
+    read: (key) => files.get(key),
     store: {
       writeChunk: async (key, offset, data) => {
         await Promise.resolve(); // force a scheduling boundary
@@ -115,13 +120,7 @@ function fakeStaging(): { store: StagingStore; removed: string[] } {
         for (let i = 0; i < data.byteLength; i++) buf[offset + i] = data[i] ?? 0;
         files.set(key, buf);
       },
-      open: (key) => {
-        // Mirror the real Bun.file-backed store: a missing key is an error, not a
-        // silent empty blob (which could mask a finalize/GC opening a stale key).
-        const file = files.get(key);
-        if (!file) throw new Error(`missing staged file: ${key}`);
-        return new Blob([Uint8Array.from(file)]);
-      },
+      path: (key) => `/fake/staging/${key}`,
       remove: async (key) => {
         files.delete(key);
         removed.push(key);
@@ -146,6 +145,7 @@ function fakeAssetService(finalize: AssetService["createFromSource"]): AssetServ
     getById: unused as AssetService["getById"],
     update: unused as AssetService["update"],
     openFile: unused as AssetService["openFile"],
+    gcOrphanedBlobs: unused as AssetService["gcOrphanedBlobs"],
   };
 }
 
@@ -178,7 +178,7 @@ describe("createUploadService.appendChunk", () => {
     // bytes are one writer's payload intact (all 1s or all 2s) — never an
     // interleaved mix, which is what a missing lock would produce.
     expect(sessions.get("tok")?.uploadedSize).toBe(4);
-    const staged = new Uint8Array(await staging.store.open("tok").arrayBuffer());
+    const staged = Uint8Array.from(staging.read("tok") ?? []);
     expect(staged).toHaveLength(4);
     expect(new Set(staged).size).toBe(1);
     expect(staged[0] === 1 || staged[0] === 2).toBe(true);
