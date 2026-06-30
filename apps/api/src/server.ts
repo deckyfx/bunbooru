@@ -1,6 +1,13 @@
 import { Elysia, t } from "elysia";
 
-import { CORE_PACKAGE, MAX_PER_PAGE, type Asset, type AssetUpdate, type Core } from "@bunbooru/core";
+import {
+  CORE_PACKAGE,
+  MAX_PER_PAGE,
+  type Asset,
+  type AssetUpdate,
+  type Core,
+  type Tag,
+} from "@bunbooru/core";
 import { PLUGIN_SDK_VERSION } from "@bunbooru/plugin-sdk";
 
 import { envConfig } from "./env-config";
@@ -36,6 +43,14 @@ const ratingSchema = t.Union([
 
 /** Source URL/text — capped, and nullable so a client can explicitly clear it. */
 const sourceSchema = t.Union([t.String({ maxLength: 2048 }), t.Null()]);
+
+/** Wire shape of a tag — `createdAt`/`id` are internal and omitted. */
+export type TagDto = Pick<Tag, "name" | "category" | "postCount">;
+
+/** Project a {@link Tag} onto its JSON wire form. */
+function serializeTag(tag: Tag): TagDto {
+  return { name: tag.name, category: tag.category, postCount: tag.postCount };
+}
 
 /** Asset id path param, shared by the `/assets/:id*` routes. */
 const idParam = t.Object({
@@ -241,6 +256,56 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
           },
           { params: idParam },
         )
+        // --- Tags ----------------------------------------------------------
+        // An asset's tags, in canonical (category, name) order.
+        .get(
+          "/assets/:id/tags",
+          async ({ params }) => {
+            const asset = await core.assetService.getById(params.id);
+            if (!asset) throw new HttpError(404, "Asset not found");
+            const tags = await core.tagService.listForAsset(params.id);
+            return tags.map(serializeTag);
+          },
+          { params: idParam },
+        )
+        // Replace an asset's tag set (Danbooru-style: submit the full list).
+        // Names are normalized + de-duplicated and unknown tags are created.
+        .patch(
+          "/assets/:id/tags",
+          async ({ params, body }) => {
+            const asset = await core.assetService.getById(params.id);
+            if (!asset) throw new HttpError(404, "Asset not found");
+            const tags = await core.tagService.setAssetTags(params.id, body.tags);
+            return tags.map(serializeTag);
+          },
+          {
+            params: idParam,
+            // Cap the list so one request can't fan out unbounded work; each name
+            // is length-bounded (the service normalizes/drops invalid ones).
+            body: t.Object({
+              tags: t.Array(t.String({ maxLength: 100 }), { maxItems: 1000 }),
+            }),
+          },
+        )
+        // Tag autocomplete: name-prefix match ordered by popularity. Empty/absent
+        // `q` yields an empty list (the client only queries once the user types).
+        .get(
+          "/tags",
+          async ({ query }) => {
+            const tags = await core.tagService.autocomplete(query.q ?? "", query.limit);
+            return tags.map(serializeTag);
+          },
+          {
+            query: t.Object({
+              q: t.Optional(t.String({ maxLength: 100 })),
+              limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100, multipleOf: 1 })),
+            }),
+          },
+        )
+        // NOTE: setting a tag's category (taxonomy management) is intentionally
+        // NOT exposed yet — it's an admin operation, so it lands with the auth /
+        // superadmin milestone rather than as an open, unauthenticated write.
+        // `tagService.setCategory` is ready for that route.
         // --- Resumable chunked uploads -------------------------------------
         // Open a session for a file; the client PATCHes chunks until complete.
         // The one-shot POST /assets above remains for small/non-browser uploads.

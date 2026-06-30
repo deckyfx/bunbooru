@@ -7,6 +7,8 @@ import type {
   AssetUpdate,
   Core,
   ListAssetsOptions,
+  Tag,
+  TagService,
   UploadService,
 } from "@bunbooru/core";
 import { createCoreEvents, UnsupportedMediaError, UploadConflictError } from "@bunbooru/core";
@@ -32,6 +34,15 @@ const sampleAsset: Asset = {
 
 const emptyPage: AssetListPage = { assets: [], total: 0, page: 1, perPage: 20, pageCount: 0 };
 
+/** A fixed tag row for asserting wire serialization. */
+const sampleTag: Tag = {
+  id: 1,
+  name: "1girl",
+  category: "general",
+  postCount: 42,
+  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+};
+
 /** Small upload cap so the oversize path is cheap to exercise. */
 const MAX_UPLOAD_BYTES = 1024;
 
@@ -39,6 +50,7 @@ const MAX_UPLOAD_BYTES = 1024;
 function stubCore(
   overrides: Partial<AssetService> = {},
   uploadOverrides: Partial<UploadService> = {},
+  tagOverrides: Partial<TagService> = {},
 ): Core {
   return {
     assetService: {
@@ -58,6 +70,13 @@ function stubCore(
       cancel: async () => true,
       gcExpired: async () => 0,
       ...uploadOverrides,
+    },
+    tagService: {
+      setAssetTags: async () => [sampleTag],
+      listForAsset: async () => [sampleTag],
+      autocomplete: async () => [sampleTag],
+      setCategory: async () => sampleTag,
+      ...tagOverrides,
     },
     events: createCoreEvents(),
   };
@@ -515,5 +534,64 @@ describe("resumable uploads (/api/v1/uploads)", () => {
     ).handle(new Request("http://localhost/api/v1/uploads/tok-1", { method: "DELETE" }));
     expect(res.status).toBe(204);
     expect(cancelled).toBe("tok-1");
+  });
+});
+
+describe("tags", () => {
+  const tagJson = { name: "1girl", category: "general", postCount: 42 };
+
+  it("GET /assets/:id/tags → 404 when the asset is absent", async () => {
+    const res = await buildApp(stubCore({ getById: async () => null })).handle(
+      new Request("http://localhost/api/v1/assets/1/tags"),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("GET /assets/:id/tags → 200 with the asset's tags", async () => {
+    const res = await buildApp(stubCore({ getById: async () => sampleAsset })).handle(
+      new Request("http://localhost/api/v1/assets/1/tags"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([tagJson]);
+  });
+
+  it("PATCH /assets/:id/tags sets the full list and returns the result", async () => {
+    let received: string[] | undefined;
+    const res = await buildApp(
+      stubCore({ getById: async () => sampleAsset }, {}, {
+        setAssetTags: async (_id, names) => {
+          received = names;
+          return [sampleTag];
+        },
+      }),
+    ).handle(
+      new Request("http://localhost/api/v1/assets/1/tags", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tags: ["1girl", "solo"] }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(received).toEqual(["1girl", "solo"]);
+    expect(await res.json()).toEqual([tagJson]);
+  });
+
+  it("PATCH /assets/:id/tags → 404 when the asset is absent", async () => {
+    const res = await buildApp(stubCore({ getById: async () => null })).handle(
+      new Request("http://localhost/api/v1/assets/1/tags", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tags: [] }),
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("GET /tags returns popularity-ordered autocomplete matches", async () => {
+    const res = await buildApp(
+      stubCore({}, {}, { autocomplete: async () => [sampleTag] }),
+    ).handle(new Request("http://localhost/api/v1/tags?q=1gi"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([tagJson]);
   });
 });

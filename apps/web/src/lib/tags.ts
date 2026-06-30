@@ -1,8 +1,17 @@
 /**
- * Shared tag vocabulary for the UI: Danbooru-style categories, their colour
- * classes, and a static fixture catalog used by the popover system in Phase 0.
- * Replaced by the Core tag API in Phase 1 (see docs/POPOVER.md).
+ * Shared tag vocabulary for the UI: Danbooru-style categories and their colour
+ * classes (presentational), plus the live tag API hooks (Eden Treaty) at the
+ * bottom. The static {@link TAG_CATALOG} below is a Phase-0 fixture still used by
+ * the hover-preview popovers (which surface `related` tags the API doesn't model
+ * yet); a post's real tags + autocomplete go through the hooks.
  */
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+import type { TagDto } from "@bunbooru/api";
+
+import { api, unwrap } from "./api";
+
+export type { TagDto };
 
 export type TagCategory = "artist" | "copyright" | "character" | "general" | "meta";
 
@@ -102,4 +111,48 @@ export function postTags(id: number): string[] {
     if (name && !out.includes(name)) out.push(name);
   }
   return out;
+}
+
+// ─── Live tag API (Eden Treaty + TanStack Query) ─────────────────────────────
+
+/** An asset's real tags, in canonical (category, name) order. */
+export function useAssetTags(id: number) {
+  return useQuery({
+    queryKey: ["asset-tags", id],
+    enabled: Number.isInteger(id) && id > 0,
+    queryFn: async (): Promise<TagDto[]> =>
+      unwrap(await api.api.v1.assets({ id: String(id) }).tags.get()),
+  });
+}
+
+/**
+ * Replace an asset's tag set via `PATCH /assets/:id/tags` (full list, Danbooru
+ * style). On success refreshes the asset's tag query so the panel reflects the
+ * server's normalized + de-duplicated result.
+ */
+export function useSetAssetTags(id: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (tags: string[]) =>
+      unwrap(await api.api.v1.assets({ id: String(id) }).tags.patch({ tags })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["asset-tags", id] }),
+  });
+}
+
+/**
+ * Tag autocomplete by name prefix, popularity-ordered. Disabled (and resolves to
+ * nothing) for an empty prefix so it only fires once the user has typed.
+ */
+export function useTagAutocomplete(prefix: string, limit = 10) {
+  const trimmed = prefix.trim();
+  return useQuery({
+    queryKey: ["tag-autocomplete", trimmed, limit],
+    enabled: trimmed.length > 0,
+    queryFn: async () => unwrap(await api.api.v1.tags.get({ query: { q: trimmed, limit } })),
+  });
+}
+
+/** Colour class for a real tag's category (falls back to general). */
+export function tagTextClass(category: TagDto["category"]): string {
+  return TAG_TEXT_CLASS[category];
 }
