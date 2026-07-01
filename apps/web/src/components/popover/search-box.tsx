@@ -13,7 +13,7 @@ import {
   useMergeRefs,
   useRole,
 } from "@floating-ui/react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 
 import { formatCount, tagTextClass, useTagAutocomplete } from "../../lib/tags";
@@ -34,7 +34,17 @@ export function SearchBox({
   className?: string;
 }) {
   const navigate = useNavigate();
-  const [query, setQuery] = useState("");
+  // Seed (and re-sync) the input from the active `/posts?q=…` filter so it shows
+  // the current query to refine, not a blank box. `strict: false` → the current
+  // route's search, loosely typed (empty on routes without `q`).
+  const routeQ =
+    (useSearch({ strict: false }) as { q?: string }).q ?? "";
+  const [query, setQuery] = useState(routeQ);
+  const [prevRouteQ, setPrevRouteQ] = useState(routeQ);
+  if (routeQ !== prevRouteQ) {
+    setPrevRouteQ(routeQ);
+    setQuery(routeQ);
+  }
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 

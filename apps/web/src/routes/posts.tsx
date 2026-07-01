@@ -131,17 +131,36 @@ export function PostsPage() {
             </button>
           </div>
         ) : !data || data.assets.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 py-16 text-center">
-            <ImageOff className="h-16 w-16 text-line" strokeWidth={1.25} aria-hidden="true" />
-            <p className="font-bold">No posts yet</p>
-            <p className="text-[12px] text-muted">Your gallery is empty.</p>
-            <Link
-              to="/uploads/new"
-              className="rounded border border-line px-3 py-1.5 text-link hover:border-link"
-            >
-              Upload the first one »
-            </Link>
-          </div>
+          q ? (
+            // A filtered search with no results — distinct from an empty gallery,
+            // so it never reads like data loss. Offer to clear the filter.
+            <div className="flex flex-col items-center gap-3 py-16 text-center">
+              <ImageOff className="h-16 w-16 text-line" strokeWidth={1.25} aria-hidden="true" />
+              <p className="font-bold">No matches</p>
+              <p className="text-[12px] text-muted">
+                Nothing tagged <span className="font-mono">{q}</span>.
+              </p>
+              <Link
+                to="/posts"
+                search={{}}
+                className="rounded border border-line px-3 py-1.5 text-link hover:border-link"
+              >
+                Clear filter »
+              </Link>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3 py-16 text-center">
+              <ImageOff className="h-16 w-16 text-line" strokeWidth={1.25} aria-hidden="true" />
+              <p className="font-bold">No posts yet</p>
+              <p className="text-[12px] text-muted">Your gallery is empty.</p>
+              <Link
+                to="/uploads/new"
+                className="rounded border border-line px-3 py-1.5 text-link hover:border-link"
+              >
+                Upload the first one »
+              </Link>
+            </div>
+          )
         ) : (
           <div style={gridStyle}>
             {data.assets.map((asset) => (
