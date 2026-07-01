@@ -5,6 +5,7 @@ import {
   UnsupportedMediaError,
   UploadConflictError,
   UploadRangeError,
+  ValidationError,
 } from "@bunbooru/core";
 
 import { HttpError } from "./errors";
@@ -18,6 +19,7 @@ export function statusFor(code: string | number, error: unknown): number {
   if (error instanceof HttpError) return error.status;
   if (error instanceof AuthenticationError) return 401;
   if (error instanceof AuthorizationError) return 403;
+  if (error instanceof ValidationError) return 400;
   if (error instanceof UnsupportedMediaError) return 415;
   if (error instanceof RegistrationConflictError) return 409;
   if (error instanceof UploadConflictError) return 409;

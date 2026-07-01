@@ -1,9 +1,11 @@
 import { join } from "node:path";
 
 import {
+  createApiKeyRepository,
   createAssetRepository,
   createDb,
   createSessionRepository,
+  createSettingsRepository,
   createStatsRepository,
   createTagRepository,
   createUploadSessionRepository,
@@ -20,6 +22,7 @@ import {
 import { createCoreEvents, type CoreEvents } from "./events";
 import { createAssetService, type AssetService } from "./services/asset-service";
 import { createAuthService, type AuthService } from "./services/auth-service";
+import { createSettingsService, type SettingsService } from "./services/settings-service";
 import { createStatsService, type StatsService } from "./services/stats-service";
 import { createTagService, type TagService } from "./services/tag-service";
 import { createUploadService, type UploadService } from "./services/upload-service";
@@ -37,8 +40,10 @@ export interface Core {
   tagService: TagService;
   /** Traffic counters — per-post views (debounced) + daily unique visitors. */
   statsService: StatsService;
-  /** Accounts + opaque server sessions — register/login/logout/currentUser + session GC. */
+  /** Accounts + opaque server sessions + API keys — auth/currentUser + session GC. */
   authService: AuthService;
+  /** Admin-editable runtime settings (upload caps) — env defaults + DB overrides. */
+  settingsService: SettingsService;
   /** Typed pub/sub bus — Core emits domain events (e.g. `asset.created`); plugins subscribe. */
   events: CoreEvents;
 }
@@ -49,9 +54,21 @@ export interface CoreConfig {
   databaseUrl: string;
   /** Filesystem root under which asset binaries are stored. */
   storageRoot: string;
-  /** Reject resumable uploads larger than this many bytes (bounded up front in `begin`). */
+  /** Default one-shot `POST /assets` cap (bytes); admin-overridable at runtime. */
+  maxUploadBytes: number;
+  /** Default resumable-upload cap (bytes); admin-overridable at runtime. */
   maxResumableUploadBytes: number;
+  /** Hard ceiling for the one-shot cap (the HTTP request-body limit). */
+  requestBodyCeilingBytes: number;
   /** Login session lifetime in milliseconds (e.g. 30 days). */
+  sessionExpiryMs: number;
+}
+
+/** Numeric limits {@link assembleCore} needs, grouped to avoid a long arg list. */
+export interface CoreLimits {
+  maxUploadBytes: number;
+  maxResumableUploadBytes: number;
+  requestBodyCeilingBytes: number;
   sessionExpiryMs: number;
 }
 
@@ -65,23 +82,33 @@ export function assembleCore(
   db: DB,
   storage: StorageProvider,
   staging: StagingStore,
-  maxResumableUploadBytes: number,
-  sessionExpiryMs: number,
+  limits: CoreLimits,
 ): Core {
   const events = createCoreEvents();
   const assetService = createAssetService(createAssetRepository(db), storage, events);
+  const settingsService = createSettingsService(createSettingsRepository(db), {
+    defaults: {
+      maxUploadBytes: limits.maxUploadBytes,
+      maxResumableUploadBytes: limits.maxResumableUploadBytes,
+    },
+    requestBodyCeilingBytes: limits.requestBodyCeilingBytes,
+  });
   const uploadService = createUploadService(
     createUploadSessionRepository(db),
     staging,
     assetService,
-    maxResumableUploadBytes,
+    // Read the (runtime-editable) resumable cap at call time.
+    () => settingsService.getUploadLimits().then((l) => l.maxResumableUploadBytes),
   );
   const tagService = createTagService(createTagRepository(db));
   const statsService = createStatsService(createStatsRepository(db));
-  const authService = createAuthService(createUserRepository(db), createSessionRepository(db), {
-    sessionExpiryMs,
-  });
-  return { assetService, uploadService, tagService, statsService, authService, events };
+  const authService = createAuthService(
+    createUserRepository(db),
+    createSessionRepository(db),
+    createApiKeyRepository(db),
+    { sessionExpiryMs: limits.sessionExpiryMs },
+  );
+  return { assetService, uploadService, tagService, statsService, authService, settingsService, events };
 }
 
 /**
@@ -97,7 +124,11 @@ export function createCore(config: CoreConfig): Core {
     // Staging lives under the (writable) storage root so resumable chunks land
     // on the same host volume as the final assets.
     createFilesystemStaging({ root: join(config.storageRoot, "uploads-staging") }),
-    config.maxResumableUploadBytes,
-    config.sessionExpiryMs,
+    {
+      maxUploadBytes: config.maxUploadBytes,
+      maxResumableUploadBytes: config.maxResumableUploadBytes,
+      requestBodyCeilingBytes: config.requestBodyCeilingBytes,
+      sessionExpiryMs: config.sessionExpiryMs,
+    },
   );
 }

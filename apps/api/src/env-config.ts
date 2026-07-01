@@ -220,6 +220,16 @@ class EnvConfig {
   get COOKIE_SECURE(): boolean {
     return this.NODE_ENV === "production";
   }
+
+  /**
+   * Whether to trust the `X-Forwarded-For` header for the client IP (used to key
+   * rate limits). OFF by default: XFF is client-spoofable, so trusting it without
+   * a proxy that overwrites it would let an attacker bypass the auth throttles.
+   * Enable ONLY when the API sits behind a reverse proxy that sets XFF.
+   */
+  get TRUST_PROXY(): boolean {
+    return Bun.env.TRUST_PROXY?.trim() === "true";
+  }
 }
 
 export const envConfig = EnvConfig.getInstance();

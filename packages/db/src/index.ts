@@ -37,3 +37,11 @@ export {
   createSessionRepository,
   type SessionRepository,
 } from "./repositories/session-repository";
+export {
+  createSettingsRepository,
+  type SettingsRepository,
+} from "./repositories/settings-repository";
+export {
+  createApiKeyRepository,
+  type ApiKeyRepository,
+} from "./repositories/api-key-repository";

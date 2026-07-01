@@ -18,7 +18,7 @@ export const CORE_PACKAGE = "@bunbooru/core" as const;
 export type { StorageProvider };
 
 // Domain row types, re-exported so downstream apps depend on Core, not db directly.
-export type { Asset, AssetUpdate, Rating, Tag, TagCategory, User, UserRole } from "@bunbooru/db";
+export type { ApiKey, Asset, AssetUpdate, Rating, Tag, TagCategory, User, UserRole } from "@bunbooru/db";
 
 // Core assembly — the single wiring entry point for the API composition root.
 export {
@@ -75,17 +75,27 @@ export {
   type SiteStats,
 } from "./services/stats-service";
 
-// Accounts + opaque server sessions — register/login/logout/currentUser + session GC.
+// Accounts + opaque server sessions + API keys — auth/currentUser + session GC.
 export {
   createAuthService,
+  type ApiKeySummary,
   type AuthService,
   type AuthServiceConfig,
+  type CreatedApiKey,
   type LoginResult,
   type PublicUser,
   type RegisterInput,
 } from "./services/auth-service";
 
-// Authorization predicates (canWrite now; ownership/role reserved for PR B).
+// Admin-editable runtime settings — upload caps (env defaults + DB overrides).
+export {
+  createSettingsService,
+  type SettingsService,
+  type SettingsServiceConfig,
+  type UploadLimits,
+} from "./services/settings-service";
+
+// Authorization predicates — enforced on writes (owner-or-admin) + admin routes.
 export { canModerate, canWrite, isOwnerOrAdmin } from "./services/permissions";
 
 // Typed domain errors the API maps to HTTP status codes.
@@ -96,6 +106,7 @@ export {
   UnsupportedMediaError,
   UploadConflictError,
   UploadRangeError,
+  ValidationError,
 } from "./errors";
 
 /** Internal packages the Core composes over — mirrors this package's dependencies. */

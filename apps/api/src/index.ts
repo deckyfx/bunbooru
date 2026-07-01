@@ -14,10 +14,13 @@ import { createApp } from "./server";
 const core = createCore({
   databaseUrl: envConfig.DATABASE_URL,
   storageRoot: envConfig.STORAGE_ROOT,
+  // Env values are the DEFAULTS; an admin can override the caps at runtime.
+  maxUploadBytes: envConfig.MAX_UPLOAD_BYTES,
   maxResumableUploadBytes: envConfig.MAX_RESUMABLE_UPLOAD_BYTES,
+  requestBodyCeilingBytes: MAX_REQUEST_BODY_BYTES,
   sessionExpiryMs: envConfig.SESSION_EXPIRY_MS,
 });
-const app = createApp({ core, maxUploadBytes: envConfig.MAX_UPLOAD_BYTES });
+const app = createApp({ core });
 
 app.listen(
   { port: envConfig.SERVER_PORT, maxRequestBodySize: MAX_REQUEST_BODY_BYTES },
@@ -100,4 +103,4 @@ const shutdown = async (): Promise<void> => {
 process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 
-export type { App, AssetDto, TagDto, UserDto } from "./server";
+export type { ApiKeyDto, App, AssetDto, TagDto, UploadLimitsDto, UserDto } from "./server";

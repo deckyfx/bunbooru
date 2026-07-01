@@ -244,6 +244,42 @@ export const sessions = pgTable(
   ],
 );
 
+/**
+ * A tiny typed key-value store for admin-editable RUNTIME settings (e.g. upload
+ * caps). The env value is the bootstrap default; a row here overrides it at
+ * runtime. Values are stored as text and parsed per key by the settings service.
+ * `updatedBy` records which admin last changed it (null if the user is gone).
+ */
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedBy: bigint("updated_by", { mode: "number" }).references(() => users.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * A long-lived API key for non-browser (Bearer) clients. Like sessions, the DB
+ * stores only the sha256 hash of the opaque token (`bnb_…`); the raw key is shown
+ * once at creation. No expiry — a key is valid until revoked. Cascades when the
+ * owning user is deleted. `lastUsedAt` is a best-effort activity timestamp.
+ */
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tokenHash: text("token_hash").notNull().unique(),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("api_keys_user_idx").on(table.userId)],
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 
@@ -267,6 +303,12 @@ export type NewUploadSession = typeof uploadSessions.$inferInsert;
 
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
+
+export type Settings = typeof settings.$inferSelect;
+export type NewSettings = typeof settings.$inferInsert;
+
+export type ApiKey = typeof apiKeys.$inferSelect;
+export type NewApiKey = typeof apiKeys.$inferInsert;
 
 /** Domain enum unions, derived from the pg enums so they can't drift. */
 export type Rating = (typeof ratingEnum.enumValues)[number];

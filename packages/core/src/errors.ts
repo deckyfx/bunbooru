@@ -51,3 +51,11 @@ export class RegistrationConflictError extends Error {
     this.name = "RegistrationConflictError";
   }
 }
+
+/** Invalid input that passed HTTP-schema shape but failed a domain rule. API → 400. */
+export class ValidationError extends Error {
+  constructor(message = "Invalid input") {
+    super(message);
+    this.name = "ValidationError";
+  }
+}

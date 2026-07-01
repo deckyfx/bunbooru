@@ -1,8 +1,12 @@
 import { Elysia, t } from "elysia";
 
 import {
+  AuthorizationError,
+  canModerate,
   CORE_PACKAGE,
+  isOwnerOrAdmin,
   MAX_PER_PAGE,
+  type ApiKeySummary,
   type Asset,
   type AssetUpdate,
   type Core,
@@ -17,14 +21,17 @@ import { buildClearCookie, buildSessionCookie, readSessionToken, requireUser } f
 import { HttpError } from "./lib/errors";
 import { logger } from "./lib/logger";
 import { readRequestId, safeMessage, statusFor } from "./lib/http";
+import { clientIp, createRateLimiter } from "./lib/rate-limit";
 
 /** Runtime collaborators the app is built over — injected so tests can stub them. */
 export interface AppDependencies {
   /** Assembled Core services (see `createCore` in `@bunbooru/core`). */
   core: Core;
-  /** Reject uploads larger than this many bytes (logged, then 413). */
-  maxUploadBytes: number;
 }
+
+/** Per-IP throttles on the credential endpoints (in-memory, single-instance). */
+const LOGIN_RATE = { windowMs: 15 * 60 * 1000, max: 10 } as const;
+const REGISTER_RATE = { windowMs: 60 * 60 * 1000, max: 5 } as const;
 
 /**
  * Wire shape of an asset. Timestamps are ISO strings (Drizzle hands back `Date`,
@@ -55,6 +62,36 @@ function serializeTag(tag: Tag): TagDto {
   return { name: tag.name, category: tag.category, postCount: tag.postCount };
 }
 
+/** Accepted tag categories on write — mirrors the DB `tag_category` enum. */
+const tagCategorySchema = t.Union([
+  t.Literal("general"),
+  t.Literal("artist"),
+  t.Literal("character"),
+  t.Literal("copyright"),
+  t.Literal("meta"),
+]);
+
+/** Wire shape of an API key — the raw token is NEVER included after creation. */
+export type ApiKeyDto = {
+  id: number;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+};
+
+/** Project an {@link ApiKeySummary} onto its JSON wire form (no secret). */
+function serializeApiKey(key: ApiKeySummary): ApiKeyDto {
+  return {
+    id: key.id,
+    name: key.name,
+    createdAt: key.createdAt.toISOString(),
+    lastUsedAt: key.lastUsedAt ? key.lastUsedAt.toISOString() : null,
+  };
+}
+
+/** Wire shape of the editable runtime upload caps. */
+export type UploadLimitsDto = { maxUploadBytes: number; maxResumableUploadBytes: number };
+
 /**
  * Wire shape of a user — the password hash is NEVER included ({@link PublicUser}
  * omits it), and `createdAt` is an ISO string over the wire.
@@ -83,6 +120,9 @@ const idParam = t.Object({
 
 /** Upload-session token path param (bounded; storage layer also guards traversal). */
 const tokenParam = t.Object({ token: t.String({ maxLength: 100 }) });
+
+/** Tag-name path param for the admin category route (service normalizes it). */
+const tagNameParam = t.Object({ name: t.String({ minLength: 1, maxLength: 100 }) });
 
 /** Opaque visitor-id shape: hex + dashes (UUID-like), length-bounded vs abuse. */
 const VISITOR_ID_RE = /^[0-9a-fA-F-]{8,64}$/;
@@ -114,7 +154,12 @@ function serializeAsset(asset: Asset): AssetDto {
  * global error handler that never leaks stack traces. API routes are versioned
  * under `/api/v1`.
  */
-export function createApp({ core, maxUploadBytes }: AppDependencies) {
+export function createApp({ core }: AppDependencies) {
+  // Per-app limiter instances (fresh per createApp, so tests don't share state;
+  // one instance in production since the composition root builds the app once).
+  const loginLimiter = createRateLimiter(LOGIN_RATE);
+  const registerLimiter = createRateLimiter(REGISTER_RATE);
+
   return new Elysia()
     // Stamp every request (matched or not, so 404s are covered too) with an id,
     // echoed back as `x-request-id`. Propagate a caller/proxy-supplied id when it
@@ -205,7 +250,10 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // capture it for `Authorization: Bearer`).
         .post(
           "/auth/register",
-          async ({ body, set }) => {
+          async ({ body, set, request, server }) => {
+            if (!registerLimiter.hit(clientIp(request, server, envConfig.TRUST_PROXY))) {
+              throw new HttpError(429, "Too many registration attempts. Please try again later.");
+            }
             const email = body.email?.trim();
             const { token, user } = await core.authService.register({
               username: body.username,
@@ -232,7 +280,10 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // Verify credentials and open a session (sets cookie + returns token).
         .post(
           "/auth/login",
-          async ({ body, set }) => {
+          async ({ body, set, request, server }) => {
+            if (!loginLimiter.hit(clientIp(request, server, envConfig.TRUST_PROXY))) {
+              throw new HttpError(429, "Too many login attempts. Please try again later.");
+            }
             const { token, user } = await core.authService.login(body.username, body.password);
             set.headers["set-cookie"] = buildSessionCookie(token, envConfig.SESSION_EXPIRY_MS, {
               secure: envConfig.COOKIE_SECURE,
@@ -301,6 +352,7 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
           "/assets",
           async ({ body, set, requestId, currentUser }) => {
             const user = requireUser(currentUser);
+            const { maxUploadBytes } = await core.settingsService.getUploadLimits();
             const { file } = body;
             if (file.size > maxUploadBytes) {
               // Surface the attempt — a rejected upload never reaches the DB.
@@ -347,9 +399,12 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         .patch(
           "/assets/:id",
           async ({ params, body, currentUser }) => {
-            // PR A: any authenticated user may edit (booru-collaborative).
-            // PR B: tighten to isOwnerOrAdmin(user, asset.uploaderId).
-            requireUser(currentUser);
+            const user = requireUser(currentUser);
+            // Only the uploader or an admin may edit a post's metadata. Fetch
+            // first so the ownership check runs against the stored uploaderId.
+            const existing = await core.assetService.getById(params.id);
+            if (!existing) throw new HttpError(404, "Asset not found");
+            if (!isOwnerOrAdmin(user, existing.uploaderId)) throw new AuthorizationError();
             const patch: AssetUpdate = {};
             if (body.rating !== undefined) patch.rating = body.rating;
             if (body.source !== undefined) patch.source = body.source;
@@ -393,10 +448,11 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         .patch(
           "/assets/:id/tags",
           async ({ params, body, currentUser }) => {
-            // PR A: any authenticated user may edit tags. PR B: tighten via role.
-            requireUser(currentUser);
+            const user = requireUser(currentUser);
             const asset = await core.assetService.getById(params.id);
             if (!asset) throw new HttpError(404, "Asset not found");
+            // Only the uploader or an admin may edit a post's tags.
+            if (!isOwnerOrAdmin(user, asset.uploaderId)) throw new AuthorizationError();
             const tags = await core.tagService.setAssetTags(params.id, body.tags);
             return tags.map(serializeTag);
           },
@@ -424,10 +480,20 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
             }),
           },
         )
-        // NOTE: setting a tag's category (taxonomy management) is intentionally
-        // NOT exposed yet — it's an admin operation, so it lands with the auth /
-        // superadmin milestone rather than as an open, unauthenticated write.
-        // `tagService.setCategory` is ready for that route.
+        // Set a tag's category (taxonomy management). Admin-only: `requireUser`
+        // first (401 when logged out), then `canModerate` (403 for non-admins).
+        // 404 when the tag doesn't exist.
+        .patch(
+          "/tags/:name",
+          async ({ params, body, currentUser }) => {
+            const user = requireUser(currentUser);
+            if (!canModerate(user)) throw new AuthorizationError();
+            const tag = await core.tagService.setCategory(params.name, body.category);
+            if (!tag) throw new HttpError(404, "Tag not found");
+            return serializeTag(tag);
+          },
+          { params: tagNameParam, body: t.Object({ category: tagCategorySchema }) },
+        )
         // --- Traffic counters ----------------------------------------------
         // Record a view of a post (throttled to at most once per window per
         // visitor, so refreshes don't inflate it). The web fires this once per
@@ -459,16 +525,21 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
           "/uploads",
           async ({ body, set, currentUser }) => {
             const user = requireUser(currentUser);
-            if (body.size > maxUploadBytes) {
-              throw new HttpError(413, `Upload exceeds the ${maxUploadBytes}-byte limit`);
+            // Resumable uploads guard on the (higher) resumable cap, not the
+            // one-shot cap — chunked, so they may exceed the request-body ceiling.
+            const { maxResumableUploadBytes } = await core.settingsService.getUploadLimits();
+            if (body.size > maxResumableUploadBytes) {
+              throw new HttpError(413, `Upload exceeds the ${maxResumableUploadBytes}-byte limit`);
             }
             set.status = 201;
-            return core.uploadService.begin({
-              filename: body.filename,
-              size: body.size,
-              mimeType: body.mimeType ?? null,
-              uploaderId: user.id,
-            });
+            return core.uploadService.begin(
+              {
+                filename: body.filename,
+                size: body.size,
+                mimeType: body.mimeType ?? null,
+              },
+              user,
+            );
           },
           {
             body: t.Object({
@@ -482,8 +553,8 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         .head(
           "/uploads/:token",
           async ({ params, set, currentUser }) => {
-            requireUser(currentUser);
-            const info = await core.uploadService.offsetOf(params.token);
+            const user = requireUser(currentUser);
+            const info = await core.uploadService.offsetOf(params.token, user);
             if (!info) throw new HttpError(404, "Upload session not found");
             set.headers["upload-offset"] = String(info.offset);
             set.headers["upload-length"] = String(info.size);
@@ -497,7 +568,7 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         .patch(
           "/uploads/:token",
           async ({ params, body, request, set, currentUser }) => {
-            requireUser(currentUser);
+            const user = requireUser(currentUser);
             // Decimal-only: `Number()` would accept "", whitespace, "1e3", "0x10";
             // a TUS-style offset header must be a plain non-negative integer.
             const header = request.headers.get("upload-offset")?.trim();
@@ -525,7 +596,7 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
                 : body instanceof ArrayBuffer
                   ? new Uint8Array(body)
                   : new Uint8Array(await request.arrayBuffer());
-            const result = await core.uploadService.appendChunk(params.token, offset, chunk);
+            const result = await core.uploadService.appendChunk(params.token, offset, chunk, user);
             if (result.status === "incomplete") {
               set.headers["upload-offset"] = String(result.offset);
               set.status = 204;
@@ -540,12 +611,74 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         .delete(
           "/uploads/:token",
           async ({ params, set, currentUser }) => {
-            requireUser(currentUser);
-            await core.uploadService.cancel(params.token);
+            const user = requireUser(currentUser);
+            await core.uploadService.cancel(params.token, user);
             set.status = 204;
             return "";
           },
           { params: tokenParam },
+        )
+        // --- Runtime settings (admin) --------------------------------------
+        // Current upload caps (env defaults merged with DB overrides).
+        .get("/settings", async ({ currentUser }): Promise<UploadLimitsDto> => {
+          const user = requireUser(currentUser);
+          if (!canModerate(user)) throw new AuthorizationError();
+          return core.settingsService.getUploadLimits();
+        })
+        // Update one or both upload caps. Invalid values (non-positive, or a
+        // one-shot cap above the request-body ceiling) → 400 (ValidationError).
+        .patch(
+          "/settings",
+          async ({ body, currentUser }): Promise<UploadLimitsDto> => {
+            const user = requireUser(currentUser);
+            if (!canModerate(user)) throw new AuthorizationError();
+            return core.settingsService.updateUploadLimits(
+              {
+                maxUploadBytes: body.maxUploadBytes,
+                maxResumableUploadBytes: body.maxResumableUploadBytes,
+              },
+              user.id,
+            );
+          },
+          {
+            body: t.Object({
+              maxUploadBytes: t.Optional(t.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+              maxResumableUploadBytes: t.Optional(
+                t.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+              ),
+            }),
+          },
+        )
+        // --- API keys (own keys only) --------------------------------------
+        // Mint a named API key. The raw `bnb_…` token is returned ONCE here.
+        .post(
+          "/account/api-keys",
+          async ({ body, set, currentUser }) => {
+            const user = requireUser(currentUser);
+            const { key, record } = await core.authService.createApiKey(user.id, body.name.trim());
+            set.status = 201;
+            return { ...serializeApiKey(record), key };
+          },
+          // `pattern: \S` rejects a whitespace-only name (which we'd trim to "").
+          { body: t.Object({ name: t.String({ minLength: 1, maxLength: 100, pattern: "\\S" }) }) },
+        )
+        // List the caller's API keys (no secrets).
+        .get("/account/api-keys", async ({ currentUser }): Promise<ApiKeyDto[]> => {
+          const user = requireUser(currentUser);
+          const keys = await core.authService.listApiKeys(user.id);
+          return keys.map(serializeApiKey);
+        })
+        // Revoke one of the caller's keys (404 if it isn't theirs / doesn't exist).
+        .delete(
+          "/account/api-keys/:id",
+          async ({ params, set, currentUser }) => {
+            const user = requireUser(currentUser);
+            const revoked = await core.authService.revokeApiKey(user.id, params.id);
+            if (!revoked) throw new HttpError(404, "API key not found");
+            set.status = 204;
+            return "";
+          },
+          { params: idParam },
         ),
     );
 }

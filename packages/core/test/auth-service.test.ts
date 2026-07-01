@@ -1,6 +1,13 @@
 import { describe, expect, it } from "bun:test";
 
-import type { Session, SessionRepository, User, UserRepository } from "@bunbooru/db";
+import type {
+  ApiKey,
+  ApiKeyRepository,
+  Session,
+  SessionRepository,
+  User,
+  UserRepository,
+} from "@bunbooru/db";
 
 import { AuthenticationError, RegistrationConflictError } from "../src/errors";
 import { createAuthService } from "../src/services/auth-service";
@@ -76,16 +83,50 @@ function fakeSessionRepo() {
   return { repo, rows };
 }
 
+/** In-memory {@link ApiKeyRepository}. Keyed by token HASH like the real one. */
+function fakeApiKeyRepo() {
+  const rows: ApiKey[] = [];
+  let nextId = 1;
+  const repo: ApiKeyRepository = {
+    create: async (input) => {
+      const key: ApiKey = {
+        id: nextId++,
+        tokenHash: input.tokenHash,
+        userId: input.userId,
+        name: input.name,
+        lastUsedAt: input.lastUsedAt ?? null,
+        createdAt: input.createdAt ?? new Date("2026-01-01T00:00:00.000Z"),
+      };
+      rows.push(key);
+      return key;
+    },
+    findByTokenHash: async (tokenHash) => rows.find((r) => r.tokenHash === tokenHash) ?? null,
+    listByUser: async (userId) => rows.filter((r) => r.userId === userId),
+    deleteByIdForUser: async (id, userId) => {
+      const idx = rows.findIndex((r) => r.id === id && r.userId === userId);
+      if (idx < 0) return false;
+      rows.splice(idx, 1);
+      return true;
+    },
+    touchLastUsed: async (id, at) => {
+      const key = rows.find((r) => r.id === id);
+      if (key) key.lastUsedAt = at;
+    },
+  };
+  return { repo, rows };
+}
+
 /** Assemble an auth service over the in-memory repos with a mutable clock. */
 function makeService(sessionExpiryMs = 1000) {
   const users = fakeUserRepo();
   const sessions = fakeSessionRepo();
+  const apiKeys = fakeApiKeyRepo();
   let clock = new Date("2026-01-01T00:00:00.000Z");
-  const service = createAuthService(users.repo, sessions.repo, {
+  const service = createAuthService(users.repo, sessions.repo, apiKeys.repo, {
     sessionExpiryMs,
     now: () => clock,
   });
-  return { service, users, sessions, setClock: (d: Date) => void (clock = d) };
+  return { service, users, sessions, apiKeys, setClock: (d: Date) => void (clock = d) };
 }
 
 describe("createAuthService.register", () => {
@@ -174,5 +215,47 @@ describe("createAuthService.logout / gcExpiredSessions", () => {
     setClock(new Date("2026-01-01T00:00:02.000Z"));
     expect(await service.gcExpiredSessions()).toBe(1);
     expect(sessions.rows).toHaveLength(0);
+  });
+});
+
+describe("createAuthService — API keys", () => {
+  it("mints a `bnb_` key, stores only its hash, and resolves it via currentUser", async () => {
+    const { service, apiKeys } = makeService();
+    const { user } = await service.register({ username: "user", password: "supersecret" });
+
+    const { key, record } = await service.createApiKey(user.id, "laptop");
+    expect(key.startsWith("bnb_")).toBe(true);
+    expect(record.name).toBe("laptop");
+    // The DB row stores a hash, never the raw key.
+    expect(apiKeys.rows[0]?.tokenHash).toBeString();
+    expect(apiKeys.rows[0]?.tokenHash).not.toBe(key);
+
+    // The raw key authenticates (no expiry — even far in the future).
+    const resolved = await service.currentUser(key);
+    expect(resolved).toMatchObject({ id: user.id, username: "user" });
+  });
+
+  it("does not resolve a bogus API key or a revoked one", async () => {
+    const { service } = makeService();
+    const { user } = await service.register({ username: "user", password: "supersecret" });
+    const { key, record } = await service.createApiKey(user.id, "cli");
+
+    expect(await service.currentUser("bnb_deadbeef")).toBeNull();
+
+    // Revoke scoped to owner: another user can't revoke it, the owner can.
+    expect(await service.revokeApiKey(user.id + 999, record.id)).toBe(false);
+    expect(await service.currentUser(key)).not.toBeNull();
+    expect(await service.revokeApiKey(user.id, record.id)).toBe(true);
+    expect(await service.currentUser(key)).toBeNull();
+  });
+
+  it("lists a user's keys", async () => {
+    const { service } = makeService();
+    const { user } = await service.register({ username: "user", password: "supersecret" });
+    await service.createApiKey(user.id, "a");
+    await service.createApiKey(user.id, "b");
+
+    const keys = await service.listApiKeys(user.id);
+    expect(keys.map((k) => k.name).sort()).toEqual(["a", "b"]);
   });
 });

@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { Link, useNavigate } from "@tanstack/react-router";
 
+import { AccountLinks } from "../components/account-links";
 import { Counter } from "../components/counter";
 import { ThemeSwitcher } from "../components/theme-switcher";
 import { useSiteStats } from "../lib/stats";
@@ -73,13 +74,7 @@ export function HomePage() {
         </nav>
 
         <div className="flex items-center gap-3 pt-1 text-sm text-muted">
-          <a href="#" className="hover:underline">
-            Login
-          </a>
-          <span aria-hidden>·</span>
-          <a href="#" className="hover:underline">
-            Sign up
-          </a>
+          <AccountLinks className="text-sm" />
           <span aria-hidden>·</span>
           <ThemeSwitcher />
         </div>
