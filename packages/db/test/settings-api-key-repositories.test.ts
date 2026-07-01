@@ -40,12 +40,18 @@ describe.skipIf(!TEST_DATABASE_URL)("settings + api-key repositories (integratio
     users.createBootstrapping({ username, email: null, passwordHash: "h" });
 
   describe("SettingsRepository", () => {
-    it("upserts and reads back all overrides", async () => {
+    it("upserts (atomically) and reads back all overrides", async () => {
       expect(await settings.getAll()).toEqual({});
 
-      await settings.set("max_upload_bytes", "123", null);
-      await settings.set("max_upload_bytes", "456", null); // upsert overwrites
-      await settings.set("max_resumable_upload_bytes", "789", null);
+      await settings.setMany([{ key: "max_upload_bytes", value: "123" }], null);
+      // A second batch overwrites the first key and adds the second.
+      await settings.setMany(
+        [
+          { key: "max_upload_bytes", value: "456" },
+          { key: "max_resumable_upload_bytes", value: "789" },
+        ],
+        null,
+      );
 
       expect(await settings.getAll()).toEqual({
         max_upload_bytes: "456",
@@ -55,7 +61,7 @@ describe.skipIf(!TEST_DATABASE_URL)("settings + api-key repositories (integratio
 
     it("keeps the setting but nulls updated_by when the editor is deleted", async () => {
       const admin = await seedUser("admin");
-      await settings.set("max_upload_bytes", "1", admin.id);
+      await settings.setMany([{ key: "max_upload_bytes", value: "1" }], admin.id);
 
       // FK is ON DELETE SET NULL — the setting survives (not cascade-deleted).
       await db.execute(sql`DELETE FROM users WHERE id = ${admin.id}`);
@@ -74,8 +80,9 @@ describe.skipIf(!TEST_DATABASE_URL)("settings + api-key repositories (integratio
       expect(await apiKeys.findByTokenHash("h1")).toMatchObject({ id: k1.id, userId: alice.id });
       expect(await apiKeys.findByTokenHash("nope")).toBeNull();
 
+      // Newest-first, id-tiebroken: "two" (later id) before "one".
       const aliceKeys = await apiKeys.listByUser(alice.id);
-      expect(aliceKeys.map((k) => k.name).sort()).toEqual(["one", "two"]);
+      expect(aliceKeys.map((k) => k.name)).toEqual(["two", "one"]);
 
       // Bob can't revoke Alice's key; Alice can.
       expect(await apiKeys.deleteByIdForUser(k1.id, bob.id)).toBe(false);

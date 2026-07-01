@@ -7,18 +7,23 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ApiKeyDto } from "@bunbooru/api";
 
 import { api, unwrap } from "./api";
+import { useCurrentUser } from "./auth";
 
 export type { ApiKeyDto };
 
 /** An {@link ApiKeyDto} plus the one-time secret returned at creation. */
 export type CreatedApiKeyDto = ApiKeyDto & { key: string };
 
+/** Query key namespace — scoped by user id so one account never sees another's
+ *  cached keys across a logout/login. Mutations invalidate by this prefix. */
 const API_KEYS_KEY = ["api-keys"] as const;
 
 /** The caller's API keys (no secrets), newest first. */
 export function useApiKeys() {
+  const { data: user } = useCurrentUser();
   return useQuery({
-    queryKey: API_KEYS_KEY,
+    queryKey: [...API_KEYS_KEY, user?.id],
+    enabled: user != null,
     queryFn: async (): Promise<ApiKeyDto[]> => unwrap(await api.api.v1.account["api-keys"].get()),
   });
 }

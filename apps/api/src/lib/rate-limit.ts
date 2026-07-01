@@ -67,8 +67,14 @@ interface IpResolver {
 export function clientIp(request: Request, server: IpResolver | null, trustProxy: boolean): string {
   if (trustProxy) {
     const forwarded = request.headers.get("x-forwarded-for");
-    const first = forwarded?.split(",")[0]?.trim();
-    if (first) return first;
+    // Only trust a SINGLE-hop value — a proxy that overwrites XFF yields exactly
+    // one IP. A multi-hop chain means either extra proxies (needs explicit hop
+    // config) or a client that prepended a spoofed value; fall back to the socket
+    // address rather than trust an attacker-controlled first token.
+    if (forwarded && !forwarded.includes(",")) {
+      const ip = forwarded.trim();
+      if (ip) return ip;
+    }
   }
   return server?.requestIP(request)?.address ?? "unknown";
 }

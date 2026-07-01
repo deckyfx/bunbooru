@@ -92,22 +92,26 @@ export function createSettingsService(
         throw new ValidationError("maxResumableUploadBytes must be a positive integer");
       }
 
+      const entries: Array<{ key: string; value: string }> = [];
+      if (patch.maxUploadBytes !== undefined) {
+        entries.push({ key: KEY_MAX_UPLOAD, value: String(next.maxUploadBytes) });
+      }
+      if (patch.maxResumableUploadBytes !== undefined) {
+        entries.push({ key: KEY_MAX_RESUMABLE, value: String(next.maxResumableUploadBytes) });
+      }
+      if (entries.length === 0) return current; // nothing to change
+
       try {
-        if (patch.maxUploadBytes !== undefined) {
-          await repo.set(KEY_MAX_UPLOAD, String(next.maxUploadBytes), updatedBy);
-        }
-        if (patch.maxResumableUploadBytes !== undefined) {
-          await repo.set(KEY_MAX_RESUMABLE, String(next.maxResumableUploadBytes), updatedBy);
-        }
+        await repo.setMany(entries, updatedBy);
       } catch (error) {
-        // A partial write may have landed (first key set, second failed). Drop
-        // the cache so the next read reloads the true state from the DB rather
-        // than serving a stale in-memory value forever.
-        cache = null;
+        cache = null; // drop the (now uncertain) cache so the next read reloads
         throw error;
       }
-      cache = next;
-      return next;
+      // Re-read the authoritative DB state rather than publishing our optimistic
+      // snapshot — so a concurrent admin's write to the OTHER key is reflected
+      // too (not overwritten by our stale value).
+      cache = await load();
+      return cache;
     },
   };
 }

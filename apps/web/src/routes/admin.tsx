@@ -78,6 +78,7 @@ function UploadLimitsSection() {
     const mr = Number(maxResumable);
     if (Number.isSafeInteger(mu) && mu >= 1) patch.maxUploadBytes = mu;
     if (Number.isSafeInteger(mr) && mr >= 1) patch.maxResumableUploadBytes = mr;
+    if (Object.keys(patch).length === 0) return; // nothing valid to save
     update.mutate(patch);
   }
 
@@ -102,7 +103,7 @@ function UploadLimitsSection() {
               className={INPUT_CLASS}
             />
             <span className="mt-1 block text-[11px] text-muted">
-              {maxUpload ? formatBytes(Number(maxUpload)) : "—"} · `POST /assets`
+              {maxUpload ? formatBytes(Number(maxUpload)) : "—"} · one-shot uploads
             </span>
           </label>
 

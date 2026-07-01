@@ -5,15 +5,15 @@ import type { SettingsRepository } from "@bunbooru/db";
 import { ValidationError } from "../src/errors";
 import { createSettingsService } from "../src/services/settings-service";
 
-/** In-memory {@link SettingsRepository} recording the `set` calls it received. */
+/** In-memory {@link SettingsRepository} recording the `setMany` calls it received. */
 function fakeRepo(initial: Record<string, string> = {}) {
   const store = { ...initial };
-  const calls: Array<{ key: string; value: string; updatedBy: number | null }> = [];
+  const calls: Array<{ entries: Array<{ key: string; value: string }>; updatedBy: number | null }> = [];
   const repo: SettingsRepository = {
     getAll: async () => ({ ...store }),
-    set: async (key, value, updatedBy) => {
-      store[key] = value;
-      calls.push({ key, value, updatedBy });
+    setMany: async (entries, updatedBy) => {
+      for (const { key, value } of entries) store[key] = value;
+      calls.push({ entries: entries.map(({ key, value }) => ({ key, value })), updatedBy });
     },
   };
   return { repo, calls };
@@ -51,9 +51,9 @@ describe("createSettingsService", () => {
     const { service, calls } = makeService();
     const next = await service.updateUploadLimits({ maxUploadBytes: 1500 }, 42);
     expect(next).toEqual({ maxUploadBytes: 1500, maxResumableUploadBytes: 5000 });
-    // Only the changed key is written, with the editor id.
-    expect(calls).toEqual([{ key: "max_upload_bytes", value: "1500", updatedBy: 42 }]);
-    // The cache reflects the update without re-reading the repo.
+    // Only the changed key is written (atomically), with the editor id.
+    expect(calls).toEqual([{ entries: [{ key: "max_upload_bytes", value: "1500" }], updatedBy: 42 }]);
+    // A subsequent read reflects the update.
     expect(await service.getUploadLimits()).toEqual({ maxUploadBytes: 1500, maxResumableUploadBytes: 5000 });
   });
 
