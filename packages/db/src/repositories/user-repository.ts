@@ -11,13 +11,16 @@ const USERS_BOOTSTRAP_LOCK = 987_654_321;
 
 /**
  * Data access for {@link User} rows (the sole SQL layer per CLAUDE.md). Usernames
- * are canonicalized to lowercase HERE — matching the `lower(username)` unique
- * index — so identity is case-insensitive regardless of how a caller cases the
- * input: `createBootstrapping` stores the lowercased form and `findByUsername`
- * matches on `lower(username)`.
+ * are canonicalized to lowercase HERE on EVERY write path — matching the
+ * `lower(username)` unique index — so identity is case-insensitive regardless of
+ * how a caller cases the input: both `create` and `createBootstrapping` store the
+ * lowercased form, and `findByUsername` matches on `lower(username)`.
  */
 export interface UserRepository {
-  /** Insert one user with an explicit role, returning the persisted row. */
+  /**
+   * Insert one user with an explicit role, returning the persisted row. The
+   * username is stored canonicalized (lowercase), like `createBootstrapping`.
+   */
   create(input: NewUser): Promise<User>;
   /**
    * Register a user, assigning the bootstrap role ATOMICALLY: the very first
@@ -38,7 +41,12 @@ export interface UserRepository {
 export function createUserRepository(db: DB): UserRepository {
   return {
     async create(input) {
-      const [row] = await db.insert(users).values(input).returning();
+      const [row] = await db
+        .insert(users)
+        // Canonicalize the username (lowercase) so the stored value always
+        // matches the lower(username) unique index, like createBootstrapping.
+        .values({ ...input, username: input.username.toLowerCase() })
+        .returning();
       if (!row) {
         throw new Error("user insert returned no row");
       }
