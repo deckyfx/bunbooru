@@ -27,3 +27,27 @@ export class UploadRangeError extends Error {
     this.name = "UploadRangeError";
   }
 }
+
+/** Not authenticated (no/invalid session) or bad credentials. API → 401. */
+export class AuthenticationError extends Error {
+  constructor(message = "Authentication required") {
+    super(message);
+    this.name = "AuthenticationError";
+  }
+}
+
+/** Authenticated, but not permitted to perform the action. API → 403. */
+export class AuthorizationError extends Error {
+  constructor(message = "Forbidden") {
+    super(message);
+    this.name = "AuthorizationError";
+  }
+}
+
+/** Registration hit a unique conflict (username/email already taken). API → 409. */
+export class RegistrationConflictError extends Error {
+  constructor(message = "Username or email already taken") {
+    super(message);
+    this.name = "RegistrationConflictError";
+  }
+}

@@ -9,6 +9,7 @@ import { SearchBox } from "../components/popover/search-box";
 import { PostTagPanel } from "../components/tags/post-tag-panel";
 import { assetFileUrl } from "../lib/api";
 import { useAsset, useUpdateAsset, type AssetDto } from "../lib/assets";
+import { useIsLoggedIn } from "../lib/auth";
 import { useRecordView } from "../lib/stats";
 
 /** ISO timestamp → `YYYY-MM-DD`. Tolerates a string or Date so a stray value
@@ -139,6 +140,9 @@ function Info({ label, value }: { label: string; value: string }) {
 /** Information panel with an inline editor for the mutable fields (rating/source). */
 function AssetInfo({ asset }: { asset: AssetDto }) {
   const update = useUpdateAsset(asset.id);
+  // Editing requires a session (the API 401s otherwise); hide the affordance for
+  // anonymous viewers.
+  const isLoggedIn = useIsLoggedIn();
   const [editing, setEditing] = useState(false);
   const [rating, setRating] = useState<Rating>(asset.rating);
   const [source, setSource] = useState(asset.source ?? "");
@@ -151,6 +155,17 @@ function AssetInfo({ asset }: { asset: AssetDto }) {
     setSource(asset.source ?? "");
     setEditing(false);
   }, [asset.id, asset.rating, asset.source]);
+
+  // Close + reset the editor if auth drops mid-edit (logout elsewhere, session
+  // expiry), rather than leaving an open form that only fails on save with a 401.
+  useEffect(() => {
+    if (!isLoggedIn) {
+      update.reset();
+      setRating(asset.rating);
+      setSource(asset.source ?? "");
+      setEditing(false);
+    }
+  }, [isLoggedIn, asset.rating, asset.source, update]);
 
   async function save() {
     try {
@@ -172,7 +187,7 @@ function AssetInfo({ asset }: { asset: AssetDto }) {
     <div>
       <div className="mb-1 flex items-center justify-between">
         <h3 className="font-bold">Information</h3>
-        {editing ? null : (
+        {editing || !isLoggedIn ? null : (
           <button
             type="button"
             onClick={() => {

@@ -19,6 +19,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 // `bigint`/`bigserial` columns use `mode: "number"`: they need 64-bit *storage*
@@ -47,15 +48,28 @@ export const tagCategoryEnum = pgEnum("tag_category", [
 /** Coarse authorization role; fine-grained permissions land with the auth PR. */
 export const userRoleEnum = pgEnum("user_role", ["admin", "member", "guest"]);
 
-/** A registered account. Passwords are stored only as Bun-hashed digests. */
-export const users = pgTable("users", {
-  id: bigserial("id", { mode: "number" }).primaryKey(),
-  username: text("username").notNull().unique(),
-  email: text("email").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
-  role: userRoleEnum("role").notNull().default("member"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+/**
+ * A registered account. Passwords are stored only as Bun-hashed digests.
+ * `email` is optional (nullable) — registration needs only username + password;
+ * the unique constraint still holds (Postgres allows multiple NULLs).
+ *
+ * Username uniqueness is enforced on the CANONICAL (lowercased) form via a
+ * functional unique index, not a plain per-value constraint: the auth service
+ * stores usernames lowercase, and this guarantees no write path can ever create
+ * `Alice` and `alice` as two distinct accounts (case-insensitive identity).
+ */
+export const users = pgTable(
+  "users",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    username: text("username").notNull(),
+    email: text("email").unique(),
+    passwordHash: text("password_hash").notNull(),
+    role: userRoleEnum("role").notNull().default("member"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("users_username_lower_idx").on(sql`lower(${table.username})`)],
+);
 
 /**
  * An uploaded media item (the booru "post"). `sha256` is the unique content key
@@ -207,6 +221,29 @@ export const uploadSessions = pgTable(
   ],
 );
 
+/**
+ * A login session. The opaque token lives only in the client (httpOnly cookie or
+ * an `Authorization: Bearer` header); the DB stores just its sha256 hash, so a
+ * DB leak can't be replayed as a live session. Cascades when the user is deleted;
+ * expired rows read as logged-out and are reclaimed by a periodic sweep.
+ */
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    tokenHash: text("token_hash").notNull().unique(),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("sessions_user_idx").on(table.userId),
+    index("sessions_expires_idx").on(table.expiresAt),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 
@@ -227,6 +264,9 @@ export type NewDailyVisitor = typeof dailyVisitors.$inferInsert;
 
 export type UploadSession = typeof uploadSessions.$inferSelect;
 export type NewUploadSession = typeof uploadSessions.$inferInsert;
+
+export type Session = typeof sessions.$inferSelect;
+export type NewSession = typeof sessions.$inferInsert;
 
 /** Domain enum unions, derived from the pg enums so they can't drift. */
 export type Rating = (typeof ratingEnum.enumValues)[number];

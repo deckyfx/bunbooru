@@ -29,3 +29,11 @@ export {
   createStatsRepository,
   type StatsRepository,
 } from "./repositories/stats-repository";
+export {
+  createUserRepository,
+  type UserRepository,
+} from "./repositories/user-repository";
+export {
+  createSessionRepository,
+  type SessionRepository,
+} from "./repositories/session-repository";

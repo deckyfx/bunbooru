@@ -122,6 +122,8 @@ const core = createCore({
   // The seeder uses assetService.create directly (not the resumable uploader),
   // so this bound is unused here; keep it generous.
   maxResumableUploadBytes: 100 * 1024 * 1024,
+  // Unused by the seeder (it never opens a session); any positive value works.
+  sessionExpiryMs: 30 * 24 * 60 * 60 * 1000,
 });
 
 /** Aspect variety so the masonry layout has something to do. */

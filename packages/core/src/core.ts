@@ -3,9 +3,11 @@ import { join } from "node:path";
 import {
   createAssetRepository,
   createDb,
+  createSessionRepository,
   createStatsRepository,
   createTagRepository,
   createUploadSessionRepository,
+  createUserRepository,
   type DB,
 } from "@bunbooru/db";
 import {
@@ -17,6 +19,7 @@ import {
 
 import { createCoreEvents, type CoreEvents } from "./events";
 import { createAssetService, type AssetService } from "./services/asset-service";
+import { createAuthService, type AuthService } from "./services/auth-service";
 import { createStatsService, type StatsService } from "./services/stats-service";
 import { createTagService, type TagService } from "./services/tag-service";
 import { createUploadService, type UploadService } from "./services/upload-service";
@@ -34,6 +37,8 @@ export interface Core {
   tagService: TagService;
   /** Traffic counters — per-post views (debounced) + daily unique visitors. */
   statsService: StatsService;
+  /** Accounts + opaque server sessions — register/login/logout/currentUser + session GC. */
+  authService: AuthService;
   /** Typed pub/sub bus — Core emits domain events (e.g. `asset.created`); plugins subscribe. */
   events: CoreEvents;
 }
@@ -46,6 +51,8 @@ export interface CoreConfig {
   storageRoot: string;
   /** Reject resumable uploads larger than this many bytes (bounded up front in `begin`). */
   maxResumableUploadBytes: number;
+  /** Login session lifetime in milliseconds (e.g. 30 days). */
+  sessionExpiryMs: number;
 }
 
 /**
@@ -59,6 +66,7 @@ export function assembleCore(
   storage: StorageProvider,
   staging: StagingStore,
   maxResumableUploadBytes: number,
+  sessionExpiryMs: number,
 ): Core {
   const events = createCoreEvents();
   const assetService = createAssetService(createAssetRepository(db), storage, events);
@@ -70,7 +78,10 @@ export function assembleCore(
   );
   const tagService = createTagService(createTagRepository(db));
   const statsService = createStatsService(createStatsRepository(db));
-  return { assetService, uploadService, tagService, statsService, events };
+  const authService = createAuthService(createUserRepository(db), createSessionRepository(db), {
+    sessionExpiryMs,
+  });
+  return { assetService, uploadService, tagService, statsService, authService, events };
 }
 
 /**
@@ -87,5 +98,6 @@ export function createCore(config: CoreConfig): Core {
     // on the same host volume as the final assets.
     createFilesystemStaging({ root: join(config.storageRoot, "uploads-staging") }),
     config.maxResumableUploadBytes,
+    config.sessionExpiryMs,
   );
 }

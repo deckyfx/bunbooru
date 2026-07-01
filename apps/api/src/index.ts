@@ -15,6 +15,7 @@ const core = createCore({
   databaseUrl: envConfig.DATABASE_URL,
   storageRoot: envConfig.STORAGE_ROOT,
   maxResumableUploadBytes: envConfig.MAX_RESUMABLE_UPLOAD_BYTES,
+  sessionExpiryMs: envConfig.SESSION_EXPIRY_MS,
 });
 const app = createApp({ core, maxUploadBytes: envConfig.MAX_UPLOAD_BYTES });
 
@@ -74,6 +75,11 @@ const sweepTimers = [
   startSweep(envConfig.ASSET_ORPHAN_GC_INTERVAL_MS, "asset_orphan_gc", () =>
     core.assetService.gcOrphanedBlobs(new Date(Date.now() - ORPHAN_GC_GRACE_MS)),
   ),
+  // Expired login sessions are pure housekeeping (the lookup already filters on
+  // expiry), so this runs on a slow cadence.
+  startSweep(envConfig.SESSION_GC_INTERVAL_MS, "session_gc", () =>
+    core.authService.gcExpiredSessions(new Date()),
+  ),
 ].filter((t): t is ReturnType<typeof setInterval> => t !== undefined);
 
 /** Stop the server cleanly so `docker stop` (SIGTERM) drains in-flight requests. */
@@ -94,4 +100,4 @@ const shutdown = async (): Promise<void> => {
 process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 
-export type { App, AssetDto, TagDto } from "./server";
+export type { App, AssetDto, TagDto, UserDto } from "./server";
