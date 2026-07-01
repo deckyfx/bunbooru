@@ -5,14 +5,22 @@ import type {
   AssetListPage,
   AssetService,
   AssetUpdate,
+  AuthService,
   Core,
   ListAssetsOptions,
   StatsService,
   Tag,
   TagService,
   UploadService,
+  User,
 } from "@bunbooru/core";
-import { createCoreEvents, UnsupportedMediaError, UploadConflictError } from "@bunbooru/core";
+import {
+  AuthenticationError,
+  createCoreEvents,
+  RegistrationConflictError,
+  UnsupportedMediaError,
+  UploadConflictError,
+} from "@bunbooru/core";
 
 import { createApp } from "../src/server";
 
@@ -45,6 +53,22 @@ const sampleTag: Tag = {
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
 };
 
+/** A fixed user row; its `passwordHash` must never appear on the wire. */
+const sampleUser: User = {
+  id: 7,
+  username: "tester",
+  email: null,
+  passwordHash: "argon2-hash-should-never-leak",
+  role: "member",
+  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+};
+
+/** Opaque session token the default stub treats as a valid, authenticated session. */
+const SESSION_TOKEN = "test-session-token";
+
+/** Authorization header carrying {@link SESSION_TOKEN} (Bearer transport). */
+const AUTH_HEADER = { authorization: `Bearer ${SESSION_TOKEN}` } as const;
+
 /** Small upload cap so the oversize path is cheap to exercise. */
 const MAX_UPLOAD_BYTES = 1024;
 
@@ -54,6 +78,7 @@ function stubCore(
   uploadOverrides: Partial<UploadService> = {},
   tagOverrides: Partial<TagService> = {},
   statsOverrides: Partial<StatsService> = {},
+  authOverrides: Partial<AuthService> = {},
 ): Core {
   return {
     assetService: {
@@ -87,6 +112,17 @@ function stubCore(
       getStats: async () => ({ posts: 0, visitorsToday: 0 }),
       ...statsOverrides,
     },
+    authService: {
+      register: async () => ({ token: SESSION_TOKEN, user: sampleUser }),
+      login: async () => ({ token: SESSION_TOKEN, user: sampleUser }),
+      // Only the canonical token resolves — so the Bearer/cookie tests actually
+      // exercise correct token EXTRACTION (a raw-header or wrong-cookie parse
+      // would yield a different string and fail to authenticate).
+      currentUser: async (token) => (token === SESSION_TOKEN ? sampleUser : null),
+      logout: async () => undefined,
+      gcExpiredSessions: async () => 0,
+      ...authOverrides,
+    },
     events: createCoreEvents(),
   };
 }
@@ -103,11 +139,17 @@ function request(path: string): Promise<Response> {
   return app.handle(new Request(`http://localhost${path}`));
 }
 
-/** A multipart upload request carrying `bytes` as a file field. */
+/** A multipart upload request carrying `bytes` as a file field (authenticated). */
 function uploadRequest(bytes: Uint8Array, type = "image/png"): Request {
   const form = new FormData();
   form.append("file", new File([bytes], "upload.png", { type }));
-  return new Request("http://localhost/api/v1/assets", { method: "POST", body: form });
+  // Only the Authorization header is set; the multipart content-type (with its
+  // boundary) is inferred from the FormData body.
+  return new Request("http://localhost/api/v1/assets", {
+    method: "POST",
+    headers: AUTH_HEADER,
+    body: form,
+  });
 }
 
 describe("health", () => {
@@ -318,7 +360,7 @@ describe("PATCH /api/v1/assets/:id", () => {
     const res = await buildApp(core).handle(
       new Request("http://localhost/api/v1/assets/1", {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...AUTH_HEADER },
         body: JSON.stringify({ rating: "explicit", source: "https://example.com" }),
       }),
     );
@@ -341,7 +383,7 @@ describe("PATCH /api/v1/assets/:id", () => {
     const res = await buildApp(core).handle(
       new Request("http://localhost/api/v1/assets/1", {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...AUTH_HEADER },
         body: JSON.stringify({ rating: "unrated" }),
       }),
     );
@@ -353,7 +395,7 @@ describe("PATCH /api/v1/assets/:id", () => {
     const res = await buildApp(stubCore({ update: async () => null })).handle(
       new Request("http://localhost/api/v1/assets/999", {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...AUTH_HEADER },
         body: JSON.stringify({ rating: "safe" }),
       }),
     );
@@ -364,7 +406,7 @@ describe("PATCH /api/v1/assets/:id", () => {
     const res = await buildApp(stubCore()).handle(
       new Request("http://localhost/api/v1/assets/1", {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...AUTH_HEADER },
         body: JSON.stringify({ rating: "bogus" }),
       }),
     );
@@ -417,7 +459,7 @@ describe("resumable uploads (/api/v1/uploads)", () => {
     ).handle(
       new Request("http://localhost/api/v1/uploads", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...AUTH_HEADER },
         body: JSON.stringify({ filename: "a.png", size: 10, mimeType: "image/png" }),
       }),
     );
@@ -432,7 +474,7 @@ describe("resumable uploads (/api/v1/uploads)", () => {
     const res = await buildApp(stubCore()).handle(
       new Request("http://localhost/api/v1/uploads", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...AUTH_HEADER },
         body: JSON.stringify({ filename: "big.png", size: MAX_UPLOAD_BYTES + 1 }),
       }),
     );
@@ -442,7 +484,9 @@ describe("resumable uploads (/api/v1/uploads)", () => {
   it("HEAD /uploads/:token reports the committed offset + length", async () => {
     const res = await buildApp(
       stubCore({}, { offsetOf: async () => ({ offset: 42, size: 100 }) }),
-    ).handle(new Request("http://localhost/api/v1/uploads/tok-1", { method: "HEAD" }));
+    ).handle(
+      new Request("http://localhost/api/v1/uploads/tok-1", { method: "HEAD", headers: AUTH_HEADER }),
+    );
     expect(res.status).toBe(200);
     expect(res.headers.get("upload-offset")).toBe("42");
     expect(res.headers.get("upload-length")).toBe("100");
@@ -450,7 +494,7 @@ describe("resumable uploads (/api/v1/uploads)", () => {
 
   it("HEAD /uploads/:token returns 404 for an unknown session", async () => {
     const res = await buildApp(stubCore({}, { offsetOf: async () => null })).handle(
-      new Request("http://localhost/api/v1/uploads/nope", { method: "HEAD" }),
+      new Request("http://localhost/api/v1/uploads/nope", { method: "HEAD", headers: AUTH_HEADER }),
     );
     expect(res.status).toBe(404);
   });
@@ -470,7 +514,7 @@ describe("resumable uploads (/api/v1/uploads)", () => {
     ).handle(
       new Request("http://localhost/api/v1/uploads/tok-1", {
         method: "PATCH",
-        headers: { "upload-offset": "0", "content-type": "application/octet-stream" },
+        headers: { "upload-offset": "0", "content-type": "application/octet-stream", ...AUTH_HEADER },
         body: new Uint8Array([1, 2, 3, 4]),
       }),
     );
@@ -488,7 +532,7 @@ describe("resumable uploads (/api/v1/uploads)", () => {
     ).handle(
       new Request("http://localhost/api/v1/uploads/tok-1", {
         method: "PATCH",
-        headers: { "upload-offset": "0", "content-type": "application/octet-stream" },
+        headers: { "upload-offset": "0", "content-type": "application/octet-stream", ...AUTH_HEADER },
         body: new Uint8Array([1, 2, 3]),
       }),
     );
@@ -510,7 +554,7 @@ describe("resumable uploads (/api/v1/uploads)", () => {
     ).handle(
       new Request("http://localhost/api/v1/uploads/tok-1", {
         method: "PATCH",
-        headers: { "upload-offset": "5", "content-type": "application/octet-stream" },
+        headers: { "upload-offset": "5", "content-type": "application/octet-stream", ...AUTH_HEADER },
         body: new Uint8Array([1]),
       }),
     );
@@ -521,7 +565,7 @@ describe("resumable uploads (/api/v1/uploads)", () => {
     const res = await buildApp(stubCore()).handle(
       new Request("http://localhost/api/v1/uploads/tok-1", {
         method: "PATCH",
-        headers: { "content-type": "application/octet-stream" },
+        headers: { "content-type": "application/octet-stream", ...AUTH_HEADER },
         body: new Uint8Array([1]),
       }),
     );
@@ -540,7 +584,9 @@ describe("resumable uploads (/api/v1/uploads)", () => {
           },
         },
       ),
-    ).handle(new Request("http://localhost/api/v1/uploads/tok-1", { method: "DELETE" }));
+    ).handle(
+      new Request("http://localhost/api/v1/uploads/tok-1", { method: "DELETE", headers: AUTH_HEADER }),
+    );
     expect(res.status).toBe(204);
     expect(cancelled).toBe("tok-1");
   });
@@ -576,7 +622,7 @@ describe("tags", () => {
     ).handle(
       new Request("http://localhost/api/v1/assets/1/tags", {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...AUTH_HEADER },
         body: JSON.stringify({ tags: ["1girl", "solo"] }),
       }),
     );
@@ -589,7 +635,7 @@ describe("tags", () => {
     const res = await buildApp(stubCore({ getById: async () => null })).handle(
       new Request("http://localhost/api/v1/assets/1/tags", {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...AUTH_HEADER },
         body: JSON.stringify({ tags: [] }),
       }),
     );
@@ -665,5 +711,197 @@ describe("traffic counters", () => {
     );
     expect(noHeader.status).toBe(400);
     expect(seen).toEqual(["abcdef12-3456-7890-abcd-ef1234567890"]);
+  });
+});
+
+describe("auth", () => {
+  /** Anonymous multipart upload (no Authorization header / cookie). */
+  function anonUpload(): Request {
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([1, 2, 3])], "u.png", { type: "image/png" }));
+    return new Request("http://localhost/api/v1/assets", { method: "POST", body: form });
+  }
+
+  it("register → 201 with Set-Cookie, a token, and no password hash", async () => {
+    const res = await buildApp(stubCore()).handle(
+      new Request("http://localhost/api/v1/auth/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "tester", password: "supersecret" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+
+    const cookie = res.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("bunbooru_session=");
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Lax");
+    // Not secure in the test env (served over http://localhost).
+    expect(cookie).not.toContain("Secure");
+
+    const body = (await res.json()) as { user: Record<string, unknown>; token: string };
+    expect(body.token).toBe(SESSION_TOKEN);
+    expect(body.user.username).toBe("tester");
+    expect(body.user).not.toHaveProperty("passwordHash");
+  });
+
+  it("register → 409 on a duplicate username/email", async () => {
+    const res = await buildApp(
+      stubCore({}, {}, {}, {}, {
+        register: async () => {
+          throw new RegistrationConflictError();
+        },
+      }),
+    ).handle(
+      new Request("http://localhost/api/v1/auth/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "taken", password: "supersecret" }),
+      }),
+    );
+    expect(res.status).toBe(409);
+  });
+
+  it("register → 422 when the password is too short", async () => {
+    const res = await buildApp(stubCore()).handle(
+      new Request("http://localhost/api/v1/auth/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "tester", password: "short" }),
+      }),
+    );
+    expect(res.status).toBe(422);
+  });
+
+  it("login → 200 with a token + Set-Cookie; forwards credentials", async () => {
+    let received: { username: string; password: string } | undefined;
+    const res = await buildApp(
+      stubCore({}, {}, {}, {}, {
+        login: async (username, password) => {
+          received = { username, password };
+          return { token: SESSION_TOKEN, user: sampleUser };
+        },
+      }),
+    ).handle(
+      new Request("http://localhost/api/v1/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "tester", password: "supersecret" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(received).toEqual({ username: "tester", password: "supersecret" });
+    expect(res.headers.get("set-cookie") ?? "").toContain("bunbooru_session=");
+    const body = (await res.json()) as { token: string };
+    expect(body.token).toBe(SESSION_TOKEN);
+  });
+
+  it("login → 401 on bad credentials", async () => {
+    const res = await buildApp(
+      stubCore({}, {}, {}, {}, {
+        login: async () => {
+          throw new AuthenticationError();
+        },
+      }),
+    ).handle(
+      new Request("http://localhost/api/v1/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "tester", password: "wrong" }),
+      }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /auth/me → the user with a valid cookie, null without", async () => {
+    const app = buildApp(stubCore());
+
+    const withCookie = await app.handle(
+      new Request("http://localhost/api/v1/auth/me", {
+        headers: { cookie: `bunbooru_session=${SESSION_TOKEN}` },
+      }),
+    );
+    expect(withCookie.status).toBe(200);
+    const body = (await withCookie.json()) as { user: { username: string } | null };
+    expect(body.user?.username).toBe("tester");
+
+    const anon = await app.handle(new Request("http://localhost/api/v1/auth/me"));
+    expect(anon.status).toBe(200);
+    expect(await anon.json()).toEqual({ user: null });
+  });
+
+  it("logout → 204 and clears the cookie (Max-Age=0)", async () => {
+    let revoked: string | undefined;
+    const res = await buildApp(
+      stubCore({}, {}, {}, {}, {
+        logout: async (token) => {
+          revoked = token;
+        },
+      }),
+    ).handle(
+      new Request("http://localhost/api/v1/auth/logout", {
+        method: "POST",
+        headers: { cookie: `bunbooru_session=${SESSION_TOKEN}` },
+      }),
+    );
+    expect(res.status).toBe(204);
+    expect(revoked).toBe(SESSION_TOKEN);
+    expect(res.headers.get("set-cookie") ?? "").toContain("Max-Age=0");
+  });
+
+  it("gated writes → 401 without a session", async () => {
+    const app = buildApp(stubCore());
+
+    const post = await app.handle(anonUpload());
+    expect(post.status).toBe(401);
+
+    const patch = await app.handle(
+      new Request("http://localhost/api/v1/assets/1", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rating: "safe" }),
+      }),
+    );
+    expect(patch.status).toBe(401);
+
+    const beginUpload = await app.handle(
+      new Request("http://localhost/api/v1/uploads", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ filename: "a.png", size: 10 }),
+      }),
+    );
+    expect(beginUpload.status).toBe(401);
+  });
+
+  it("accepts auth via cookie as well as Bearer, and attributes the upload", async () => {
+    // Collect into an array (a closure-assigned `let` narrows to its initializer
+    // under control-flow analysis, so a plain variable would type as `undefined`).
+    const uploaderIds: Array<number | null> = [];
+    const core = stubCore({
+      create: async (input) => {
+        uploaderIds.push(input.uploaderId ?? null);
+        return { asset: sampleAsset, deduped: false };
+      },
+    });
+
+    // Bearer transport (handled by uploadRequest's Authorization header).
+    const viaBearer = await buildApp(core).handle(uploadRequest(new Uint8Array([1, 2, 3, 4])));
+    expect(viaBearer.status).toBe(201);
+
+    // Cookie transport.
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([5, 6, 7])], "u.png", { type: "image/png" }));
+    const viaCookie = await buildApp(core).handle(
+      new Request("http://localhost/api/v1/assets", {
+        method: "POST",
+        headers: { cookie: `bunbooru_session=${SESSION_TOKEN}` },
+        body: form,
+      }),
+    );
+    expect(viaCookie.status).toBe(201);
+
+    // Both transports attributed the upload to the authenticated user.
+    expect(uploaderIds).toEqual([sampleUser.id, sampleUser.id]);
   });
 });

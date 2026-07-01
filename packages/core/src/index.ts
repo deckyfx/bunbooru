@@ -18,7 +18,7 @@ export const CORE_PACKAGE = "@bunbooru/core" as const;
 export type { StorageProvider };
 
 // Domain row types, re-exported so downstream apps depend on Core, not db directly.
-export type { Asset, AssetUpdate, Rating, Tag, TagCategory, User } from "@bunbooru/db";
+export type { Asset, AssetUpdate, Rating, Tag, TagCategory, User, UserRole } from "@bunbooru/db";
 
 // Core assembly — the single wiring entry point for the API composition root.
 export {
@@ -75,8 +75,28 @@ export {
   type SiteStats,
 } from "./services/stats-service";
 
+// Accounts + opaque server sessions — register/login/logout/currentUser + session GC.
+export {
+  createAuthService,
+  type AuthService,
+  type AuthServiceConfig,
+  type LoginResult,
+  type PublicUser,
+  type RegisterInput,
+} from "./services/auth-service";
+
+// Authorization predicates (canWrite now; ownership/role reserved for PR B).
+export { canModerate, canWrite, isOwnerOrAdmin } from "./services/permissions";
+
 // Typed domain errors the API maps to HTTP status codes.
-export { UnsupportedMediaError, UploadConflictError, UploadRangeError } from "./errors";
+export {
+  AuthenticationError,
+  AuthorizationError,
+  RegistrationConflictError,
+  UnsupportedMediaError,
+  UploadConflictError,
+  UploadRangeError,
+} from "./errors";
 
 /** Internal packages the Core composes over — mirrors this package's dependencies. */
 export const CORE_DEPENDENCIES = [

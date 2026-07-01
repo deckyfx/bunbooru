@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { useIsLoggedIn } from "../../lib/auth";
 import {
   CATEGORY_ORDER,
   TAG_CATEGORY_LABEL,
@@ -25,6 +26,8 @@ function tokens(text: string): string[] {
 export function PostTagPanel({ assetId }: { assetId: number }) {
   const { data: tags, isLoading, isError } = useAssetTags(assetId);
   const setTags = useSetAssetTags(assetId);
+  // Tag editing hits a gated write route; only offer it to signed-in users.
+  const isLoggedIn = useIsLoggedIn();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState("");
 
@@ -37,6 +40,15 @@ export function PostTagPanel({ assetId }: { assetId: number }) {
   useEffect(() => {
     setEditing(false);
   }, [assetId]);
+  // If auth drops mid-edit (logout in another tab, session expiry), close the
+  // editor and discard the draft instead of leaving a form that only 401s on save.
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setTags.reset();
+      setText((tags ?? []).map((t) => t.name).join(" "));
+      setEditing(false);
+    }
+  }, [isLoggedIn, tags, setTags]);
 
   const grouped = useMemo(() => {
     const map = new Map<TagDto["category"], TagDto[]>();
@@ -80,7 +92,7 @@ export function PostTagPanel({ assetId }: { assetId: number }) {
     <div>
       <div className="mb-1 flex items-center justify-between">
         <h3 className="font-bold">Tags</h3>
-        {editing ? null : (
+        {editing || !isLoggedIn ? null : (
           <button
             type="button"
             onClick={() => {

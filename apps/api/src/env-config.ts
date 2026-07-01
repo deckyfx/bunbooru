@@ -156,6 +156,43 @@ class EnvConfig {
   }
 
   /**
+   * Login-session lifetime (ms, default 30 days). Drives both the DB
+   * `expires_at` and the cookie `Max-Age`. This is a duration, not a timer
+   * delay, so it is NOT capped at {@link MAX_TIMER_DELAY_MS} — it only needs to
+   * be a positive safe integer.
+   */
+  get SESSION_EXPIRY_MS(): number {
+    const raw = Bun.env.SESSION_EXPIRY_MS?.trim();
+    if (raw === undefined || raw === "") return 30 * 24 * 60 * 60 * 1000;
+    const n = Number(raw);
+    // Floor is 1000ms: the cookie `Max-Age` is `floor(ms / 1000)`, so anything
+    // below a second would serialize to `Max-Age=0` and clear the cookie on
+    // login (an immediately-broken session).
+    if (!Number.isSafeInteger(n) || n < 1000) {
+      throw new Error(`SESSION_EXPIRY_MS must be an integer of at least 1000 ms, got "${raw}"`);
+    }
+    return n;
+  }
+
+  /**
+   * How often (ms) to sweep expired login sessions (default 1h). `0` disables
+   * the periodic sweep — expired sessions still read as logged-out immediately
+   * (the lookup filters on `expires_at`), so the sweep is pure housekeeping.
+   * Capped at the 32-bit timer ceiling like the other GC intervals.
+   */
+  get SESSION_GC_INTERVAL_MS(): number {
+    const raw = Bun.env.SESSION_GC_INTERVAL_MS?.trim();
+    if (raw === undefined || raw === "") return 60 * 60 * 1000;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_TIMER_DELAY_MS) {
+      throw new Error(
+        `SESSION_GC_INTERVAL_MS must be an integer between 0 and ${MAX_TIMER_DELAY_MS}, got "${raw}"`,
+      );
+    }
+    return n;
+  }
+
+  /**
    * Runtime environment mode. Fails closed: an unset value defaults to
    * "production" so a missing variable never accidentally enables dev-only
    * behavior (e.g. leaking 5xx detail). Unsupported values are rejected.
@@ -173,6 +210,15 @@ class EnvConfig {
   /** Whether the API is running in development mode (only when explicitly set). */
   get isDevelopment(): boolean {
     return this.NODE_ENV === "development";
+  }
+
+  /**
+   * Whether the session cookie gets the `Secure` attribute. On in production
+   * (HTTPS-only) so the cookie never rides over plaintext; off in dev/test where
+   * the API is served over http://localhost.
+   */
+  get COOKIE_SECURE(): boolean {
+    return this.NODE_ENV === "production";
   }
 }
 

@@ -3,6 +3,7 @@ import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import pkg from "../../package.json";
 import { ThemeSwitcher } from "../components/theme-switcher";
 import { VisitorCounter } from "../components/visitor-counter";
+import { useCurrentUser, useLogout } from "../lib/auth";
 import { useRecordVisit } from "../lib/stats";
 import { useApplyTheme } from "../stores/theme";
 
@@ -24,12 +25,40 @@ const MENU = [
   { label: "More »" },
 ] as const;
 
-/** Account links, reused by the header and the home corner strip. */
+/**
+ * Account links, reused by the header and the home corner strip. Reflects live
+ * auth state (from `GET /auth/me`): the username + Logout when signed in, Login /
+ * Sign up links otherwise. Renders nothing until the first `/auth/me` resolves,
+ * to avoid flashing "Login" at an already-authenticated user.
+ */
 function AccountLinks({ className }: { className?: string }) {
+  const { data: user, isPending } = useCurrentUser();
+  const logout = useLogout();
+
   return (
     <div className={`flex items-center gap-3 text-[12px] ${className ?? ""}`}>
-      <a href="#">Login</a>
-      <a href="#">Sign up</a>
+      {isPending ? null : user ? (
+        <>
+          <span className="text-muted">{user.username}</span>
+          <button
+            type="button"
+            onClick={() => logout.mutate()}
+            disabled={logout.isPending}
+            className="hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Logout
+          </button>
+        </>
+      ) : (
+        <>
+          <Link to="/login" className="hover:underline">
+            Login
+          </Link>
+          <Link to="/signup" className="hover:underline">
+            Sign up
+          </Link>
+        </>
+      )}
     </div>
   );
 }

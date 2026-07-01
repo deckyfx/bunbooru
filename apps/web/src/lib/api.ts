@@ -43,7 +43,16 @@ function visitorId(): string {
 
 export const api = treaty<App>(
   typeof window !== "undefined" ? window.location.origin : "http://localhost:3000",
-  typeof window !== "undefined" ? { headers: () => ({ "x-visitor-id": visitorId() }) } : undefined,
+  typeof window !== "undefined"
+    ? {
+        headers: () => ({ "x-visitor-id": visitorId() }),
+        // Auth rides the httpOnly session cookie (JS can't read it), not a header
+        // like `x-visitor-id`. `credentials: "include"` guarantees the cookie is
+        // sent even if the API is ever served from a different origin behind a
+        // proxy; for the same-origin default it's a harmless no-op.
+        fetch: { credentials: "include" },
+      }
+    : undefined,
 );
 
 /** Public URL for an asset's stored bytes (used as an `<img src>`, not a data call). */

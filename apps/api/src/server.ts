@@ -6,11 +6,14 @@ import {
   type Asset,
   type AssetUpdate,
   type Core,
+  type PublicUser,
   type Tag,
+  type User,
 } from "@bunbooru/core";
 import { PLUGIN_SDK_VERSION } from "@bunbooru/plugin-sdk";
 
 import { envConfig } from "./env-config";
+import { buildClearCookie, buildSessionCookie, readSessionToken, requireUser } from "./lib/auth";
 import { HttpError } from "./lib/errors";
 import { logger } from "./lib/logger";
 import { readRequestId, safeMessage, statusFor } from "./lib/http";
@@ -50,6 +53,27 @@ export type TagDto = Pick<Tag, "name" | "category" | "postCount">;
 /** Project a {@link Tag} onto its JSON wire form. */
 function serializeTag(tag: Tag): TagDto {
   return { name: tag.name, category: tag.category, postCount: tag.postCount };
+}
+
+/**
+ * Wire shape of a user — the password hash is NEVER included ({@link PublicUser}
+ * omits it), and `createdAt` is an ISO string over the wire.
+ */
+export type UserDto = Omit<PublicUser, "createdAt"> & { createdAt: string };
+
+/**
+ * Project a {@link User} onto its public JSON wire form. Enumerates fields
+ * explicitly (rather than spreading `user`) so the `passwordHash` can never leak
+ * through, even if the row type gains fields later.
+ */
+function serializeUser(user: User): UserDto {
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    role: user.role,
+    createdAt: user.createdAt.toISOString(),
+  };
 }
 
 /** Asset id path param, shared by the `/assets/:id*` routes. */
@@ -159,10 +183,81 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // Left null when absent/invalid: the counter routes reject rather than
         // synthesize a throwaway id, which would defeat dedup (every header-less
         // request would count as a brand-new visitor/view).
-        .derive(({ request }) => ({
-          visitorId: readVisitorId(request.headers.get("x-visitor-id")),
-        }))
+        // Resolve auth once per request: read the token (Bearer or cookie) and,
+        // only if one is present, look up its session → user (so anonymous
+        // browsing costs no extra query). `currentUser` is null when logged out;
+        // write routes call `requireUser` to 401.
+        .derive(async ({ request }) => {
+          const sessionToken = readSessionToken(request);
+          return {
+            visitorId: readVisitorId(request.headers.get("x-visitor-id")),
+            sessionToken,
+            currentUser: sessionToken
+              ? await core.authService.currentUser(sessionToken)
+              : null,
+          };
+        })
         .get("/health", () => ({ status: "ok" as const }))
+        // --- Auth ----------------------------------------------------------
+        // Open, self-serve registration. The first account created becomes the
+        // site `admin`; the rest are `member`. Registration auto-logs-in: it sets
+        // the session cookie AND returns the token in the body (so API clients can
+        // capture it for `Authorization: Bearer`).
+        .post(
+          "/auth/register",
+          async ({ body, set }) => {
+            const email = body.email?.trim();
+            const { token, user } = await core.authService.register({
+              username: body.username,
+              password: body.password,
+              email: email ? email : null,
+            });
+            set.headers["set-cookie"] = buildSessionCookie(token, envConfig.SESSION_EXPIRY_MS, {
+              secure: envConfig.COOKIE_SECURE,
+            });
+            set.status = 201;
+            return { user: serializeUser(user), token };
+          },
+          {
+            body: t.Object({
+              username: t.String({ minLength: 1, maxLength: 100 }),
+              password: t.String({ minLength: 8, maxLength: 200 }),
+              email: t.Optional(t.String({ maxLength: 320 })),
+            }),
+          },
+        )
+        // Verify credentials and open a session (sets cookie + returns token).
+        .post(
+          "/auth/login",
+          async ({ body, set }) => {
+            const { token, user } = await core.authService.login(body.username, body.password);
+            set.headers["set-cookie"] = buildSessionCookie(token, envConfig.SESSION_EXPIRY_MS, {
+              secure: envConfig.COOKIE_SECURE,
+            });
+            return { user: serializeUser(user), token };
+          },
+          {
+            body: t.Object({
+              username: t.String({ minLength: 1, maxLength: 100 }),
+              password: t.String({ minLength: 1, maxLength: 200 }),
+            }),
+          },
+        )
+        // Revoke the current session and clear the cookie. Idempotent: succeeds
+        // (204) even without a valid session.
+        .post("/auth/logout", async ({ sessionToken, set }) => {
+          if (sessionToken) await core.authService.logout(sessionToken);
+          set.headers["set-cookie"] = buildClearCookie({ secure: envConfig.COOKIE_SECURE });
+          set.status = 204;
+          return "";
+        })
+        // The authenticated user, or null when logged out. Wrapped in `{ user }`
+        // so the response is always a JSON object (a bare `null` serializes to an
+        // empty body, which is ambiguous to parse). The web polls this to learn
+        // its auth state (the cookie is httpOnly, so JS can't read it).
+        .get("/auth/me", ({ currentUser }) => ({
+          user: currentUser ? serializeUser(currentUser) : null,
+        }))
         // Newest-first page of assets. `page`/`per_page` are coerced and
         // range-checked here; the service clamps defensively as well.
         .get(
@@ -201,7 +296,8 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // 200 when an identical upload already existed.
         .post(
           "/assets",
-          async ({ body, set, requestId }) => {
+          async ({ body, set, requestId, currentUser }) => {
+            const user = requireUser(currentUser);
             const { file } = body;
             if (file.size > maxUploadBytes) {
               // Surface the attempt — a rejected upload never reaches the DB.
@@ -218,6 +314,7 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
               bytes,
               rating: body.rating,
               source: body.source,
+              uploaderId: user.id,
             });
             set.status = deduped ? 200 : 201;
             return serializeAsset(asset);
@@ -246,7 +343,10 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // provided fields change; `source: null` clears it.
         .patch(
           "/assets/:id",
-          async ({ params, body }) => {
+          async ({ params, body, currentUser }) => {
+            // PR A: any authenticated user may edit (booru-collaborative).
+            // PR B: tighten to isOwnerOrAdmin(user, asset.uploaderId).
+            requireUser(currentUser);
             const patch: AssetUpdate = {};
             if (body.rating !== undefined) patch.rating = body.rating;
             if (body.source !== undefined) patch.source = body.source;
@@ -289,7 +389,9 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // Names are normalized + de-duplicated and unknown tags are created.
         .patch(
           "/assets/:id/tags",
-          async ({ params, body }) => {
+          async ({ params, body, currentUser }) => {
+            // PR A: any authenticated user may edit tags. PR B: tighten via role.
+            requireUser(currentUser);
             const asset = await core.assetService.getById(params.id);
             if (!asset) throw new HttpError(404, "Asset not found");
             const tags = await core.tagService.setAssetTags(params.id, body.tags);
@@ -352,7 +454,8 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // The one-shot POST /assets above remains for small/non-browser uploads.
         .post(
           "/uploads",
-          async ({ body, set }) => {
+          async ({ body, set, currentUser }) => {
+            const user = requireUser(currentUser);
             if (body.size > maxUploadBytes) {
               throw new HttpError(413, `Upload exceeds the ${maxUploadBytes}-byte limit`);
             }
@@ -361,6 +464,7 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
               filename: body.filename,
               size: body.size,
               mimeType: body.mimeType ?? null,
+              uploaderId: user.id,
             });
           },
           {
@@ -374,7 +478,8 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // Report the committed offset so a client can resume after an interruption.
         .head(
           "/uploads/:token",
-          async ({ params, set }) => {
+          async ({ params, set, currentUser }) => {
+            requireUser(currentUser);
             const info = await core.uploadService.offsetOf(params.token);
             if (!info) throw new HttpError(404, "Upload session not found");
             set.headers["upload-offset"] = String(info.offset);
@@ -388,7 +493,8 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // incomplete; 201 (or 200 deduped) with the asset once the file finalizes.
         .patch(
           "/uploads/:token",
-          async ({ params, body, request, set }) => {
+          async ({ params, body, request, set, currentUser }) => {
+            requireUser(currentUser);
             // Decimal-only: `Number()` would accept "", whitespace, "1e3", "0x10";
             // a TUS-style offset header must be a plain non-negative integer.
             const header = request.headers.get("upload-offset")?.trim();
@@ -430,7 +536,8 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
         // Cancel a session and delete its staged bytes.
         .delete(
           "/uploads/:token",
-          async ({ params, set }) => {
+          async ({ params, set, currentUser }) => {
+            requireUser(currentUser);
             await core.uploadService.cancel(params.token);
             set.status = 204;
             return "";
