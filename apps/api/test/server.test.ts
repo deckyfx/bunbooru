@@ -7,6 +7,7 @@ import type {
   AssetUpdate,
   Core,
   ListAssetsOptions,
+  StatsService,
   Tag,
   TagService,
   UploadService,
@@ -27,6 +28,7 @@ const sampleAsset: Asset = {
   md5: "a1b2c3d4".repeat(4), // 32-char lowercase hex
   rating: "safe",
   source: null,
+  viewCount: 0,
   uploaderId: null,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   updatedAt: new Date("2026-01-02T00:00:00.000Z"),
@@ -51,6 +53,7 @@ function stubCore(
   overrides: Partial<AssetService> = {},
   uploadOverrides: Partial<UploadService> = {},
   tagOverrides: Partial<TagService> = {},
+  statsOverrides: Partial<StatsService> = {},
 ): Core {
   return {
     assetService: {
@@ -77,6 +80,12 @@ function stubCore(
       autocomplete: async () => [sampleTag],
       setCategory: async () => sampleTag,
       ...tagOverrides,
+    },
+    statsService: {
+      recordView: async () => true,
+      recordVisit: async () => undefined,
+      getStats: async () => ({ posts: 0, visitorsToday: 0 }),
+      ...statsOverrides,
     },
     events: createCoreEvents(),
   };
@@ -593,5 +602,68 @@ describe("tags", () => {
     ).handle(new Request("http://localhost/api/v1/tags?q=1gi"));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([tagJson]);
+  });
+});
+
+describe("traffic counters", () => {
+  it("POST /assets/:id/view records a view (404 absent asset, 400 absent visitor id)", async () => {
+    const headers = { "x-visitor-id": "abcdef12-3456-7890-abcd-ef1234567890" };
+
+    const ok = await buildApp(stubCore({ getById: async () => sampleAsset })).handle(
+      new Request("http://localhost/api/v1/assets/1/view", { method: "POST", headers }),
+    );
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ counted: true });
+
+    const missing = await buildApp(stubCore({ getById: async () => null })).handle(
+      new Request("http://localhost/api/v1/assets/999/view", { method: "POST", headers }),
+    );
+    expect(missing.status).toBe(404);
+
+    // No visitor id → 400 (before any asset lookup).
+    const noVisitor = await buildApp(stubCore({ getById: async () => sampleAsset })).handle(
+      new Request("http://localhost/api/v1/assets/1/view", { method: "POST" }),
+    );
+    expect(noVisitor.status).toBe(400);
+  });
+
+  it("GET /stats returns site counters", async () => {
+    const res = await buildApp(
+      stubCore({}, {}, {}, { getStats: async () => ({ posts: 12, visitorsToday: 3 }) }),
+    ).handle(new Request("http://localhost/api/v1/stats"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ posts: 12, visitorsToday: 3 });
+  });
+
+  it("attributes a visit to a valid x-visitor-id header and 400s when it's absent", async () => {
+    const seen: string[] = [];
+    const core = stubCore(
+      {},
+      {},
+      {},
+      {
+        recordVisit: async (visitorId) => {
+          seen.push(visitorId);
+        },
+      },
+    );
+
+    // A valid header is used as the visitor id, as-is.
+    const withHeader = await buildApp(core).handle(
+      new Request("http://localhost/api/v1/stats/visit", {
+        method: "POST",
+        headers: { "x-visitor-id": "abcdef12-3456-7890-abcd-ef1234567890" },
+      }),
+    );
+    expect(await withHeader.json()).toEqual({ ok: true });
+    expect(seen).toEqual(["abcdef12-3456-7890-abcd-ef1234567890"]);
+
+    // No header → 400 and nothing recorded (we never synthesize a throwaway id,
+    // which would count every header-less request as a fresh visitor).
+    const noHeader = await buildApp(core).handle(
+      new Request("http://localhost/api/v1/stats/visit", { method: "POST" }),
+    );
+    expect(noHeader.status).toBe(400);
+    expect(seen).toEqual(["abcdef12-3456-7890-abcd-ef1234567890"]);
   });
 });

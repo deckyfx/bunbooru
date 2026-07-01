@@ -4,9 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 
 import { Counter } from "../components/counter";
 import { ThemeSwitcher } from "../components/theme-switcher";
-
-/** Dummy site stats — wired to the API once endpoints exist. */
-const POST_COUNT = "1234567890";
+import { useSiteStats } from "../lib/stats";
 
 /** Centered landing menu (safebooru-style front page). */
 const HOME_MENU = [
@@ -22,6 +20,9 @@ const HOME_MENU = [
 export function HomePage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
+  const { data: stats } = useSiteStats();
+  // Render the live post total once loaded; the odometer needs a numeric string.
+  const postCount = stats ? String(stats.posts) : null;
 
   return (
     <div className="flex min-h-[82vh] flex-col justify-center space-y-8">
@@ -36,9 +37,9 @@ export function HomePage() {
           Bun<span className="text-link">booru</span>
         </h1>
         <p className="text-lg text-muted">
-          Serving <strong>{POST_COUNT}</strong> posts and counting.
+          Serving <strong>{postCount ?? "…"}</strong> posts and counting.
         </p>
-        <Counter value={POST_COUNT} digitClass="h-16 sm:h-20" />
+        {postCount !== null && <Counter value={postCount} digitClass="h-16 sm:h-20" />}
 
         <form
           onSubmit={(e) => {

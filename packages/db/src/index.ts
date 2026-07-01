@@ -25,3 +25,7 @@ export {
   createTagRepository,
   type TagRepository,
 } from "./repositories/tag-repository";
+export {
+  createStatsRepository,
+  type StatsRepository,
+} from "./repositories/stats-repository";

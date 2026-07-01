@@ -24,6 +24,7 @@ const sampleAsset: Asset = {
   md5: "b".repeat(32),
   rating: "unrated",
   source: null,
+  viewCount: 0,
   uploaderId: null,
   createdAt: new Date(0),
   updatedAt: new Date(0),

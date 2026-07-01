@@ -12,8 +12,38 @@ import type { App } from "@bunbooru/api";
  * on one origin; in dev the web server proxies `/api/*` to the API. Either way
  * there's no CORS. The SSR fallback origin is never actually used in this SPA.
  */
+/** localStorage key for the client-owned anonymous visitor id. */
+const VISITOR_KEY = "bunbooru:visitor";
+
+/**
+ * A stable, client-owned anonymous visitor id (a random uuid in localStorage).
+ * Sent on every request as `x-visitor-id` so the server attributes views/visits
+ * to one browser without minting a cookie per request — which would race across
+ * a first-load request burst and count one human several times. Opaque, not an
+ * IP; clearing site data resets it, exactly like a cookie.
+ */
+let volatileVisitorId: string | null = null;
+
+function visitorId(): string {
+  // localStorage can throw (private mode, disabled, quota). A header callback
+  // that rejects would fail EVERY request, so fall back to an in-memory id —
+  // the server treats a missing/changed id as a new visitor, no worse than that.
+  try {
+    let id = localStorage.getItem(VISITOR_KEY);
+    if (id === null || !/^[0-9a-f-]{8,64}$/i.test(id)) {
+      id = crypto.randomUUID();
+      localStorage.setItem(VISITOR_KEY, id);
+    }
+    return id;
+  } catch {
+    volatileVisitorId ??= crypto.randomUUID();
+    return volatileVisitorId;
+  }
+}
+
 export const api = treaty<App>(
   typeof window !== "undefined" ? window.location.origin : "http://localhost:3000",
+  typeof window !== "undefined" ? { headers: () => ({ "x-visitor-id": visitorId() }) } : undefined,
 );
 
 /** Public URL for an asset's stored bytes (used as an `<img src>`, not a data call). */

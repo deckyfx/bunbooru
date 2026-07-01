@@ -68,6 +68,13 @@ export {
   type TagService,
 } from "./services/tag-service";
 
+// Traffic counters — per-post views (debounced) + daily unique visitors.
+export {
+  createStatsService,
+  type StatsService,
+  type SiteStats,
+} from "./services/stats-service";
+
 // Typed domain errors the API maps to HTTP status codes.
 export { UnsupportedMediaError, UploadConflictError, UploadRangeError } from "./errors";
 

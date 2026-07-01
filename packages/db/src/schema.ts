@@ -11,6 +11,7 @@ import {
   bigint,
   bigserial,
   check,
+  date,
   index,
   integer,
   pgEnum,
@@ -79,6 +80,10 @@ export const assets = pgTable(
     md5: text("md5").notNull(),
     rating: ratingEnum("rating").notNull().default("unrated"),
     source: text("source"),
+    // Denormalized view counter — incremented once per visitor-session by the
+    // stats service (debounced via `post_views`), so the gallery/detail pages
+    // read it without aggregating.
+    viewCount: bigint("view_count", { mode: "number" }).notNull().default(0),
     uploaderId: bigint("uploader_id", { mode: "number" }).references(() => users.id, {
       onDelete: "set null",
     }),
@@ -89,6 +94,7 @@ export const assets = pgTable(
     check("assets_width_nonneg", sql`${table.width} >= 0`),
     check("assets_height_nonneg", sql`${table.height} >= 0`),
     check("assets_size_bytes_nonneg", sql`${table.sizeBytes} >= 0`),
+    check("assets_view_count_nonneg", sql`${table.viewCount} >= 0`),
     // Digests must be canonical lowercase hex of the right length, so a malformed
     // or mixed-case value can never alias or break dedupe lookups.
     check("assets_sha256_hex", sql`${table.sha256} ~ '^[0-9a-f]{64}$'`),
@@ -134,6 +140,42 @@ export const assetTags = pgTable(
 );
 
 /**
+ * View-dedup ledger: one row per (visitor, asset). The stats service upserts
+ * here and only bumps `assets.view_count` when a row is newly inserted or its
+ * `countedAt` is older than the session window — so refreshes within a session
+ * don't inflate the count. `visitorId` is an opaque first-party cookie id (never
+ * a raw IP). Cascades when the asset is deleted.
+ */
+export const postViews = pgTable(
+  "post_views",
+  {
+    visitorId: text("visitor_id").notNull(),
+    assetId: bigint("asset_id", { mode: "number" })
+      .notNull()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    countedAt: timestamp("counted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.visitorId, table.assetId] }),
+    index("post_views_asset_idx").on(table.assetId),
+  ],
+);
+
+/**
+ * Daily unique-visitor ledger: one row per (day, visitor). Recording a visit is
+ * an insert-on-conflict-do-nothing, so the day's unique count is `count(*)` for
+ * that day. `visitorId` is the same opaque cookie id; no IPs are stored.
+ */
+export const dailyVisitors = pgTable(
+  "daily_visitors",
+  {
+    day: date("day").notNull(),
+    visitorId: text("visitor_id").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.day, table.visitorId] })],
+);
+
+/**
  * An in-progress resumable upload. Chunks are staged to a temp file
  * (`stagingKey`) and `uploadedSize` tracks committed bytes; on completion the
  * bytes are finalized into an `asset` and the row is deleted. `token` is the
@@ -176,6 +218,12 @@ export type NewTag = typeof tags.$inferInsert;
 
 export type AssetTag = typeof assetTags.$inferSelect;
 export type NewAssetTag = typeof assetTags.$inferInsert;
+
+export type PostView = typeof postViews.$inferSelect;
+export type NewPostView = typeof postViews.$inferInsert;
+
+export type DailyVisitor = typeof dailyVisitors.$inferSelect;
+export type NewDailyVisitor = typeof dailyVisitors.$inferInsert;
 
 export type UploadSession = typeof uploadSessions.$inferSelect;
 export type NewUploadSession = typeof uploadSessions.$inferInsert;

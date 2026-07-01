@@ -9,6 +9,7 @@ import { SearchBox } from "../components/popover/search-box";
 import { PostTagPanel } from "../components/tags/post-tag-panel";
 import { assetFileUrl } from "../lib/api";
 import { useAsset, useUpdateAsset, type AssetDto } from "../lib/assets";
+import { useRecordView } from "../lib/stats";
 
 /** ISO timestamp → `YYYY-MM-DD`. Tolerates a string or Date so a stray value
  *  never crashes the page. */
@@ -39,6 +40,8 @@ export function PostDetailPage() {
   const postId = validId ? Number(id) : 0;
 
   const { data: asset, isLoading, isError } = useAsset(postId);
+  // Count a view once the post resolves (server debounces per visitor-session).
+  useRecordView(asset?.id);
 
   if (!validId) {
     return (
@@ -226,6 +229,7 @@ function AssetInfo({ asset }: { asset: AssetDto }) {
           <Info label="Size" value={`${asset.width} × ${asset.height}`} />
           <Info label="File" value={`${asset.mimeType} · ${formatBytes(asset.sizeBytes)}`} />
           <Info label="Rating" value={asset.rating} />
+          <Info label="Views" value={asset.viewCount.toLocaleString()} />
           <Info label="Posted" value={formatDate(asset.createdAt)} />
           <Info label="Source" value={asset.source ?? "—"} />
         </dl>
