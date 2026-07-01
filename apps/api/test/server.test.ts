@@ -124,6 +124,7 @@ function stubCore(
       listForAsset: async () => [sampleTag],
       autocomplete: async () => [sampleTag],
       setCategory: async () => sampleTag,
+      relatedTags: async () => [sampleTag],
       ...tagOverrides,
     },
     statsService: {
@@ -683,6 +684,21 @@ describe("tags", () => {
       stubCore({}, {}, { autocomplete: async () => [sampleTag] }),
     ).handle(new Request("http://localhost/api/v1/tags?q=1gi"));
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([tagJson]);
+  });
+
+  it("GET /tags/:name/related returns co-occurring tags (public), forwarding the name", async () => {
+    let received: string | undefined;
+    const res = await buildApp(
+      stubCore({}, {}, {
+        relatedTags: async (name) => {
+          received = name;
+          return [sampleTag];
+        },
+      }),
+    ).handle(new Request("http://localhost/api/v1/tags/1girl/related?limit=5"));
+    expect(res.status).toBe(200);
+    expect(received).toBe("1girl");
     expect(await res.json()).toEqual([tagJson]);
   });
 });

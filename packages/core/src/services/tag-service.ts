@@ -36,6 +36,8 @@ export interface TagService {
   autocomplete(prefix: string, limit?: number): Promise<Tag[]>;
   /** Set a tag's category by name; null if no such tag. */
   setCategory(name: string, category: TagCategory): Promise<Tag | null>;
+  /** Tags that co-occur with `name`, most-shared first; `limit` clamped. */
+  relatedTags(name: string, limit?: number): Promise<Tag[]>;
 }
 
 /** Build a {@link TagService} over a {@link TagRepository}. */
@@ -73,6 +75,14 @@ export function createTagService(tags: TagRepository): TagService {
       const normalized = normalizeTagName(name);
       if (normalized === null) return Promise.resolve(null);
       return tags.setCategory(normalized, category);
+    },
+
+    relatedTags(name, limit = DEFAULT_TAG_LIMIT) {
+      const normalized = normalizeTagName(name);
+      if (normalized === null) return Promise.resolve([]);
+      const requested = Number.isFinite(limit) ? Math.floor(limit) : DEFAULT_TAG_LIMIT;
+      const clamped = Math.min(Math.max(1, requested), MAX_TAG_LIMIT);
+      return tags.relatedTags(normalized, clamped);
     },
   };
 }

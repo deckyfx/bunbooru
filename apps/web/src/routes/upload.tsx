@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ImagePlus, Loader2 } from "lucide-react";
 
 import { RatingControl, type Rating } from "../components/rating-control";
+import { PostTagPanel } from "../components/tags/post-tag-panel";
 import { assetFileUrl } from "../lib/api";
 import { useUpdateAsset, type AssetDto } from "../lib/assets";
 import { useCurrentUser } from "../lib/auth";
@@ -282,14 +283,10 @@ function MetadataEditor({
           </div>
         </section>
 
-        <section>
-          <h3 className="mb-1 font-bold">Tags</h3>
-          <textarea
-            rows={3}
-            disabled
-            placeholder="Tagging coming soon"
-            className="block w-full max-w-md rounded border border-line p-2 font-mono text-[12px] disabled:cursor-not-allowed disabled:opacity-60"
-          />
+        <section className="max-w-md">
+          {/* Real tag editor for the freshly-created post (same component the
+              detail page uses). Starts empty → "No tags yet" + Edit. */}
+          <PostTagPanel assetId={asset.id} />
         </section>
 
         {update.isError ? (

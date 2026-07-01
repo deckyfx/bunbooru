@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { ImageOff } from "lucide-react";
 
 import { DropdownMenu } from "../components/menu/dropdown-menu";
@@ -31,8 +31,18 @@ export function PostsPage() {
   const boardMode = useGalleryStore((s) => s.boardMode);
   const setBoardMode = useGalleryStore((s) => s.setBoardMode);
 
+  // Booru search query from the URL (`/posts?q=…`), set by clicking a tag or the
+  // search box. Filtering happens server-side; reset to page 1 when it changes —
+  // during render (not via an effect) so the query doesn't first fire with the
+  // stale page and waste a fetch.
+  const { q } = useSearch({ from: "/posts" });
   const [page, setPage] = useState(1);
-  const { data, isLoading, isError, refetch } = useAssetsPage(page);
+  const [prevQ, setPrevQ] = useState(q);
+  if (q !== prevQ) {
+    setPrevQ(q);
+    setPage(1);
+  }
+  const { data, isLoading, isError, refetch } = useAssetsPage(page, q);
   const classic = boardMode === "classic";
   const pageCount = data?.pageCount ?? 0;
 
@@ -53,8 +63,17 @@ export function PostsPage() {
       <aside className="w-64 shrink-0 space-y-4">
         <SearchBox placeholder="Search" className="w-full" />
         <section>
-          <h3 className="mb-1 font-bold">Tags</h3>
-          <p className="text-[12px] text-muted">No tags yet.</p>
+          <h3 className="mb-1 font-bold">Search</h3>
+          {q ? (
+            <p className="text-[12px]">
+              Filtering: <span className="font-mono">{q}</span>{" "}
+              <Link to="/posts" search={{}} className="text-link hover:underline">
+                clear
+              </Link>
+            </p>
+          ) : (
+            <p className="text-[12px] text-muted">Showing all posts.</p>
+          )}
         </section>
       </aside>
 

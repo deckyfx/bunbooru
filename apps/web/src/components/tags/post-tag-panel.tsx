@@ -11,6 +11,7 @@ import {
   useTagAutocomplete,
   type TagDto,
 } from "../../lib/tags";
+import { TagLink } from "./tag-link";
 
 /** Split a raw tag-edit string into whitespace-delimited tokens. */
 function tokens(text: string): string[] {
@@ -173,7 +174,7 @@ export function PostTagPanel({ assetId }: { assetId: number }) {
               <ul className="space-y-0.5">
                 {grouped.get(category)?.map((tag) => (
                   <li key={tag.name} className="flex items-baseline gap-1 leading-tight">
-                    <span className={`${tagTextClass(tag.category)}`}>{tag.name}</span>
+                    <TagLink tag={tag} />
                     <span className="ml-auto text-[11px] text-muted">
                       {formatCount(tag.postCount)}
                     </span>

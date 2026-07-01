@@ -2,6 +2,7 @@ import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 
 import pkg from "../../package.json";
 import { AccountLinks } from "../components/account-links";
+import { SearchBox } from "../components/popover/search-box";
 import { ThemeSwitcher } from "../components/theme-switcher";
 import { VisitorCounter } from "../components/visitor-counter";
 import { useRecordVisit } from "../lib/stats";
@@ -61,22 +62,9 @@ export function RootLayout() {
             </nav>
 
             <div className="ml-auto flex items-center gap-3">
-              <form
-                onSubmit={(e) => e.preventDefault()}
-                className="hidden items-center sm:flex"
-              >
-                <input
-                  type="search"
-                  placeholder="Search posts"
-                  className="h-6 w-44 rounded-l border border-line px-2 text-[12px] outline-none focus:border-link"
-                />
-                <button
-                  type="submit"
-                  className="h-6 rounded-r border border-l-0 border-line bg-line/40 px-2 text-[12px]"
-                >
-                  Go
-                </button>
-              </form>
+              <div className="hidden sm:block">
+                <SearchBox placeholder="Search posts" className="w-44" />
+              </div>
               <ThemeSwitcher />
               <AccountLinks className="text-[12px]" />
             </div>
