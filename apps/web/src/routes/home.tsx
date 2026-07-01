@@ -2,8 +2,10 @@ import { useState } from "react";
 
 import { Link, useNavigate } from "@tanstack/react-router";
 
+import { AccountLinks } from "../components/account-links";
 import { Counter } from "../components/counter";
 import { ThemeSwitcher } from "../components/theme-switcher";
+import { useCurrentUser } from "../lib/auth";
 import { useSiteStats } from "../lib/stats";
 
 /** Centered landing menu (safebooru-style front page). */
@@ -21,6 +23,9 @@ export function HomePage() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const { data: stats } = useSiteStats();
+  // `AccountLinks` renders nothing until `/auth/me` resolves; gate the divider on
+  // the same state so the strip never shows a lone "·" before it appears.
+  const { isPending: authPending } = useCurrentUser();
   // Render the live post total once loaded; the odometer needs a numeric string.
   const postCount = stats ? String(stats.posts) : null;
 
@@ -73,14 +78,8 @@ export function HomePage() {
         </nav>
 
         <div className="flex items-center gap-3 pt-1 text-sm text-muted">
-          <a href="#" className="hover:underline">
-            Login
-          </a>
-          <span aria-hidden>·</span>
-          <a href="#" className="hover:underline">
-            Sign up
-          </a>
-          <span aria-hidden>·</span>
+          <AccountLinks className="text-sm" />
+          {authPending ? null : <span aria-hidden>·</span>}
           <ThemeSwitcher />
         </div>
       </section>

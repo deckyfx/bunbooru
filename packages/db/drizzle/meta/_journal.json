@@ -64,6 +64,13 @@
       "when": 1782870844320,
       "tag": "0008_canonical_username_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1782898471419,
+      "tag": "0009_settings_and_api_keys",
+      "breakpoints": true
     }
   ]
 }

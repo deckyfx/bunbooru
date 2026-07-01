@@ -5,12 +5,27 @@ import type {
   NewUploadSession,
   UploadSession,
   UploadSessionRepository,
+  User,
 } from "@bunbooru/db";
 import type { StagingStore } from "@bunbooru/storage";
 
-import { UnsupportedMediaError, UploadConflictError } from "../src/errors";
+import { AuthorizationError, UnsupportedMediaError, UploadConflictError } from "../src/errors";
 import type { AssetService } from "../src/services/asset-service";
 import { createUploadService } from "../src/services/upload-service";
+
+/** An admin passes every ownership check, so the existing tests keep their focus
+ *  on chunk/finalize behavior (ownership is covered separately below). */
+const adminUser: User = {
+  id: 99,
+  username: "admin",
+  email: null,
+  passwordHash: "h",
+  role: "admin",
+  createdAt: new Date(0),
+};
+
+/** The runtime resumable-cap getter the service now takes (was a static number). */
+const cap = (n = 1024) => (): Promise<number> => Promise.resolve(n);
 
 /** A finalized asset the fake pipeline returns on success. */
 const sampleAsset: Asset = {
@@ -158,14 +173,14 @@ describe("createUploadService.appendChunk", () => {
       sessions.repo,
       staging.store,
       fakeAssetService(async () => ({ asset: sampleAsset, deduped: false })),
-      1024,
+      cap(),
     );
 
     const a = new Uint8Array([1, 1, 1, 1]);
     const b = new Uint8Array([2, 2, 2, 2]);
     const results = await Promise.allSettled([
-      service.appendChunk("tok", 0, a),
-      service.appendChunk("tok", 0, b),
+      service.appendChunk("tok", 0, a, adminUser),
+      service.appendChunk("tok", 0, b, adminUser),
     ]);
 
     const fulfilled = results.filter((r) => r.status === "fulfilled");
@@ -194,10 +209,10 @@ describe("createUploadService.appendChunk", () => {
       fakeAssetService(async () => {
         throw new Error("database is temporarily unavailable");
       }),
-      1024,
+      cap(),
     );
 
-    await expect(service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]))).rejects.toThrow(
+    await expect(service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]), adminUser)).rejects.toThrow(
       "temporarily unavailable",
     );
     // Resumable: nothing cleaned up, so a retry/GC can still recover it.
@@ -217,12 +232,12 @@ describe("createUploadService.appendChunk", () => {
         if (calls === 1) throw new Error("transient storage failure");
         return { asset: sampleAsset, deduped: false };
       }),
-      1024,
+      cap(),
     );
 
     // First terminal chunk fills the file but finalize fails transiently: the
     // bytes + session are kept (offset stays committed at the declared size).
-    await expect(service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]))).rejects.toThrow(
+    await expect(service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]), adminUser)).rejects.toThrow(
       "transient",
     );
     expect(sessions.get("tok")?.uploadedSize).toBe(4);
@@ -230,7 +245,7 @@ describe("createUploadService.appendChunk", () => {
 
     // The client re-drives finalization with a zero-length PATCH at the declared
     // size; this time it succeeds and cleans up.
-    const result = await service.appendChunk("tok", 4, new Uint8Array(0));
+    const result = await service.appendChunk("tok", 4, new Uint8Array(0), adminUser);
     expect(result).toEqual({ status: "complete", asset: sampleAsset, deduped: false });
     expect(sessions.get("tok")).toBeUndefined();
     expect(staging.removed).toEqual(["tok"]);
@@ -245,11 +260,11 @@ describe("createUploadService.appendChunk", () => {
       fakeAssetService(async () => {
         throw new UnsupportedMediaError();
       }),
-      1024,
+      cap(),
     );
 
     await expect(
-      service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4])),
+      service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]), adminUser),
     ).rejects.toBeInstanceOf(UnsupportedMediaError);
     // Permanent failure: no point keeping undecodable bytes around.
     expect(sessions.get("tok")).toBeUndefined();
@@ -263,15 +278,15 @@ describe("createUploadService.appendChunk", () => {
       sessions.repo,
       staging.store,
       fakeAssetService(async () => ({ asset: sampleAsset, deduped: false })),
-      1024,
+      cap(),
     );
 
     // append is registered on the session lock first, so it runs to completion
     // (finalize → delete session) before cancel's lookup; cancel then finds no
     // session rather than racing the delete/remove mid-append.
     const [appendResult, cancelResult] = await Promise.all([
-      service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4])),
-      service.cancel("tok"),
+      service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]), adminUser),
+      service.cancel("tok", adminUser),
     ]);
     expect(appendResult).toEqual({ status: "complete", asset: sampleAsset, deduped: false });
     expect(cancelResult).toBe(false);
@@ -285,10 +300,10 @@ describe("createUploadService.appendChunk", () => {
       sessions.repo,
       staging.store,
       fakeAssetService(async () => ({ asset: sampleAsset, deduped: false })),
-      1024,
+      cap(),
     );
 
-    const result = await service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]));
+    const result = await service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]), adminUser);
     expect(result).toEqual({ status: "complete", asset: sampleAsset, deduped: false });
     expect(sessions.get("tok")).toBeUndefined();
     expect(staging.removed).toEqual(["tok"]);
@@ -301,7 +316,7 @@ describe("createUploadService.gcExpired", () => {
   it("removes expired sessions and their staging files, returning the count", async () => {
     const sessions = fakeSessions({ token: "old", expiresAt: new Date(Date.now() - 1000) });
     const staging = fakeStaging();
-    const service = createUploadService(sessions.repo, staging.store, assetService, 1024);
+    const service = createUploadService(sessions.repo, staging.store, assetService, cap());
 
     const removed = await service.gcExpired();
     expect(removed).toBe(1);
@@ -312,7 +327,7 @@ describe("createUploadService.gcExpired", () => {
   it("leaves a still-valid session untouched", async () => {
     const sessions = fakeSessions({ token: "fresh", expiresAt: new Date(Date.now() + 60_000) });
     const staging = fakeStaging();
-    const service = createUploadService(sessions.repo, staging.store, assetService, 1024);
+    const service = createUploadService(sessions.repo, staging.store, assetService, cap());
 
     const removed = await service.gcExpired();
     expect(removed).toBe(0);
@@ -328,7 +343,7 @@ describe("createUploadService.gcExpired", () => {
       sessions.repo,
       staging.store,
       assetService,
-      1024,
+      cap(),
       () => new Date(),
       2,
     );
@@ -371,10 +386,10 @@ describe("createUploadService.gcExpired", () => {
         await gate;
         return { asset: sampleAsset, deduped: false };
       }),
-      1024,
+      cap(),
     );
 
-    const finalizeP = service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]));
+    const finalizeP = service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]), adminUser);
     await reached;
 
     // Sweep concurrently: it deletes the row, then queues the staging removal
@@ -394,5 +409,42 @@ describe("createUploadService.gcExpired", () => {
     await gcP;
     expect(result).toEqual({ status: "complete", asset: sampleAsset, deduped: false });
     expect(staging.removed).toContain("tok"); // removed only after finalize finished
+  });
+});
+
+describe("createUploadService — ownership", () => {
+  const owner: User = { id: 7, username: "owner", email: null, passwordHash: "h", role: "member", createdAt: new Date(0) };
+  const stranger: User = { ...owner, id: 8, username: "stranger" };
+
+  function build() {
+    const sessions = fakeSessions({ token: "tok", declaredSize: 4, uploaderId: 7 });
+    const staging = fakeStaging();
+    const service = createUploadService(
+      sessions.repo,
+      staging.store,
+      fakeAssetService(async () => ({ asset: sampleAsset, deduped: false })),
+      cap(),
+    );
+    return { service };
+  }
+
+  it("rejects a non-owner, non-admin on offsetOf/appendChunk/cancel", async () => {
+    const { service } = build();
+    await expect(service.offsetOf("tok", stranger)).rejects.toBeInstanceOf(AuthorizationError);
+    await expect(
+      service.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]), stranger),
+    ).rejects.toBeInstanceOf(AuthorizationError);
+    await expect(service.cancel("tok", stranger)).rejects.toBeInstanceOf(AuthorizationError);
+  });
+
+  it("allows the owner (and an admin) through", async () => {
+    const { service } = build();
+    expect(await service.offsetOf("tok", owner)).toEqual({ offset: 0, size: 4 });
+    expect(await service.offsetOf("tok", adminUser)).toEqual({ offset: 0, size: 4 });
+  });
+
+  it("returns null (not 403) for an unknown session, before any ownership check", async () => {
+    const { service } = build();
+    expect(await service.offsetOf("nope", stranger)).toBeNull();
   });
 });

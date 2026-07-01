@@ -4,6 +4,8 @@ import {
   createRouter,
 } from "@tanstack/react-router";
 
+import { AccountPage } from "./routes/account";
+import { AdminPage } from "./routes/admin";
 import { RootLayout } from "./routes/__root";
 import { HomePage } from "./routes/home";
 import { LoginPage } from "./routes/login";
@@ -50,6 +52,18 @@ const signupRoute = createRoute({
   component: SignupPage,
 });
 
+const adminRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/admin",
+  component: AdminPage,
+});
+
+const accountRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/account",
+  component: AccountPage,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   postsRoute,
@@ -57,6 +71,8 @@ const routeTree = rootRoute.addChildren([
   uploadRoute,
   loginRoute,
   signupRoute,
+  adminRoute,
+  accountRoute,
 ]);
 
 export const router = createRouter({ routeTree });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type {
+  ApiKey,
   Asset,
   AssetListPage,
   AssetService,
@@ -8,6 +9,7 @@ import type {
   AuthService,
   Core,
   ListAssetsOptions,
+  SettingsService,
   StatsService,
   Tag,
   TagService,
@@ -16,10 +18,12 @@ import type {
 } from "@bunbooru/core";
 import {
   AuthenticationError,
+  AuthorizationError,
   createCoreEvents,
   RegistrationConflictError,
   UnsupportedMediaError,
   UploadConflictError,
+  ValidationError,
 } from "@bunbooru/core";
 
 import { createApp } from "../src/server";
@@ -37,7 +41,9 @@ const sampleAsset: Asset = {
   rating: "safe",
   source: null,
   viewCount: 0,
-  uploaderId: null,
+  // Owned by the default authenticated user (sampleUser.id below) so the
+  // owner-or-admin edit routes admit it under AUTH_HEADER.
+  uploaderId: 7,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   updatedAt: new Date("2026-01-02T00:00:00.000Z"),
 };
@@ -63,6 +69,19 @@ const sampleUser: User = {
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
 };
 
+/** An admin user for the admin-gated routes (`sampleUser` is a member). */
+const adminUser: User = { ...sampleUser, id: 1, username: "admin", role: "admin" };
+
+/** A fixed API-key row (the raw token is never part of the row). */
+const sampleApiKey: ApiKey = {
+  id: 10,
+  tokenHash: "hash",
+  userId: sampleUser.id,
+  name: "cli",
+  lastUsedAt: null,
+  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+};
+
 /** Opaque session token the default stub treats as a valid, authenticated session. */
 const SESSION_TOKEN = "test-session-token";
 
@@ -79,6 +98,7 @@ function stubCore(
   tagOverrides: Partial<TagService> = {},
   statsOverrides: Partial<StatsService> = {},
   authOverrides: Partial<AuthService> = {},
+  settingsOverrides: Partial<SettingsService> = {},
 ): Core {
   return {
     assetService: {
@@ -121,15 +141,29 @@ function stubCore(
       currentUser: async (token) => (token === SESSION_TOKEN ? sampleUser : null),
       logout: async () => undefined,
       gcExpiredSessions: async () => 0,
+      createApiKey: async () => ({ key: "bnb_secret", record: sampleApiKey }),
+      listApiKeys: async () => [sampleApiKey],
+      revokeApiKey: async () => true,
       ...authOverrides,
+    },
+    settingsService: {
+      getUploadLimits: async () => ({
+        maxUploadBytes: MAX_UPLOAD_BYTES,
+        maxResumableUploadBytes: MAX_UPLOAD_BYTES,
+      }),
+      updateUploadLimits: async (patch) => ({
+        maxUploadBytes: patch.maxUploadBytes ?? MAX_UPLOAD_BYTES,
+        maxResumableUploadBytes: patch.maxResumableUploadBytes ?? MAX_UPLOAD_BYTES,
+      }),
+      ...settingsOverrides,
     },
     events: createCoreEvents(),
   };
 }
 
-/** Build the app with the test upload cap. */
+/** Build the app over a (stub) Core. */
 function buildApp(core: Core) {
-  return createApp({ core, maxUploadBytes: MAX_UPLOAD_BYTES });
+  return createApp({ core });
 }
 
 const app = buildApp(stubCore());
@@ -351,6 +385,7 @@ describe("PATCH /api/v1/assets/:id", () => {
     let receivedPatch: AssetUpdate | undefined;
     const updated: Asset = { ...sampleAsset, rating: "explicit", source: "https://example.com" };
     const core = stubCore({
+      getById: async () => sampleAsset, // route fetches first for the ownership check
       update: async (id, patch) => {
         receivedId = id;
         receivedPatch = patch;
@@ -375,6 +410,7 @@ describe("PATCH /api/v1/assets/:id", () => {
   it("accepts the unrated rating", async () => {
     let receivedPatch: AssetUpdate | undefined;
     const core = stubCore({
+      getById: async () => sampleAsset, // route fetches first for the ownership check
       update: async (_id, patch) => {
         receivedPatch = patch;
         return { ...sampleAsset, rating: "unrated" };
@@ -914,5 +950,177 @@ describe("auth", () => {
 
     // Both transports attributed the upload to the authenticated user.
     expect(uploaderIds).toEqual([sampleUser.id, sampleUser.id]);
+  });
+});
+
+describe("superadmin, settings, and API keys", () => {
+  /** Auth override that resolves any token to an admin. */
+  const adminAuth: Partial<AuthService> = { currentUser: async () => adminUser };
+  /** An asset owned by someone other than the default (member) user. */
+  const foreignAsset: Asset = { ...sampleAsset, uploaderId: 999 };
+
+  function jsonReq(path: string, method: string, body: unknown, auth = true): Request {
+    return new Request(`http://localhost/api/v1${path}`, {
+      method,
+      headers: { "content-type": "application/json", ...(auth ? AUTH_HEADER : {}) },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("PATCH /tags/:name sets a category for an admin", async () => {
+    let received: { name: string; category: string } | undefined;
+    const core = stubCore({}, {}, {
+      setCategory: async (name, category) => {
+        received = { name, category };
+        return { ...sampleTag, category };
+      },
+    }, {}, adminAuth);
+    const res = await buildApp(core).handle(jsonReq("/tags/1girl", "PATCH", { category: "character" }));
+    expect(res.status).toBe(200);
+    expect(received).toEqual({ name: "1girl", category: "character" });
+  });
+
+  it("PATCH /tags/:name → 403 for a member, 401 for anon", async () => {
+    const member = await buildApp(stubCore()).handle(jsonReq("/tags/1girl", "PATCH", { category: "meta" }));
+    expect(member.status).toBe(403);
+    const anon = await buildApp(stubCore()).handle(
+      jsonReq("/tags/1girl", "PATCH", { category: "meta" }, false),
+    );
+    expect(anon.status).toBe(401);
+  });
+
+  it("PATCH /tags/:name → 404 when the tag doesn't exist", async () => {
+    const core = stubCore({}, {}, { setCategory: async () => null }, {}, adminAuth);
+    const res = await buildApp(core).handle(jsonReq("/tags/nope", "PATCH", { category: "meta" }));
+    expect(res.status).toBe(404);
+  });
+
+  it("PATCH /assets/:id → 403 for a non-owner member, 200 for an admin", async () => {
+    const forbidden = await buildApp(stubCore({ getById: async () => foreignAsset })).handle(
+      jsonReq("/assets/1", "PATCH", { rating: "safe" }),
+    );
+    expect(forbidden.status).toBe(403);
+
+    const allowed = await buildApp(
+      stubCore({ getById: async () => foreignAsset, update: async () => foreignAsset }, {}, {}, {}, adminAuth),
+    ).handle(jsonReq("/assets/1", "PATCH", { rating: "safe" }));
+    expect(allowed.status).toBe(200);
+  });
+
+  it("PATCH /assets/:id/tags → 403 for a non-owner member", async () => {
+    const res = await buildApp(stubCore({ getById: async () => foreignAsset })).handle(
+      jsonReq("/assets/1/tags", "PATCH", { tags: ["1girl"] }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("maps an upload-session ownership error (from the service) to 403", async () => {
+    const core = stubCore({}, {
+      offsetOf: async () => {
+        throw new AuthorizationError();
+      },
+    });
+    const res = await buildApp(core).handle(
+      new Request("http://localhost/api/v1/uploads/tok-1", { method: "HEAD", headers: AUTH_HEADER }),
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("GET /settings returns caps for an admin, 403 for a member", async () => {
+    const ok = await buildApp(stubCore({}, {}, {}, {}, adminAuth)).handle(
+      new Request("http://localhost/api/v1/settings", { headers: AUTH_HEADER }),
+    );
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({
+      maxUploadBytes: MAX_UPLOAD_BYTES,
+      maxResumableUploadBytes: MAX_UPLOAD_BYTES,
+    });
+
+    const forbidden = await buildApp(stubCore()).handle(
+      new Request("http://localhost/api/v1/settings", { headers: AUTH_HEADER }),
+    );
+    expect(forbidden.status).toBe(403);
+  });
+
+  it("PATCH /settings updates caps for an admin", async () => {
+    const res = await buildApp(stubCore({}, {}, {}, {}, adminAuth)).handle(
+      jsonReq("/settings", "PATCH", { maxUploadBytes: 2048 }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ maxUploadBytes: 2048, maxResumableUploadBytes: MAX_UPLOAD_BYTES });
+  });
+
+  it("PATCH /settings → 400 on a domain ValidationError", async () => {
+    const core = stubCore({}, {}, {}, {}, adminAuth, {
+      updateUploadLimits: async () => {
+        throw new ValidationError("too big");
+      },
+    });
+    const res = await buildApp(core).handle(jsonReq("/settings", "PATCH", { maxUploadBytes: 9_000_000_000 }));
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /account/api-keys returns the raw key once (201)", async () => {
+    const res = await buildApp(stubCore()).handle(jsonReq("/account/api-keys", "POST", { name: "cli" }));
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: number; name: string; key: string };
+    expect(body.key).toBe("bnb_secret");
+    expect(body.name).toBe("cli");
+  });
+
+  it("GET /account/api-keys lists keys without secrets", async () => {
+    const res = await buildApp(stubCore()).handle(
+      new Request("http://localhost/api/v1/account/api-keys", { headers: AUTH_HEADER }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Array<Record<string, unknown>>;
+    expect(body[0]?.name).toBe("cli");
+    expect(body[0]).not.toHaveProperty("key");
+    expect(body[0]).not.toHaveProperty("tokenHash");
+  });
+
+  it("DELETE /account/api-keys/:id → 204, or 404 when not the caller's", async () => {
+    const ok = await buildApp(stubCore()).handle(
+      new Request("http://localhost/api/v1/account/api-keys/10", { method: "DELETE", headers: AUTH_HEADER }),
+    );
+    expect(ok.status).toBe(204);
+
+    const missing = await buildApp(stubCore({}, {}, {}, {}, { revokeApiKey: async () => false })).handle(
+      new Request("http://localhost/api/v1/account/api-keys/999", { method: "DELETE", headers: AUTH_HEADER }),
+    );
+    expect(missing.status).toBe(404);
+  });
+
+  it("authenticates a gated write via an API-key Bearer token", async () => {
+    const core = stubCore({}, {}, {}, {}, {
+      currentUser: async (token) => (token === "bnb_key" ? sampleUser : null),
+    });
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array([1, 2, 3])], "u.png", { type: "image/png" }));
+    const res = await buildApp(core).handle(
+      new Request("http://localhost/api/v1/assets", {
+        method: "POST",
+        headers: { authorization: "Bearer bnb_key" },
+        body: form,
+      }),
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it("rate-limits repeated logins with 429 after the window max", async () => {
+    const app = buildApp(stubCore());
+    const login = () =>
+      app.handle(
+        new Request("http://localhost/api/v1/auth/login", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ username: "u", password: "supersecret" }),
+        }),
+      );
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i++) statuses.push((await login()).status);
+    // The first 10 (LOGIN_RATE.max) succeed; the rest are throttled.
+    expect(statuses.slice(0, 10).every((s) => s === 200)).toBe(true);
+    expect(statuses.slice(10).every((s) => s === 429)).toBe(true);
   });
 });

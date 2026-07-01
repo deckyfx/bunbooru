@@ -140,6 +140,20 @@ export function useSetAssetTags(id: number) {
 }
 
 /**
+ * Set a tag's category (admin only — the server 403s otherwise) via
+ * `PATCH /tags/:name`. Invalidates autocomplete so re-queried tags show the new
+ * colour/category.
+ */
+export function useSetTagCategory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ name, category }: { name: string; category: TagCategory }): Promise<TagDto> =>
+      unwrap(await api.api.v1.tags({ name }).patch({ category })),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tag-autocomplete"] }),
+  });
+}
+
+/**
  * Tag autocomplete by name prefix, popularity-ordered. Disabled (and resolves to
  * nothing) for an empty prefix so it only fires once the user has typed.
  */

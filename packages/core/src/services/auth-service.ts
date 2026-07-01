@@ -1,9 +1,22 @@
-import type { SessionRepository, User, UserRepository } from "@bunbooru/db";
+import type {
+  ApiKey,
+  ApiKeyRepository,
+  SessionRepository,
+  User,
+  UserRepository,
+} from "@bunbooru/db";
 
 import { AuthenticationError, RegistrationConflictError } from "../errors";
 
 /** How many expired sessions one GC sweep reclaims per call. */
 const SESSION_GC_BATCH = 1000;
+
+/**
+ * Prefix distinguishing a long-lived API key from a session token. Session
+ * tokens are bare 64-hex; API keys are `bnb_<64hex>`, so `currentUser` can
+ * dispatch on the prefix without a schema change.
+ */
+const API_KEY_PREFIX = "bnb_";
 
 /** New-account registration input (email optional). */
 export interface RegisterInput {
@@ -21,6 +34,20 @@ export interface LoginResult {
 /** A user safe to serialize over the wire — never includes the password hash. */
 export type PublicUser = Omit<User, "passwordHash">;
 
+/** An API key without its secret hash — safe to hand outside the auth service. */
+export type ApiKeySummary = Omit<ApiKey, "tokenHash">;
+
+/** Drop the secret `tokenHash` so it never leaks into a response or log. */
+function toApiKeySummary({ id, userId, name, lastUsedAt, createdAt }: ApiKey): ApiKeySummary {
+  return { id, userId, name, lastUsedAt, createdAt };
+}
+
+/** Result of minting an API key: the raw key (shown once) + the summary row. */
+export interface CreatedApiKey {
+  key: string;
+  record: ApiKeySummary;
+}
+
 /**
  * Accounts + login sessions. Registration hashes the password (Bun/Argon2id) and
  * opens a session; login verifies and opens one; a session is an opaque token
@@ -32,12 +59,21 @@ export interface AuthService {
   register(input: RegisterInput): Promise<LoginResult>;
   /** Verify credentials and open a session. Throws {@link AuthenticationError} on failure. */
   login(username: string, password: string): Promise<LoginResult>;
-  /** Resolve the user for a raw session token (cookie or Bearer), or null. */
+  /**
+   * Resolve the user for a raw credential — a session token (cookie/Bearer) OR a
+   * `bnb_…` API key — or null. Dispatches on the API-key prefix.
+   */
   currentUser(token: string | null | undefined): Promise<User | null>;
   /** Revoke a session by its raw token (logout). */
   logout(token: string): Promise<void>;
   /** Reclaim expired sessions; returns how many were removed. */
   gcExpiredSessions(at?: Date): Promise<number>;
+  /** Mint a named API key for a user; the raw key is returned only here. */
+  createApiKey(userId: number, name: string): Promise<CreatedApiKey>;
+  /** A user's API keys (no raw tokens or hashes), newest first. */
+  listApiKeys(userId: number): Promise<ApiKeySummary[]>;
+  /** Revoke one of the user's API keys; true if a key was removed. */
+  revokeApiKey(userId: number, id: number): Promise<boolean>;
 }
 
 /** Configuration for {@link createAuthService}. */
@@ -89,6 +125,7 @@ function isUniqueViolation(error: unknown): boolean {
 export function createAuthService(
   users: UserRepository,
   sessions: SessionRepository,
+  apiKeys: ApiKeyRepository,
   { sessionExpiryMs, now = () => new Date() }: AuthServiceConfig,
 ): AuthService {
   // Lazily-built Argon2 hash used to keep login timing constant for unknown
@@ -148,6 +185,17 @@ export function createAuthService(
 
     async currentUser(token) {
       if (!token) return null;
+
+      // API key (`bnb_…`): no expiry, valid until revoked.
+      if (token.startsWith(API_KEY_PREFIX)) {
+        const key = await apiKeys.findByTokenHash(sha256hex(token));
+        if (!key) return null;
+        // Best-effort activity timestamp; never let it fail the request.
+        void apiKeys.touchLastUsed(key.id, now()).catch(() => undefined);
+        return users.findById(key.userId);
+      }
+
+      // Session token.
       const session = await sessions.findValidByTokenHash(sha256hex(token), now());
       if (!session) return null;
       return users.findById(session.userId);
@@ -159,6 +207,20 @@ export function createAuthService(
 
     gcExpiredSessions(at = now()) {
       return sessions.deleteExpired(at, SESSION_GC_BATCH);
+    },
+
+    async createApiKey(userId, name) {
+      const key = API_KEY_PREFIX + generateToken();
+      const record = await apiKeys.create({ userId, name, tokenHash: sha256hex(key) });
+      return { key, record: toApiKeySummary(record) };
+    },
+
+    async listApiKeys(userId) {
+      return (await apiKeys.listByUser(userId)).map(toApiKeySummary);
+    },
+
+    revokeApiKey(userId, id) {
+      return apiKeys.deleteByIdForUser(id, userId);
     },
   };
 }

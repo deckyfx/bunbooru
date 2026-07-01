@@ -1,8 +1,14 @@
-import type { Asset, UploadSessionRepository } from "@bunbooru/db";
+import type { Asset, UploadSessionRepository, User } from "@bunbooru/db";
 import type { StagingStore } from "@bunbooru/storage";
 
-import { UnsupportedMediaError, UploadConflictError, UploadRangeError } from "../errors";
+import {
+  AuthorizationError,
+  UnsupportedMediaError,
+  UploadConflictError,
+  UploadRangeError,
+} from "../errors";
 import type { AssetService } from "./asset-service";
+import { isOwnerOrAdmin } from "./permissions";
 
 /** Abandoned sessions are reclaimed after this long. */
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24h
@@ -36,13 +42,13 @@ function createKeyedMutex() {
   };
 }
 
-/** Input to open a resumable upload. */
+/** Input to open a resumable upload. The owner is taken from the authenticated
+ *  user passed to {@link UploadService.begin}, not from the caller-supplied body. */
 export interface BeginUploadInput {
   filename: string;
   /** Declared total byte size of the file. */
   size: number;
   mimeType?: string | null;
-  uploaderId?: number | null;
 }
 
 /** Handle returned when a session is opened. */
@@ -65,14 +71,21 @@ export type AppendChunkResult =
  * violations are thrown as typed errors the API maps to status codes.
  */
 export interface UploadService {
-  /** Open a session for a file of `size` bytes. */
-  begin(input: BeginUploadInput): Promise<UploadBegun>;
-  /** Current committed offset + declared size, or null if the session is unknown. */
-  offsetOf(token: string): Promise<{ offset: number; size: number } | null>;
-  /** Commit `data` at `offset`; finalizes into an asset when it completes the file. */
-  appendChunk(token: string, offset: number, data: Uint8Array): Promise<AppendChunkResult>;
-  /** Cancel + clean up a session; false if it didn't exist. */
-  cancel(token: string): Promise<boolean>;
+  /** Open a session for a file of `size` bytes, owned by `user`. */
+  begin(input: BeginUploadInput, user: User): Promise<UploadBegun>;
+  /**
+   * Current committed offset + declared size, or null if the session is unknown.
+   * Throws {@link AuthorizationError} if `user` neither owns the session nor is
+   * an admin.
+   */
+  offsetOf(token: string, user: User): Promise<{ offset: number; size: number } | null>;
+  /**
+   * Commit `data` at `offset` (owner or admin only); finalizes into an asset when
+   * it completes the file.
+   */
+  appendChunk(token: string, offset: number, data: Uint8Array, user: User): Promise<AppendChunkResult>;
+  /** Cancel + clean up a session (owner or admin only); false if it didn't exist. */
+  cancel(token: string, user: User): Promise<boolean>;
   /** Reclaim expired sessions and their staging files; returns how many were removed. */
   gcExpired(at?: Date): Promise<number>;
 }
@@ -85,13 +98,20 @@ export function createUploadService(
   sessions: UploadSessionRepository,
   staging: StagingStore,
   assetService: AssetService,
-  maxUploadBytes: number,
+  getMaxResumableBytes: () => Promise<number>,
   now: () => Date = () => new Date(),
   gcBatchSize = 500,
 ): UploadService {
   // Serializes each session's write+commit so concurrent PATCHes on one token
   // can't corrupt the staged file (see {@link createKeyedMutex}).
   const withSessionLock = createKeyedMutex();
+
+  /** Owner-or-admin gate for a session's read/mutate/cancel operations. */
+  function assertOwner(uploaderId: number | null, user: User): void {
+    if (!isOwnerOrAdmin(user, uploaderId)) {
+      throw new AuthorizationError("You do not own this upload session");
+    }
+  }
 
   async function gcExpired(at: Date = now()): Promise<number> {
     let total = 0;
@@ -117,10 +137,16 @@ export function createUploadService(
   }
 
   return {
-    async begin({ filename, size, mimeType, uploaderId }) {
+    async begin({ filename, size, mimeType }, user) {
       // Bound the declared size up front (storage/abuse ceiling), before creating
       // any DB/staging state — finalize streams, so this isn't a memory limit.
-      if (!Number.isSafeInteger(size) || size < 1 || size > maxUploadBytes) {
+      // The cap is read at call time so an admin can change it at runtime; guard
+      // against a corrupt/misconfigured value that would disable the ceiling.
+      const maxResumableBytes = await getMaxResumableBytes();
+      if (!Number.isSafeInteger(maxResumableBytes) || maxResumableBytes < 1) {
+        throw new UploadRangeError(`invalid resumable upload size limit: ${maxResumableBytes}`);
+      }
+      if (!Number.isSafeInteger(size) || size < 1 || size > maxResumableBytes) {
         throw new UploadRangeError(`invalid upload size: ${size}`);
       }
       // Opportunistic, non-blocking sweep of abandoned sessions.
@@ -135,18 +161,22 @@ export function createUploadService(
         declaredSize: size,
         uploadedSize: 0,
         stagingKey: token, // one staging file per session, keyed by its token
-        uploaderId: uploaderId ?? null,
+        // Owner is the authenticated caller — the service is the source of
+        // truth for ownership, not a caller-supplied field.
+        uploaderId: user.id,
         expiresAt: new Date(createdAt.getTime() + SESSION_TTL_MS),
       });
       return { token, offset: 0, size };
     },
 
-    async offsetOf(token) {
+    async offsetOf(token, user) {
       const session = await sessions.findByToken(token);
-      return session ? { offset: session.uploadedSize, size: session.declaredSize } : null;
+      if (!session) return null;
+      assertOwner(session.uploaderId, user);
+      return { offset: session.uploadedSize, size: session.declaredSize };
     },
 
-    appendChunk(token, offset, data) {
+    appendChunk(token, offset, data, user) {
       // Hold the per-session lock across the whole read→validate→write→commit
       // sequence so a second concurrent PATCH on this token can't pass the same
       // offset check and overwrite our staged bytes before our commit lands.
@@ -155,6 +185,7 @@ export function createUploadService(
         if (!session) {
           throw new UploadRangeError("unknown or expired upload session");
         }
+        assertOwner(session.uploaderId, user);
         if (offset !== session.uploadedSize) {
           // Client is out of sync (double-send or resumed wrong): it must HEAD to
           // re-read the offset and continue from there.
@@ -214,7 +245,7 @@ export function createUploadService(
       });
     },
 
-    cancel(token) {
+    cancel(token, user) {
       // Serialize cancellation under the same per-session lock as appendChunk so
       // it can't interleave with an in-flight append (e.g. delete the row or wipe
       // the staged file while a chunk write/commit is mid-flight). It runs only
@@ -222,6 +253,7 @@ export function createUploadService(
       return withSessionLock(token, async () => {
         const session = await sessions.findByToken(token);
         if (!session) return false;
+        assertOwner(session.uploaderId, user);
         // Delete the DB row first: if removing the staged file fails, we must not
         // leave a session advertising a resumable upload whose bytes are gone.
         await sessions.delete(token);
