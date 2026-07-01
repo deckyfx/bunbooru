@@ -49,7 +49,8 @@ export function HomePage() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            navigate({ to: "/posts" });
+            const q = query.trim();
+            void navigate({ to: "/posts", search: q ? { q } : {} });
           }}
           className="flex w-full max-w-xl items-center pt-2"
         >

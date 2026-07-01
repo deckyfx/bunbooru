@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { ImageOff } from "lucide-react";
 
 import { DropdownMenu } from "../components/menu/dropdown-menu";
@@ -31,8 +31,18 @@ export function PostsPage() {
   const boardMode = useGalleryStore((s) => s.boardMode);
   const setBoardMode = useGalleryStore((s) => s.setBoardMode);
 
+  // Booru search query from the URL (`/posts?q=…`), set by clicking a tag or the
+  // search box. Filtering happens server-side; reset to page 1 when it changes —
+  // during render (not via an effect) so the query doesn't first fire with the
+  // stale page and waste a fetch.
+  const { q } = useSearch({ from: "/posts" });
   const [page, setPage] = useState(1);
-  const { data, isLoading, isError, refetch } = useAssetsPage(page);
+  const [prevQ, setPrevQ] = useState(q);
+  if (q !== prevQ) {
+    setPrevQ(q);
+    setPage(1);
+  }
+  const { data, isLoading, isError, refetch } = useAssetsPage(page, q);
   const classic = boardMode === "classic";
   const pageCount = data?.pageCount ?? 0;
 
@@ -53,8 +63,17 @@ export function PostsPage() {
       <aside className="w-64 shrink-0 space-y-4">
         <SearchBox placeholder="Search" className="w-full" />
         <section>
-          <h3 className="mb-1 font-bold">Tags</h3>
-          <p className="text-[12px] text-muted">No tags yet.</p>
+          <h3 className="mb-1 font-bold">Search</h3>
+          {q ? (
+            <p className="text-[12px]">
+              Filtering: <span className="font-mono">{q}</span>{" "}
+              <Link to="/posts" search={{}} className="text-link hover:underline">
+                clear
+              </Link>
+            </p>
+          ) : (
+            <p className="text-[12px] text-muted">Showing all posts.</p>
+          )}
         </section>
       </aside>
 
@@ -112,17 +131,36 @@ export function PostsPage() {
             </button>
           </div>
         ) : !data || data.assets.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 py-16 text-center">
-            <ImageOff className="h-16 w-16 text-line" strokeWidth={1.25} aria-hidden="true" />
-            <p className="font-bold">No posts yet</p>
-            <p className="text-[12px] text-muted">Your gallery is empty.</p>
-            <Link
-              to="/uploads/new"
-              className="rounded border border-line px-3 py-1.5 text-link hover:border-link"
-            >
-              Upload the first one »
-            </Link>
-          </div>
+          q ? (
+            // A filtered search with no results — distinct from an empty gallery,
+            // so it never reads like data loss. Offer to clear the filter.
+            <div className="flex flex-col items-center gap-3 py-16 text-center">
+              <ImageOff className="h-16 w-16 text-line" strokeWidth={1.25} aria-hidden="true" />
+              <p className="font-bold">No matches</p>
+              <p className="text-[12px] text-muted">
+                Nothing tagged <span className="font-mono">{q}</span>.
+              </p>
+              <Link
+                to="/posts"
+                search={{}}
+                className="rounded border border-line px-3 py-1.5 text-link hover:border-link"
+              >
+                Clear filter »
+              </Link>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3 py-16 text-center">
+              <ImageOff className="h-16 w-16 text-line" strokeWidth={1.25} aria-hidden="true" />
+              <p className="font-bold">No posts yet</p>
+              <p className="text-[12px] text-muted">Your gallery is empty.</p>
+              <Link
+                to="/uploads/new"
+                className="rounded border border-line px-3 py-1.5 text-link hover:border-link"
+              >
+                Upload the first one »
+              </Link>
+            </div>
+          )
         ) : (
           <div style={gridStyle}>
             {data.assets.map((asset) => (

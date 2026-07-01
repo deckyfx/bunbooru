@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, inArray, like } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, like, ne, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 import { assets, assetTags, tags, type Tag, type TagCategory } from "../schema";
 import type { DB } from "../client";
@@ -34,6 +35,12 @@ export interface TagRepository {
   searchByPrefix(prefix: string, limit: number): Promise<Tag[]>;
   /** Change a tag's category, returning the updated row or null if absent. */
   setCategory(name: string, category: TagCategory): Promise<Tag | null>;
+  /**
+   * Tags that most often co-occur with `name` on the same assets, most-shared
+   * first (then by popularity). Excludes the tag itself; empty if the tag is
+   * unknown or shares no assets. `limit` bounds the result.
+   */
+  relatedTags(name: string, limit: number): Promise<Tag[]>;
 }
 
 /** Escape LIKE metacharacters so a user prefix is matched literally. */
@@ -126,6 +133,30 @@ export function createTagRepository(db: DB): TagRepository {
         .where(eq(tags.name, name))
         .returning();
       return row ?? null;
+    },
+
+    async relatedTags(name, limit) {
+      if (limit <= 0) return [];
+      // Co-occurrence: from the target tag's links (`base` joined to `target` by
+      // name), find OTHER tags on the same assets (`co`), and rank each by how
+      // many assets it shares with the target.
+      const target = alias(tags, "target");
+      const co = alias(assetTags, "co");
+      return db
+        .select({
+          id: tags.id,
+          name: tags.name,
+          category: tags.category,
+          postCount: tags.postCount,
+          createdAt: tags.createdAt,
+        })
+        .from(assetTags)
+        .innerJoin(target, and(eq(target.id, assetTags.tagId), eq(target.name, name)))
+        .innerJoin(co, and(eq(co.assetId, assetTags.assetId), ne(co.tagId, assetTags.tagId)))
+        .innerJoin(tags, eq(tags.id, co.tagId))
+        .groupBy(tags.id)
+        .orderBy(desc(sql`count(*)`), desc(tags.postCount), asc(tags.name))
+        .limit(limit);
     },
   };
 }

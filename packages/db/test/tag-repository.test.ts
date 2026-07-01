@@ -146,4 +146,25 @@ describe.skipIf(!TEST_DATABASE_URL)("TagRepository (integration)", () => {
     expect((await tags.setCategory("hatsune_miku", "character"))?.category).toBe("character");
     expect(await tags.setCategory("nope", "artist")).toBeNull();
   });
+
+  it("relatedTags ranks co-occurring tags, excludes itself, and respects the limit", async () => {
+    const [a1, a2, a3] = [await seedAsset("r1"), await seedAsset("r2"), await seedAsset("r3")];
+    const byName = new Map(
+      (await tags.getOrCreateByNames(["1girl", "solo", "smile", "hat"])).map((t) => [t.name, t]),
+    );
+    const id = (n: string) => byName.get(n)!.id;
+    // 1girl+solo share a1,a2 (2); 1girl+smile share a1,a3 (2); 1girl+hat share a1 (1).
+    await tags.setAssetTags(a1, [id("1girl"), id("solo"), id("smile"), id("hat")]);
+    await tags.setAssetTags(a2, [id("1girl"), id("solo")]);
+    await tags.setAssetTags(a3, [id("1girl"), id("smile")]);
+
+    const related = await tags.relatedTags("1girl", 10);
+    const names = related.map((t) => t.name);
+    expect(names).not.toContain("1girl"); // never itself
+    expect(names).toEqual(["smile", "solo", "hat"]); // 2,2,1 — ties broken by postCount/name
+    // hat co-occurs once; solo/smile twice — so `hat` is dropped at limit 2.
+    expect((await tags.relatedTags("1girl", 2)).map((t) => t.name)).not.toContain("hat");
+    // Unknown tag → empty.
+    expect(await tags.relatedTags("ghost", 10)).toEqual([]);
+  });
 });

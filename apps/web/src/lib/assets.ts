@@ -10,16 +10,22 @@ export const ASSETS_PER_PAGE = 42;
 export type { AssetDto };
 
 /**
- * Newest-first page of assets. Eden Treaty is the transport; TanStack Query owns
- * caching + loading/error state. The `error` discriminant narrows `data` to
- * non-null, so the hook resolves a fully-typed page.
+ * Newest-first page of assets, optionally filtered by the booru search query
+ * `q` (tags/metatags — the API compiles it to SQL). Eden Treaty is the transport;
+ * TanStack Query owns caching + loading/error state. The `error` discriminant
+ * narrows `data` to non-null, so the hook resolves a fully-typed page.
  */
-export function useAssetsPage(page: number) {
+export function useAssetsPage(page: number, q?: string) {
+  const query = q?.trim() ? q.trim() : undefined;
   return useQuery({
-    queryKey: ["assets", page],
+    queryKey: ["assets", page, query ?? null],
     enabled: Number.isInteger(page) && page > 0,
     queryFn: async () =>
-      unwrap(await api.api.v1.assets.get({ query: { page, per_page: ASSETS_PER_PAGE } })),
+      unwrap(
+        await api.api.v1.assets.get({
+          query: { page, per_page: ASSETS_PER_PAGE, ...(query ? { q: query } : {}) },
+        }),
+      ),
   });
 }
 

@@ -26,6 +26,11 @@ const postsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/posts",
   component: PostsPage,
+  // `q` is the booru search query (tags/metatags) the gallery filters by.
+  validateSearch: (search: Record<string, unknown>): { q?: string } => {
+    const q = typeof search.q === "string" ? search.q.trim() : "";
+    return q ? { q } : {};
+  },
 });
 
 const postDetailRoute = createRoute({

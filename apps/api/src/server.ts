@@ -480,6 +480,19 @@ export function createApp({ core }: AppDependencies) {
             }),
           },
         )
+        // Tags that co-occur with `:name`, most-shared first (public). Powers the
+        // "Related" popover shown when hovering a tag.
+        .get(
+          "/tags/:name/related",
+          async ({ params, query }) => {
+            const tags = await core.tagService.relatedTags(params.name, query.limit);
+            return tags.map(serializeTag);
+          },
+          {
+            params: tagNameParam,
+            query: t.Object({ limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100, multipleOf: 1 })) }),
+          },
+        )
         // Set a tag's category (taxonomy management). Admin-only: `requireUser`
         // first (401 when logged out), then `canModerate` (403 for non-admins).
         // 404 when the tag doesn't exist.

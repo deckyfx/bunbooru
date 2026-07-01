@@ -24,6 +24,18 @@ const VISITOR_KEY = "bunbooru:visitor";
  */
 let volatileVisitorId: string | null = null;
 
+/**
+ * A random opaque id (32 hex chars) built from `crypto.getRandomValues`. We do
+ * NOT use `crypto.randomUUID()`: it's only defined in **secure contexts** (HTTPS
+ * or localhost), so over plain HTTP on a LAN IP it's `undefined` and throws —
+ * which would make the `x-visitor-id` header callback throw and break EVERY API
+ * request. `getRandomValues` is available in insecure contexts too.
+ */
+function randomVisitorId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 function visitorId(): string {
   // localStorage can throw (private mode, disabled, quota). A header callback
   // that rejects would fail EVERY request, so fall back to an in-memory id —
@@ -31,12 +43,12 @@ function visitorId(): string {
   try {
     let id = localStorage.getItem(VISITOR_KEY);
     if (id === null || !/^[0-9a-f-]{8,64}$/i.test(id)) {
-      id = crypto.randomUUID();
+      id = randomVisitorId();
       localStorage.setItem(VISITOR_KEY, id);
     }
     return id;
   } catch {
-    volatileVisitorId ??= crypto.randomUUID();
+    volatileVisitorId ??= randomVisitorId();
     return volatileVisitorId;
   }
 }
