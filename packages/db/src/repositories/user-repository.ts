@@ -10,10 +10,11 @@ import type { DB } from "../client";
 const USERS_BOOTSTRAP_LOCK = 987_654_321;
 
 /**
- * Data access for {@link User} rows (the sole SQL layer per CLAUDE.md). Username
- * uniqueness/lookup is case-sensitive here — the auth service normalizes
- * usernames to lowercase before calling in, so callers must pass an
- * already-normalized value to {@link UserRepository.findByUsername}.
+ * Data access for {@link User} rows (the sole SQL layer per CLAUDE.md). Usernames
+ * are canonicalized to lowercase HERE — matching the `lower(username)` unique
+ * index — so identity is case-insensitive regardless of how a caller cases the
+ * input: `createBootstrapping` stores the lowercased form and `findByUsername`
+ * matches on `lower(username)`.
  */
 export interface UserRepository {
   /** Insert one user with an explicit role, returning the persisted row. */
@@ -27,7 +28,7 @@ export interface UserRepository {
   createBootstrapping(input: Omit<NewUser, "role">): Promise<User>;
   /** Total number of accounts. */
   countAll(): Promise<number>;
-  /** One user by (normalized) username, or null. */
+  /** One user by username, matched case-insensitively (canonical lowercase). */
   findByUsername(username: string): Promise<User | null>;
   /** One user by id, or null. */
   findById(id: number): Promise<User | null>;
@@ -53,7 +54,9 @@ export function createUserRepository(db: DB): UserRepository {
         const role = (counted?.n ?? 0) === 0 ? "admin" : "member";
         const [row] = await tx
           .insert(users)
-          .values({ ...input, role })
+          // Store the canonical (lowercase) username so the stored value always
+          // matches the lower(username) unique index, independent of caller casing.
+          .values({ ...input, username: input.username.toLowerCase(), role })
           .returning();
         if (!row) {
           throw new Error("user insert returned no row");
@@ -67,7 +70,13 @@ export function createUserRepository(db: DB): UserRepository {
     },
 
     async findByUsername(username) {
-      const [row] = await db.select().from(users).where(eq(users.username, username)).limit(1);
+      // Match on lower(username) so a differently-cased lookup still resolves the
+      // canonical row (and the query can use the lower(username) unique index).
+      const [row] = await db
+        .select()
+        .from(users)
+        .where(eq(sql`lower(${users.username})`, username.toLowerCase()))
+        .limit(1);
       return row ?? null;
     },
 

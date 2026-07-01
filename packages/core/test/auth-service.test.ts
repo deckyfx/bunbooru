@@ -117,9 +117,9 @@ describe("createAuthService.register", () => {
     const { service } = makeService();
     await service.register({ username: "dup", password: "supersecret" });
 
-    expect(service.register({ username: "dup", password: "supersecret" })).rejects.toBeInstanceOf(
-      RegistrationConflictError,
-    );
+    await expect(
+      service.register({ username: "dup", password: "supersecret" }),
+    ).rejects.toBeInstanceOf(RegistrationConflictError);
   });
 });
 
@@ -128,8 +128,10 @@ describe("createAuthService.login", () => {
     const { service } = makeService();
     await service.register({ username: "user", password: "supersecret" });
 
-    expect(service.login("ghost", "supersecret")).rejects.toBeInstanceOf(AuthenticationError);
-    expect(service.login("user", "wrong-password")).rejects.toBeInstanceOf(AuthenticationError);
+    await expect(service.login("ghost", "supersecret")).rejects.toBeInstanceOf(AuthenticationError);
+    await expect(service.login("user", "wrong-password")).rejects.toBeInstanceOf(
+      AuthenticationError,
+    );
 
     const { token, user } = await service.login("USER", "supersecret");
     expect(user.username).toBe("user");

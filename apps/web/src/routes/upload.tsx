@@ -29,8 +29,10 @@ function formatBytes(bytes: number): string {
  */
 export function UploadPage() {
   // The API rejects anonymous uploads (401); gate the UI to match so a logged-out
-  // visitor gets a clear prompt instead of a failing dropzone.
-  const { data: user, isPending: authPending } = useCurrentUser();
+  // visitor gets a clear prompt instead of a failing dropzone. `isError` is kept
+  // distinct from "no user": if the /auth/me check itself failed, we must NOT
+  // treat a possibly-signed-in user as anonymous.
+  const { data: user, isPending: authPending, isError: authError } = useCurrentUser();
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -107,7 +109,11 @@ export function UploadPage() {
     <div>
       <h1 className="mb-3 border-b border-line pb-1 text-base font-bold">Upload</h1>
 
-      {authPending ? null : !user ? (
+      {authPending ? null : authError ? (
+        <p role="alert" className="mx-auto max-w-xl text-center text-[12px] text-tag-artist">
+          Couldn’t verify your session right now. Please refresh and try again.
+        </p>
+      ) : !user ? (
         <p className="mx-auto max-w-xl text-center text-[12px] text-muted">
           You need an account to upload.{" "}
           <Link to="/login" className="text-link hover:underline">

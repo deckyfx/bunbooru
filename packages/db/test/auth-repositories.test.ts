@@ -84,6 +84,32 @@ describe.skipIf(!TEST_DATABASE_URL)("user + session repositories (integration)",
       });
       expect(second.role).toBe("member");
     });
+
+    it("createBootstrapping picks exactly one admin under concurrency", async () => {
+      // Fire many first-registrations at an empty table simultaneously; the
+      // advisory lock must serialize the count→insert so only ONE wins admin.
+      // Without the lock, several would read count 0 and all become admins.
+      const created = await Promise.all(
+        Array.from({ length: 8 }, (_, i) =>
+          users.createBootstrapping({ username: `user${i}`, email: null, passwordHash: "h" }),
+        ),
+      );
+      expect(created.filter((u) => u.role === "admin")).toHaveLength(1);
+      expect(created.filter((u) => u.role === "member")).toHaveLength(7);
+    });
+
+    it("stores usernames lowercase and finds them case-insensitively", async () => {
+      const created = await users.createBootstrapping({
+        username: "MixedCase",
+        email: null,
+        passwordHash: "h",
+      });
+      expect(created.username).toBe("mixedcase"); // canonicalized on write
+
+      // Any casing resolves the same row (findByUsername matches lower(username)).
+      expect(await users.findByUsername("MIXEDCASE")).toMatchObject({ id: created.id });
+      expect(await users.findByUsername("mixedcase")).toMatchObject({ id: created.id });
+    });
   });
 
   describe("SessionRepository", () => {

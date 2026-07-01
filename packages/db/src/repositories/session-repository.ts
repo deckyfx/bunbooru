@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, lt } from "drizzle-orm";
+import { and, eq, gt, inArray, lte } from "drizzle-orm";
 
 import { sessions, type NewSession, type Session } from "../schema";
 import type { DB } from "../client";
@@ -54,10 +54,13 @@ export function createSessionRepository(db: DB): SessionRepository {
       // Postgres DELETE has no LIMIT — bound it by deleting the oldest `limit`
       // expired ids via a subquery, so one sweep never materializes more than
       // `limit` rows regardless of backlog size.
+      // `<= now` (not `<`) mirrors findValidByTokenHash's `expiresAt > now`
+      // validity test: a session whose expiry is exactly `now` reads as expired
+      // there, so GC must reclaim it too rather than leave it for a later sweep.
       const batch = db
         .select({ id: sessions.id })
         .from(sessions)
-        .where(lt(sessions.expiresAt, now))
+        .where(lte(sessions.expiresAt, now))
         .orderBy(sessions.expiresAt)
         .limit(limit);
       const rows = await db

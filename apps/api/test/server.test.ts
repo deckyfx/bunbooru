@@ -773,6 +773,17 @@ describe("auth", () => {
     expect(res.status).toBe(422);
   });
 
+  it("register → 422 when the username is whitespace-only", async () => {
+    const res = await buildApp(stubCore()).handle(
+      new Request("http://localhost/api/v1/auth/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: "   ", password: "supersecret" }),
+      }),
+    );
+    expect(res.status).toBe(422);
+  });
+
   it("login → 200 with a token + Set-Cookie; forwards credentials", async () => {
     let received: { username: string; password: string } | undefined;
     const res = await buildApp(

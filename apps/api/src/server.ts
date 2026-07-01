@@ -220,7 +220,10 @@ export function createApp({ core, maxUploadBytes }: AppDependencies) {
           },
           {
             body: t.Object({
-              username: t.String({ minLength: 1, maxLength: 100 }),
+              // `pattern: \S` requires at least one non-whitespace character, so a
+              // whitespace-only username (which the service would trim to "") is
+              // rejected at the boundary rather than persisted as empty.
+              username: t.String({ minLength: 1, maxLength: 100, pattern: "\\S" }),
               password: t.String({ minLength: 8, maxLength: 200 }),
               email: t.Optional(t.String({ maxLength: 320 })),
             }),

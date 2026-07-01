@@ -37,7 +37,11 @@ export interface RegisterInput {
 export function useCurrentUser() {
   return useQuery({
     queryKey: CURRENT_USER_KEY,
-    staleTime: 60_000,
+    // Short freshness window + refetch on focus so an auth change made elsewhere
+    // (logout in another tab, session expiry) is picked up promptly — the login
+    // gates are then re-evaluated rather than lingering on stale "logged in".
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
     // `/auth/me` returns `{ user: UserDto | null }` — always a JSON object, so
     // `unwrap` narrows cleanly and we read `.user`.
     queryFn: async (): Promise<UserDto | null> => unwrap(await api.api.v1.auth.me.get()).user,
