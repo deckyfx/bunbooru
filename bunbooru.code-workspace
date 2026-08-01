@@ -6,6 +6,12 @@
     {
       "name": "bunbooru",
       "path": "."
+    },
+    {
+      // Read-only study clone of shimmie2 (gitignored under reference/). Exposed as
+      // a separate root so its source is browsable while planning the migration.
+      "name": "shimmie2 (reference)",
+      "path": "reference/shimmie2"
     }
   ],
   "settings": {},
