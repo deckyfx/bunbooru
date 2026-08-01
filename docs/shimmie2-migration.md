@@ -148,11 +148,11 @@ error when an extension is missing — e.g. `POST /graphql {__typename}` 404 →
 parse error; tell the operator exactly which shimmie extension/key to fix.
 
 ### Source access — fallback options
-1. **HTML scrape.** If GraphQL isn't available, `/post/list/<page>` + `/post/view/<id>` + `/_images/<md5>` still work over HTTP (brittle: tied to markup/theme). Kept as a fallback path in the `SourceAdapter`, not the primary.
+1. **HTML scrape.** If GraphQL isn't available, `/post/list/<page>` + `/post/view/<id>` + `/_images/<md5>` can be used as a fallback. **Require `https` whenever the importer sends a cookie or `api_key`**; permit `http` only through the explicit trusted-local deployment exception. Brittle (tied to markup/theme) — kept as a `SourceAdapter` fallback, not the primary.
 2. **Direct DB + files.** Read `shimmie-sql` rows + `data/images` files. Cleanest data, but the DB port is Docker-internal (would need a host port mapping) and files may be root-owned — more coupling/config. Rejected for now (operator: "the db is inside docker stack which will be hard to access").
 3. **shimmie bulk_download export** → a ZIP + JSON manifest, then import the ZIP. Extra manual step; only worth it for offline/portable migration.
 
-**Chosen direction: GraphQL + `api_key`** (fallbacks above only if GraphQL is off). Source config in the admin UI = shimmie base URL + the **api_key** (secret) + a filter to pick source user(s)/all.
+**Chosen direction: GraphQL + `api_key`** (fallbacks above only if GraphQL is off). Source config in the admin UI = shimmie base URL + the **api_key** + a filter to pick source user(s)/all. The **api_key is a secret**: supply it as a secret reference or per-run secret input — **never persisted as raw plugin configuration** — and redact it from logs (per the Security requirements section).
 
 ### Security requirements (must-haves for the importer PR)
 Because the importer makes the **server** fetch an admin-configured URL and holds

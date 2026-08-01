@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 
-import { eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 
 import {
@@ -100,14 +100,18 @@ async function processAsset(ctx: PluginContext, assetId: number): Promise<Outcom
   return "generated";
 }
 
-/** Whether an asset already has a thumbnails row (success OR recorded failure). */
-async function hasRecord(ctx: PluginContext, assetId: number): Promise<boolean> {
+/**
+ * Which of `assetIds` already have a thumbnails row (success OR recorded failure).
+ * One batched query per page — not one per asset — so a full backfill stays ~O(N)
+ * instead of O(N²/batch) as already-recorded assets get re-scanned each call.
+ */
+async function recordedIds(ctx: PluginContext, assetIds: number[]): Promise<Set<number>> {
+  if (assetIds.length === 0) return new Set();
   const rows = await ctx.db
     .select({ assetId: thumbnails.assetId })
     .from(thumbnails)
-    .where(eq(thumbnails.assetId, assetId))
-    .limit(1);
-  return rows.length > 0;
+    .where(inArray(thumbnails.assetId, assetIds));
+  return new Set(rows.map((row) => row.assetId));
 }
 
 /** Counts for the admin status: successes, recorded failures, total attempts. */
@@ -141,9 +145,10 @@ async function backfill(
   outer: for (;;) {
     const result = await ctx.services.assets.list({ page, perPage });
     if (result.assets.length === 0) break;
+    const alreadyRecorded = await recordedIds(ctx, result.assets.map((asset) => asset.id));
     for (const asset of result.assets) {
       scanned += 1;
-      if (await hasRecord(ctx, asset.id)) continue;
+      if (alreadyRecorded.has(asset.id)) continue;
       const outcome = await processAsset(ctx, asset.id);
       if (outcome === "generated") generated += 1;
       else failed += 1;
