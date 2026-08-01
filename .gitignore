@@ -25,6 +25,9 @@ logs/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
 
 # Bun
 .bun/
@@ -46,3 +49,6 @@ TODOS.md
 
 # CodeRabbit CLI review output (bin/cr.ts)
 .cr/
+
+# Local study copies (e.g. shimmie2 source) — never committed
+reference/

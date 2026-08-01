@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Requires the "oven.bun-vscode" extension (recommended). Runs + debugs the
+      // API with hot-reload; reads DATABASE_URL/STORAGE_ROOT from the root .env.
+      "type": "bun",
+      "request": "launch",
+      "name": "Run API (watch)",
+      "program": "apps/api/src/index.ts",
+      "cwd": "${workspaceFolder}",
+      "watchMode": true
+    },
+    {
+      "type": "bun",
+      "request": "launch",
+      "name": "Run active file",
+      "program": "${file}",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

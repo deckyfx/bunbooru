@@ -1,0 +1,73 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "dev: api",
+      "type": "shell",
+      "command": "bun run dev",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "group": "dev", "panel": "dedicated" }
+    },
+    {
+      "label": "dev: web",
+      "type": "shell",
+      "command": "bun run dev:web",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "group": "dev", "panel": "dedicated" }
+    },
+    {
+      "label": "dev: api + web",
+      "dependsOn": ["dev: api", "dev: web"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "typecheck",
+      "type": "shell",
+      "command": "bun run typecheck",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "test",
+      "type": "shell",
+      "command": "bun test",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "lint: boundaries",
+      "type": "shell",
+      "command": "bun run lint:boundaries",
+      "problemMatcher": []
+    },
+    {
+      "label": "db: migrate",
+      "type": "shell",
+      "// note": "DB scripts run in packages/db, whose cwd doesn't auto-load the root .env — source it so DATABASE_URL is in the child env.",
+      "command": "set -a; . ./.env; set +a; bun run migrate",
+      "problemMatcher": []
+    },
+    {
+      "label": "db: generate migration",
+      "type": "shell",
+      "command": "set -a; . ./.env; set +a; bun run db:generate",
+      "problemMatcher": []
+    },
+    {
+      "label": "db: studio",
+      "type": "shell",
+      "command": "set -a; . ./.env; set +a; bun run db:studio",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "services: up (postgres)",
+      "type": "shell",
+      "command": "bun run services:up",
+      "problemMatcher": []
+    }
+  ]
+}

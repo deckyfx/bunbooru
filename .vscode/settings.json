@@ -1,0 +1,31 @@
+{
+  // Use the workspace's TypeScript (strict TS ^6/7) rather than VS Code's bundled one.
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "typescript.preferences.importModuleSpecifier": "shortest",
+
+  // Keep the giant/generated trees out of search + the file watcher (perf).
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/binaries": true,
+    "**/.bun": true,
+    "data/**": true,
+    "bun.lock": true
+  },
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/dist/**": true,
+    "**/binaries/**": true,
+    "**/.bun/**": true,
+    "data/**": true
+  },
+
+  // Tailwind v4 (the web app) — treat CSS as Tailwind and enable class IntelliSense.
+  "files.associations": {
+    "*.css": "tailwindcss"
+  },
+  "editor.quickSuggestions": {
+    "strings": "on"
+  }
+}
