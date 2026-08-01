@@ -1,9 +1,13 @@
 # Shimmie2 → bunbooru migration — findings & plan
 
-> Status: **research/plan only, nothing built.** Captured 2026-07-02 to revisit.
-> Decisions taken so far: (1) the importer will be the **first real bunbooru
-> plugin** — so the plugin system gets built first; (2) source access will most
-> likely be **HTTP scraping** of the running shimmie, not its Docker-internal DB.
+> Status (updated 2026-08-01): the **plugin system is now BUILT** (branch
+> `feat/plugin-system`: `@bunbooru/plugin-sdk` registration API, an API plugin
+> loader gated by `ENABLED_PLUGINS`, plugin-owned migrations, and web `/admin`
+> hosting — the `example` plugin is the reference). The **shimmie2 importer
+> itself is NOT built yet** — the sections below are its design/plan. Decisions:
+> (1) the importer is the **first real feature plugin**, built on the system
+> above; (2) source access is via **HTTP scraping** of the running shimmie, not
+> its Docker-internal DB.
 
 ## Why
 The operator currently runs **shimmie2** (a PHP booru) and wants to migrate their
@@ -22,7 +26,7 @@ Source studied at `reference/shimmie2/` (gitignored study clone; NOT a submodule
 - **Everything is an extension** (`ext/<name>`). Core-ish: `image`, `handle_*` (per-MIME ingest), `media` (thumbs), `mime`, `upload`, `index` (search), `rating`, `user`/`user_config`/`user_api_keys`, post-metadata exts (`post_tags`, `post_source`, `tag_history`, …). This maps 1:1 to bunbooru's **Core**.
 - **Optional exts = bunbooru's future plugins** (see map below).
 - **Admin UI pattern:** an ext listens for `AdminBuildingEvent` → renders a form `Block` on `/admin`; the form POSTs to its own route or the generic `admin/{action}` bus; a handler runs the server-side action (long tasks bump timeouts). → bunbooru's existing `/admin` + settings/API-key pages are the same shape.
-- **Storage/hashing:** hash = **MD5 of file contents**; on-disk path is content-addressed fan-out `data/<base>/<hh>/<hh>/<md5>` (media base + a `thumbs` base). Original filename kept in the DB.
+- **Storage/hashing:** hash = **MD5 of file contents**; on-disk path is content-addressed. Shimmie's generic warehouse scheme is a multi-level fan-out, but **this live instance uses a single-level layout: `data/images/<md5[0:2]>/<md5>`** (originals) with thumbs under a parallel `data/thumbs/…` — the canonical path to rely on here, and the one the mapping table below (`data/images/<xx>/<md5>`) uses. Original filename kept in the DB. Files are downloadable over HTTP at `/_images/<md5>` regardless of on-disk layout, which is why the scrape path doesn't depend on it.
 - **Thumbnails:** generated **synchronously on upload** (GD / ImageMagick / ffmpeg). ⚠️ **bunbooru has NO thumbnailing yet** — it serves full images. Importing real images will work but the gallery loads full-size until we add thumbs. (Candidate follow-up feature/plugin.)
 - **DB per-ext migrations:** each ext guards steps by a stored `ext_<key>_version` and runs `create_table`/`ALTER` on `DatabaseUpgradeEvent`; features often add columns to the shared `images` table. → informs bunbooru's per-plugin migration model.
 
@@ -66,7 +70,19 @@ Source studied at `reference/shimmie2/` (gitignored study clone; NOT a submodule
 - `class` `admin`/`user` → role `admin`/`member`; `anonymous` is shimmie's system user (owner of nothing real).
 
 ## Import approach (re-ingest, don't raw-insert)
-For each source post: obtain the **image bytes** + its **tags/rating/source/date/owner**, then run the bytes through bunbooru's **`assetService.createFromSource`** (hashes sha256+md5, sniffs dims/mime, dedupes on sha256, stores via StorageProvider, inserts) → then set `rating`/`source`/`createdAt`, then `tagService.setAssetTags(names)`. **Idempotent**: the sha256 dedupe means re-runs skip already-imported posts.
+For each source post: obtain the **image bytes** + its **tags/rating/source/date/owner**, then run the bytes through bunbooru's **`assetService.createFromSource`** (hashes sha256+md5, sniffs dims/mime, dedupes on sha256, stores via StorageProvider, inserts) → then set `rating`/`source`/`createdAt`, then `tagService.setAssetTags(names)`.
+
+> ⚠️ **sha256 dedupe is NOT the same as import idempotency.** sha256 identifies
+> *bytes*, not a shimmie *post*: two posts can share identical bytes but carry
+> different tags/rating/owner/date, and a crash *between* `createFromSource` and
+> the later metadata calls leaves a partially-imported post that a byte-only
+> re-run would skip. So the importer needs its **own ledger table** (now possible
+> — the plugin system supports plugin-owned tables): record `(sourceInstance,
+> sourcePostId) → { assetId, status: pending|complete|failed, importedAt }`,
+> upsert it as the unit of idempotency, and finish partial imports on retry.
+> Define explicit **reapply/merge** behavior when the same bytes arrive from
+> multiple source posts (union tags? keep first? operator choice), rather than
+> silently skipping.
 
 ### Source access — 3 options
 1. **HTTP scrape of the running shimmie (recommended; operator's instinct).** The web is exposed on `:5013`. No JSON API is enabled on this instance (`/post/list.json`, `/graphql`, danbooru_api all 404), BUT the HTML works: `/post/list/<page>` (200), `/post/view/<id>` (200, has tags/rating/source), and **direct file download `/_images/<md5>` (200)**. So: paginate the list, parse each post's metadata from HTML (or enable shimmie's `danbooru_api`/`graphql` ext for clean JSON), download bytes from `/_images/<hash>`. **Most general** (works for any reachable shimmie, no Docker/DB coupling) and avoids the sha256 problem (we have the bytes).
@@ -75,6 +91,24 @@ For each source post: obtain the **image bytes** + its **tags/rating/source/date
 3. **shimmie bulk_download export** → a ZIP + JSON manifest, then import the ZIP. Extra manual step; only worth it for offline/portable migration.
 
 **Chosen direction: option 1 (HTTP scrape).** Source config in the admin UI = shimmie base URL (+ optional login cookie/API key for NSFW/private posts) + a query filter to pick user(s).
+
+### Security requirements (must-haves for the importer PR)
+Because the importer makes the **server** fetch an admin-configured URL and holds
+source **credentials**, the plan has to address two classes of risk up front:
+
+- **SSRF on the source URL.** An admin-set base URL that the API fetches is an
+  SSRF vector (worse if a less-trusted role can set it). Constrain it:
+  scheme allowlist (`http`/`https` only), **block private/link-local/loopback +
+  metadata addresses** by default (allow them only via an explicit deployment
+  allowlist for self-hosted same-LAN shimmie), **re-validate the target on every
+  redirect** (don't blindly follow to an internal address), cap request time and
+  response size, and **never forward the shimmie credentials across a redirect**
+  to a different origin.
+- **Credential handling.** The optional shimmie cookie/API key must **not** sit
+  as a raw value in ordinary plugin settings. Store it encrypted-at-rest or as a
+  secret reference, **redact it from logs and job payloads**, and support
+  expiry/rotation/deletion. Prefer per-run credentials that aren't persisted at
+  all when the operator is willing to re-enter them.
 
 ## Architecture decision: build the plugin system first
 bunbooru's plugin system is a **stub** today: `packages/plugin-sdk` exports only `PLUGIN_SDK_VERSION` + a *list of capability names* (`routes`, `tables`, `admin-pages`, …) with **no registration API**, and `apps/api` has **no plugin loader** (both marked "to be built"). The operator chose to **build the plugin system first**, then ship the importer as the **first real plugin** (correct per CLAUDE.md "everything optional is a plugin", and it unblocks all the future plugins in the map above).
@@ -87,8 +121,8 @@ bunbooru's plugin system is a **stub** today: `packages/plugin-sdk` exports only
 
 ### The importer plugin (once the system exists)
 - **Admin UI** (`/admin` → "Import from Shimmie2"): fields for shimmie base URL (+ auth), a **preview/scan** step that lists source users + post counts, controls to **pick user(s) or "all"** and the **target bunbooru user**, a **dry-run**, then **Run** with progress + a summary (imported / skipped-dedup / failed).
-- **Backend**: a job that scans → for each post fetches bytes + metadata → `createFromSource` → set rating/source/date → `setAssetTags`. Idempotent, resumable, rate-limited against the source.
-- **Tests**: parser/mapping unit tests + an integration test against a fixture (recorded shimmie HTML/JSON + a sample image).
+- **Backend**: a job that scans → for each post fetches bytes + metadata → `createFromSource` → set rating/source/date → `setAssetTags`, recording each post in the **import ledger** (plugin-owned table, keyed by `(sourceInstance, sourcePostId)`) so it's genuinely idempotent + resumable across crashes — not merely byte-deduped. Rate-limited against the source; the source fetch goes through the **SSRF guard** and uses **redacted, non-persisted-by-default credentials** (see Security requirements above).
+- **Tests**: parser/mapping unit tests, ledger idempotency/partial-retry tests, an SSRF-guard test (rejects private/redirected targets), + an integration test against a fixture (recorded shimmie HTML/JSON + a sample image).
 
 ## Open questions / next steps
 1. **Plugin-system design** (esp. how the web `/admin` hosts plugin pages) — needs its own design pass before coding. Biggest unknown.
@@ -97,8 +131,8 @@ bunbooru's plugin system is a **stub** today: `packages/plugin-sdk` exports only
 4. Original filename / md5-only posts: drop filename, or add an optional field.
 
 ### Sequence when we resume
-1. Design + build the **plugin system** (loader + SDK registration for routes/admin-pages/tables/service-access) — foundational PR.
-2. Build the **shimmie-import plugin** (scrape → core ingest) + admin UI.
+1. ~~Build the **plugin system**~~ — **DONE** (`feat/plugin-system`: SDK registration for routes/admin-pages/plugin-owned tables/service-access + loader + web hosting).
+2. Build the **shimmie-import plugin** (scrape → core ingest) + admin UI — with the **import ledger**, **SSRF guard**, and **credential redaction** from the sections above baked in from the start.
 3. (Maybe) thumbnailing, so imported posts render cheaply.
 
 ## Forward-looking: generalize to other sources (Pixiv, etc.)

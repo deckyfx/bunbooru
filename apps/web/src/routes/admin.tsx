@@ -4,6 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 
 import { authErrorMessage, useCurrentUser } from "../lib/auth";
+import { usePlugins } from "../lib/plugins";
 import { useUpdateUploadLimits, useUploadLimits } from "../lib/settings";
 import {
   CATEGORY_ORDER,
@@ -11,6 +12,7 @@ import {
   useSetTagCategory,
   type TagCategory,
 } from "../lib/tags";
+import { PLUGIN_ADMIN_SECTIONS } from "../plugins/registry";
 
 /** Human-readable byte size for the caps hint. */
 function formatBytes(bytes: number): string {
@@ -48,7 +50,34 @@ export function AdminPage() {
       <h1 className="border-b border-line pb-1 text-base font-bold">Admin</h1>
       <UploadLimitsSection />
       <TagCategorySection />
+      <PluginSections />
     </div>
+  );
+}
+
+/**
+ * Render the admin section for each enabled plugin (from `GET /api/v1/plugins`)
+ * that ships a web UI in {@link PLUGIN_ADMIN_SECTIONS}. This is the generic
+ * hosting point: new plugins appear here automatically once enabled + registered,
+ * with no change to this page.
+ */
+function PluginSections() {
+  const plugins = usePlugins();
+  if (plugins.isError) {
+    return (
+      <p role="alert" className="text-[12px] text-tag-artist">
+        Couldn’t load plugin sections.
+      </p>
+    );
+  }
+  if (!plugins.data) return null;
+  return (
+    <>
+      {plugins.data.map((p) => {
+        const Section = PLUGIN_ADMIN_SECTIONS[p.id];
+        return Section ? <Section key={p.id} /> : null;
+      })}
+    </>
   );
 }
 

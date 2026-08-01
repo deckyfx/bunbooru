@@ -53,8 +53,20 @@ function visitorId(): string {
   }
 }
 
-export const api = treaty<App>(
-  typeof window !== "undefined" ? window.location.origin : "http://localhost:3000",
+/**
+ * Origin every Eden client targets — `window.location.origin` (same-origin) in
+ * the browser; an SSR fallback that this SPA never actually uses. Shared so
+ * per-plugin clients (see {@link import("../plugins/registry")}) hit the same host.
+ */
+export const treatyOrigin =
+  typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+
+/**
+ * Shared Eden client options: the `x-visitor-id` header + cookie credentials.
+ * Reused by the core {@link api} client and by typed per-plugin clients so they
+ * all send the same visitor id and session cookie. `undefined` during SSR.
+ */
+export const treatyOptions =
   typeof window !== "undefined"
     ? {
         headers: () => ({ "x-visitor-id": visitorId() }),
@@ -62,10 +74,11 @@ export const api = treaty<App>(
         // like `x-visitor-id`. `credentials: "include"` guarantees the cookie is
         // sent even if the API is ever served from a different origin behind a
         // proxy; for the same-origin default it's a harmless no-op.
-        fetch: { credentials: "include" },
+        fetch: { credentials: "include" as const },
       }
-    : undefined,
-);
+    : undefined;
+
+export const api = treaty<App>(treatyOrigin, treatyOptions);
 
 /** Public URL for an asset's stored bytes (used as an `<img src>`, not a data call). */
 export function assetFileUrl(id: number): string {

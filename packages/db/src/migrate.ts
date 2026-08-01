@@ -6,9 +6,8 @@
  * changes flow: edit `schema.ts` → `bun run db:generate` → review SQL → `bun run
  * migrate`.
  */
-import { migrate } from "drizzle-orm/bun-sql/migrator";
-
 import { createDb } from "./client";
+import { applyMigrations } from "./migrator";
 
 const url = Bun.env.DATABASE_URL;
 if (!url) {
@@ -21,7 +20,7 @@ const migrationsFolder = `${import.meta.dir}/../drizzle`;
 
 console.log("▶ Applying migrations…");
 try {
-  await migrate(db, { migrationsFolder });
+  await applyMigrations(db, { migrationsFolder });
   console.log("✔ Migrations applied.");
 } catch (error) {
   console.error("✖ Migration failed:", error instanceof Error ? error.message : error);

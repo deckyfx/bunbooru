@@ -112,14 +112,31 @@ export function assembleCore(
 }
 
 /**
- * Build the Core from runtime config — the single entry point the API
- * composition root calls. It owns the db/storage → repository → service wiring
- * so callers depend only on `@bunbooru/core`, never on `@bunbooru/db` or
- * `@bunbooru/storage` directly (preserving the `apps → core → …` direction).
+ * The Core plus the {@link DB} handle it was built over. Returned by
+ * {@link createCoreRuntime} so the composition root can share the SAME handle
+ * with the plugin loader (to run plugin-owned migrations and give plugins a
+ * `ctx.db`) instead of opening a second connection pool.
  */
-export function createCore(config: CoreConfig): Core {
-  return assembleCore(
-    createDb(config.databaseUrl),
+export interface CoreRuntime {
+  core: Core;
+  /** The shared Drizzle handle — reused for plugin migrations + `ctx.db`. */
+  db: DB;
+}
+
+/**
+ * Build the Core from runtime config AND expose the underlying {@link DB}.
+ *
+ * This is the single entry point the API composition root calls. It owns the
+ * db/storage → repository → service wiring so callers depend only on
+ * `@bunbooru/core`, never on `@bunbooru/db` or `@bunbooru/storage` directly
+ * (preserving the `apps → core → …` direction). The `db` is surfaced — through
+ * Core, not by importing `@bunbooru/db` in `apps/*` — so the plugin loader can
+ * migrate plugin tables and inject `ctx.db` over the same connection.
+ */
+export function createCoreRuntime(config: CoreConfig): CoreRuntime {
+  const db = createDb(config.databaseUrl);
+  const core = assembleCore(
+    db,
     createFilesystemStorageProvider({ root: config.storageRoot }),
     // Staging lives under the (writable) storage root so resumable chunks land
     // on the same host volume as the final assets.
@@ -131,4 +148,15 @@ export function createCore(config: CoreConfig): Core {
       sessionExpiryMs: config.sessionExpiryMs,
     },
   );
+  return { core, db };
+}
+
+/**
+ * Build the Core from runtime config. A thin wrapper over
+ * {@link createCoreRuntime} for callers that don't need the `db` handle (e.g.
+ * existing tests). New composition roots that load plugins should call
+ * {@link createCoreRuntime} to share the connection.
+ */
+export function createCore(config: CoreConfig): Core {
+  return createCoreRuntime(config).core;
 }

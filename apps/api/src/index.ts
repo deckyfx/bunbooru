@@ -1,17 +1,18 @@
-import { createCore } from "@bunbooru/core";
+import { createCoreRuntime } from "@bunbooru/core";
 
 import { envConfig, MAX_REQUEST_BODY_BYTES } from "./env-config";
 import { logger } from "./lib/logger";
+import { loadPlugins } from "./plugins/loader";
 import { createApp } from "./server";
 
 /**
  * `@bunbooru/api` — the REST API composition root.
  *
- * Assembles the Core (db → repositories → services) from runtime config and
- * builds the HTTP app over it, then serves it. Auth middleware and the plugin
- * loader attach here in later PRs.
+ * Assembles the Core (db → repositories → services) from runtime config, loads
+ * the enabled plugins over the SAME db handle (running their migrations, then
+ * `register`), builds the HTTP app, mounts plugin routes, and serves it.
  */
-const core = createCore({
+const { core, db } = createCoreRuntime({
   databaseUrl: envConfig.DATABASE_URL,
   storageRoot: envConfig.STORAGE_ROOT,
   // Env values are the DEFAULTS; an admin can override the caps at runtime.
@@ -20,7 +21,28 @@ const core = createCore({
   requestBodyCeilingBytes: MAX_REQUEST_BODY_BYTES,
   sessionExpiryMs: envConfig.SESSION_EXPIRY_MS,
 });
-const app = createApp({ core });
+
+// Load enabled plugins before building the app: their migrations run here, and
+// their manifest metadata feeds `GET /api/v1/plugins`. (Top-level await is safe
+// — the production build does not use bytecode.)
+const loadedPlugins = await loadPlugins({ core, db, enabledIds: envConfig.ENABLED_PLUGINS });
+
+const app = createApp({
+  core,
+  plugins: loadedPlugins.map((p) => ({
+    id: p.id,
+    name: p.name,
+    version: p.version,
+    adminPages: p.adminPages,
+  })),
+});
+
+// Mount each plugin's routes under its `/api/v1/plugins/<id>` prefix. Done here
+// (not inside `createApp`) so the exported `App` type stays Core-only — plugin
+// routes are consumed via each plugin's own exported app type on the web.
+for (const p of loadedPlugins) {
+  if (p.routes) app.use(p.routes);
+}
 
 app.listen(
   { port: envConfig.SERVER_PORT, maxRequestBodySize: MAX_REQUEST_BODY_BYTES },
