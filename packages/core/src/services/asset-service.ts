@@ -61,6 +61,12 @@ export interface CreateAssetMeta {
   rating?: Asset["rating"];
   source?: string | null;
   uploaderId?: number | null;
+  /**
+   * Original creation timestamp to preserve (defaults to now when omitted).
+   * Used by migration/import so imported posts keep their source's original
+   * "posted" date rather than sorting as freshly uploaded.
+   */
+  createdAt?: Date;
 }
 
 /**
@@ -157,7 +163,7 @@ export function createAssetService(
    */
   async function ingest(
     source: Blob,
-    { rating, source: sourceUrl, uploaderId }: CreateAssetMeta = {},
+    { rating, source: sourceUrl, uploaderId, createdAt }: CreateAssetMeta = {},
     localPath?: string,
   ): Promise<CreateAssetResult> {
     // Capture the size now: the move fast-path below consumes the source file, so
@@ -216,6 +222,9 @@ export function createAssetService(
       source: sourceUrl ?? null,
       uploaderId: uploaderId ?? null,
       ...(rating ? { rating } : {}),
+      // Preserve an original post date when provided (migration/import); the
+      // column otherwise defaults to now.
+      ...(createdAt ? { createdAt } : {}),
     };
 
     let asset: Asset;

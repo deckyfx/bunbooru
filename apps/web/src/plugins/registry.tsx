@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 
 import { ExampleSection } from "./example/ExampleSection";
+import { ShimmieImportSection } from "./shimmie-import/ShimmieImportSection";
 import { ThumbnailsSection } from "./thumbnailer/ThumbnailsSection";
 
 /**
@@ -15,4 +16,5 @@ import { ThumbnailsSection } from "./thumbnailer/ThumbnailsSection";
 export const PLUGIN_ADMIN_SECTIONS: Record<string, ComponentType> = {
   example: ExampleSection,
   thumbnailer: ThumbnailsSection,
+  "shimmie-import": ShimmieImportSection,
 };
