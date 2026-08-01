@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 
 import type { PluginContext } from "@bunbooru/plugin-sdk";
 
@@ -56,6 +56,9 @@ async function upsertItem(
     .onConflictDoUpdate({
       target: [importItems.sourceInstance, importItems.sourcePostId],
       set: { ...fields, updatedAt: new Date() },
+      // `complete` is terminal: never let a later (e.g. concurrent) `failed`
+      // overwrite a successful import and clear its assetId.
+      setWhere: ne(importItems.status, "complete"),
     });
 }
 
@@ -175,6 +178,10 @@ export async function stepRun(
     failed: run.failed + failed,
     skipped: run.skipped + skipped,
   };
+  // Optimistic concurrency: only commit the new absolute totals if no other
+  // step advanced the cursor since we read it (WHERE cursor = the value we read).
+  // If a concurrent step won, we drop this counter write — our per-post ledger
+  // rows still stand, and Core's sha256 dedupe prevents duplicate assets.
   await ctx.db
     .update(importRuns)
     .set({
@@ -185,7 +192,7 @@ export async function stepRun(
       status: done ? "done" : "running",
       updatedAt: new Date(),
     })
-    .where(eq(importRuns.id, runId));
+    .where(and(eq(importRuns.id, runId), eq(importRuns.cursor, run.cursor)));
 
   return { imported, failed, skipped, cursor, maxId: run.maxId, done, totals };
 }

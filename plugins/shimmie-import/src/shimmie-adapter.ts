@@ -151,6 +151,14 @@ export class ShimmieAdapter implements SourceAdapter {
     );
     const post = data.post;
     if (!post) return null;
+    // Constrain the image URL to the source's own origin: an absolute, off-origin
+    // `image_link` would otherwise let the source point the downloader at an
+    // arbitrary host (the SSRF guard permits private hosts for non-credentialed
+    // fetches). shimmie's link is normally site-relative, so same-origin is safe.
+    const imageUrl = new URL(post.image_link, this.base);
+    if (imageUrl.origin !== this.base) {
+      throw new Error(`Post ${sourcePostId} image_link points off-origin: ${imageUrl.origin}`);
+    }
     return {
       sourcePostId,
       md5: post.hash,
@@ -163,7 +171,7 @@ export class ShimmieAdapter implements SourceAdapter {
       rating: await this.fetchRating(sourcePostId),
       postedAt: parsePosted(post.posted, this.timezone),
       owner: post.owner.name,
-      imageUrl: new URL(post.image_link, this.base).toString(),
+      imageUrl: imageUrl.toString(),
       postUrl: `${this.base}/post/view/${sourcePostId}`,
     };
   }

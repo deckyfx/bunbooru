@@ -1,5 +1,5 @@
 {
-  "id": "ea395697-cceb-4441-bffc-4094321ca374",
+  "id": "7ce6e4cf-5f72-43ca-9efb-74ccfdfea9bb",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -147,7 +147,8 @@
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "shimmie_import_run_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
           "default": "'running'"
@@ -176,7 +177,17 @@
       "isRLSEnabled": false
     }
   },
-  "enums": {},
+  "enums": {
+    "public.shimmie_import_run_status": {
+      "name": "shimmie_import_run_status",
+      "schema": "public",
+      "values": [
+        "running",
+        "done",
+        "canceled"
+      ]
+    }
+  },
   "schemas": {},
   "sequences": {},
   "roles": {},

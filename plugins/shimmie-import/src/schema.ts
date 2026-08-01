@@ -1,4 +1,7 @@
-import { integer, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { integer, pgEnum, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
+
+/** The lifecycle of an import run — constrained at the DB level (no stray values). */
+export const importRunStatus = pgEnum("shimmie_import_run_status", ["running", "done", "canceled"]);
 
 /**
  * An import run: one resumable session over a source shimmie, with its config +
@@ -22,8 +25,7 @@ export const importRuns = pgTable("shimmie_import_runs", {
   imported: integer("imported").notNull().default(0),
   failed: integer("failed").notNull().default(0),
   skipped: integer("skipped").notNull().default(0),
-  /** `running` | `done` | `canceled`. */
-  status: text("status").notNull().default("running"),
+  status: importRunStatus("status").notNull().default("running"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

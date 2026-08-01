@@ -103,13 +103,16 @@ For each source post: obtain the **image bytes** + its **tags/rating/source/date
 > Everywhere else in this doc, "sha256 dedupe" means byte-level dedup only — the
 > ledger is what makes re-runs idempotent.
 >
-> **Implemented in v1 (PR: shimmie importer):** a pragmatic subset — an
+> **Implemented in v1 (PR: shimmie importer):** a pragmatic subset — a
 > `shimmie_import_items` ledger with `UNIQUE(sourceInstance, sourcePostId)` +
-> insert-on-conflict-do-update, an `shimmie_import_runs` table holding a resumable
-> **cursor** + config + progress, and Core's sha256 dedupe as the correctness
-> backstop. The exclusive **ownerToken/lease** claim above is DEFERRED — it only
-> guards *concurrent* runs, and v1 targets a single-admin/single-instance deploy.
-> Add it when multi-runner concurrency is real.
+> insert-on-conflict-do-update (where `complete` is **terminal**, so a concurrent
+> `failed` can't demote a successful import), a `shimmie_import_runs` table holding
+> a resumable **cursor** + config + progress (updated with an **optimistic cursor
+> guard** so overlapping steps don't lose-update the counters), and Core's sha256
+> dedupe as the correctness backstop. The exclusive **ownerToken/lease** step
+> claim is DEFERRED — it only guards *concurrent* runs/steps, and v1 targets a
+> single-admin/single-instance deploy (the client also awaits each step before the
+> next). Add it when multi-runner concurrency is real.
 
 ### Source access — chosen: GraphQL + api_key (verified 2026-08-01)
 The operator enabled shimmie's **GraphQL** + **User API** extensions, so the

@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Loader2 } from "lucide-react";
 
@@ -47,6 +47,14 @@ export function ShimmieImportSection() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const cancelRef = useRef(false);
+
+  // Stop the import loop if the component unmounts (leaving /admin), so it doesn't
+  // keep hitting the API or setting state on an unmounted component.
+  useEffect(() => {
+    return () => {
+      cancelRef.current = true;
+    };
+  }, []);
 
   function resetMessages() {
     setError(null);
@@ -111,6 +119,8 @@ export function ShimmieImportSection() {
           break;
         }
         const step = await call(await importApi.runs({ id: runId }).step.post({ apiKey }));
+        // Bail after the await if we were unmounted / canceled mid-request.
+        if (cancelRef.current) break;
         if (!step.ok) {
           setError(step.error);
           break;
@@ -271,10 +281,17 @@ export function ShimmieImportSection() {
 
       {progress ? (
         <div className="mt-3 space-y-1 text-[12px]">
-          <div className="h-2 w-full overflow-hidden rounded bg-line/40">
+          <div
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Import progress"
+            className="h-2 w-full overflow-hidden rounded bg-line/40"
+          >
             <div className="h-full bg-link" style={{ width: `${pct}%` }} />
           </div>
-          <p className="text-muted">
+          <p className="text-muted" aria-live="polite">
             {progress.cursor} / {progress.maxId} scanned · {progress.imported} imported ·{" "}
             {progress.skipped} skipped
             {progress.failed > 0 ? ` · ${progress.failed} failed` : ""}

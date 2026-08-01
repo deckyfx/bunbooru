@@ -1,3 +1,4 @@
+CREATE TYPE "public"."shimmie_import_run_status" AS ENUM('running', 'done', 'canceled');--> statement-breakpoint
 CREATE TABLE "shimmie_import_items" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"source_instance" text NOT NULL,
@@ -21,7 +22,7 @@ CREATE TABLE "shimmie_import_runs" (
 	"imported" integer DEFAULT 0 NOT NULL,
 	"failed" integer DEFAULT 0 NOT NULL,
 	"skipped" integer DEFAULT 0 NOT NULL,
-	"status" text DEFAULT 'running' NOT NULL,
+	"status" "shimmie_import_run_status" DEFAULT 'running' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );

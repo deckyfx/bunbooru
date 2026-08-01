@@ -24,6 +24,17 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Whether `tz` is a timezone the runtime accepts (so a bad value fails the run
+ *  up front, not silently on every post during stepping). */
+function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Build a shimmie adapter, surfacing a bad base URL as a domain error. */
 function makeAdapter(baseUrl: string, apiKey: string, timezone?: string): ShimmieAdapter {
   try {
@@ -69,6 +80,9 @@ export function buildImportRoutes(ctx: PluginContext) {
         const admin = await requireAdmin(ctx, request);
         try {
           const timezone = body.sourceTimezone?.trim() || "UTC";
+          if (!isValidTimeZone(timezone)) {
+            return { ok: false as const, error: `Unknown timezone "${timezone}" (use an IANA name like "UTC" or "Asia/Jakarta")` };
+          }
           const adapter = makeAdapter(body.baseUrl, body.apiKey, timezone);
           const { maxId } = await adapter.preflight();
           const userFilter = body.users === "*" ? "*" : body.users.join(",");
@@ -89,7 +103,11 @@ export function buildImportRoutes(ctx: PluginContext) {
           baseUrl: t.String({ minLength: 1, maxLength: 2048 }),
           apiKey: t.String({ minLength: 1, maxLength: 500 }),
           // `*` = all users, else an explicit list of shimmie usernames.
-          users: t.Union([t.Literal("*"), t.Array(t.String({ maxLength: 100 }), { maxItems: 100 })]),
+          users: t.Union([
+            t.Literal("*"),
+            // At least one username (an empty list would match nobody and import zero).
+            t.Array(t.String({ maxLength: 100 }), { minItems: 1, maxItems: 100 }),
+          ]),
           // Target bunbooru user id to attribute posts to; defaults to the admin.
           targetUserId: t.Optional(t.Integer({ minimum: 1 })),
           // IANA timezone of the source's naive timestamps (default UTC).
