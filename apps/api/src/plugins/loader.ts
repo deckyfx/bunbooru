@@ -21,6 +21,9 @@ export interface LoadedPlugin {
   routes?: AnyElysia;
 }
 
+/** Default per-step timeout (ms) — see {@link LoadPluginsOptions.stepTimeoutMs}. */
+export const DEFAULT_PLUGIN_STEP_TIMEOUT_MS = 30_000;
+
 /** Inputs the loader wires each plugin over. */
 export interface LoadPluginsOptions {
   /** Assembled Core services, exposed to plugins via `ctx.services`. */
@@ -31,11 +34,38 @@ export interface LoadPluginsOptions {
   enabledIds: string[];
   /** Registry of known plugins (injectable for tests; defaults to the real one). */
   registry?: Record<string, () => Promise<PluginModule>>;
+  /**
+   * Max time (ms) each awaited step (import / migrate / register) may take before
+   * it's abandoned. A step that HANGS (rather than throws) would otherwise stall
+   * `loadPlugins` forever — and since the composition root awaits it before the
+   * server starts, one hung plugin would block the whole API from coming up.
+   * Injectable so tests can exercise the timeout quickly. Default
+   * {@link DEFAULT_PLUGIN_STEP_TIMEOUT_MS}.
+   */
+  stepTimeoutMs?: number;
 }
 
 /** Short, safe error text for logs. */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Race `promise` against a timer so a hung step can't stall startup. On timeout
+ * it rejects (handled by the caller's existing try/catch → log + skip that
+ * plugin). The underlying promise isn't cancelable (JS can't), but it's
+ * abandoned — the loader moves on. The timer is always cleared so a settled race
+ * never keeps the process alive.
+ */
+function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 /** Assemble the {@link PluginContext} the host injects into a plugin. */
@@ -81,6 +111,7 @@ export async function loadPlugins({
   db,
   enabledIds,
   registry = PLUGIN_REGISTRY,
+  stepTimeoutMs = DEFAULT_PLUGIN_STEP_TIMEOUT_MS,
 }: LoadPluginsOptions): Promise<LoadedPlugin[]> {
   const loaded: LoadedPlugin[] = [];
 
@@ -96,7 +127,7 @@ export async function loadPlugins({
 
     let plugin: BunbooruPlugin;
     try {
-      ({ plugin } = await importer());
+      ({ plugin } = await withTimeout(importer(), `plugin ${id} import`, stepTimeoutMs));
     } catch (error) {
       logger.error("plugin_import_failed", { id, error: errorMessage(error) });
       continue;
@@ -111,7 +142,11 @@ export async function loadPlugins({
 
     if (plugin.migrations) {
       try {
-        await applyMigrations(db, plugin.migrations);
+        await withTimeout(
+          applyMigrations(db, plugin.migrations),
+          `plugin ${id} migration`,
+          stepTimeoutMs,
+        );
         logger.info("plugin_migrated", { id });
       } catch (error) {
         // A plugin whose tables didn't migrate must NOT be mounted — its routes
@@ -123,7 +158,11 @@ export async function loadPlugins({
 
     let registration: PluginRegistration;
     try {
-      registration = await plugin.register(buildContext(id, core, db));
+      registration = await withTimeout(
+        Promise.resolve(plugin.register(buildContext(id, core, db))),
+        `plugin ${id} register`,
+        stepTimeoutMs,
+      );
     } catch (error) {
       logger.error("plugin_register_failed", { id, error: errorMessage(error) });
       continue;

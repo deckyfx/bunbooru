@@ -107,4 +107,30 @@ describe("loadPlugins", () => {
     const loaded = await loadPlugins({ core, db, enabledIds: ["throws"], registry });
     expect(loaded).toHaveLength(0);
   });
+
+  it("times out a hanging register() so it can't stall startup", async () => {
+    // register never resolves — without the per-step timeout, loadPlugins (which
+    // the composition root awaits before listen) would hang the whole API.
+    const hanging = definePlugin({
+      id: "hangs",
+      name: "Hangs",
+      version: "1.0.0",
+      register() {
+        return new Promise<never>(() => {});
+      },
+    });
+    const registry = {
+      hangs: async (): Promise<PluginModule> => ({ plugin: hanging }),
+      demo: async (): Promise<PluginModule> => ({ plugin: demoPlugin() }),
+    };
+    const loaded = await loadPlugins({
+      core,
+      db,
+      enabledIds: ["hangs", "demo"],
+      registry,
+      stepTimeoutMs: 20,
+    });
+    // The hung plugin is abandoned; the healthy one still loads.
+    expect(loaded.map((p) => p.id)).toEqual(["demo"]);
+  });
 });
