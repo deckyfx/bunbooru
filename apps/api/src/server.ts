@@ -23,10 +23,28 @@ import { logger } from "./lib/logger";
 import { readRequestId, safeMessage, statusFor } from "./lib/http";
 import { clientIp, createRateLimiter } from "./lib/rate-limit";
 
+/**
+ * Manifest entry for one enabled plugin, surfaced at `GET /api/v1/plugins` so
+ * the web console can discover which plugins are active and what admin pages
+ * they contribute. Metadata only — no secrets, no route internals.
+ */
+export interface PluginManifestEntry {
+  id: string;
+  name: string;
+  version: string;
+  adminPages: { id: string; title: string }[];
+}
+
 /** Runtime collaborators the app is built over — injected so tests can stub them. */
 export interface AppDependencies {
   /** Assembled Core services (see `createCore` in `@bunbooru/core`). */
   core: Core;
+  /**
+   * Manifest metadata for enabled plugins (from the plugin loader). Their actual
+   * routes are mounted separately by the composition root; this only drives the
+   * `GET /api/v1/plugins` discovery endpoint. Defaults to none.
+   */
+  plugins?: PluginManifestEntry[];
 }
 
 /** Per-IP throttles on the credential endpoints (in-memory, single-instance). */
@@ -154,7 +172,7 @@ function serializeAsset(asset: Asset): AssetDto {
  * global error handler that never leaks stack traces. API routes are versioned
  * under `/api/v1`.
  */
-export function createApp({ core }: AppDependencies) {
+export function createApp({ core, plugins = [] }: AppDependencies) {
   // Per-app limiter instances (fresh per createApp, so tests don't share state;
   // one instance in production since the composition root builds the app once).
   const loginLimiter = createRateLimiter(LOGIN_RATE);
@@ -243,6 +261,10 @@ export function createApp({ core }: AppDependencies) {
           };
         })
         .get("/health", () => ({ status: "ok" as const }))
+        // Enabled-plugin manifest (public metadata) so the web console can
+        // discover active plugins + their admin pages. Plugin routes themselves
+        // are mounted by the composition root under `/api/v1/plugins/<id>`.
+        .get("/plugins", (): PluginManifestEntry[] => plugins)
         // --- Auth ----------------------------------------------------------
         // Open, self-serve registration. The first account created becomes the
         // site `admin`; the rest are `member`. Registration auto-logs-in: it sets

@@ -20,12 +20,19 @@ export type { StorageProvider };
 // Domain row types, re-exported so downstream apps depend on Core, not db directly.
 export type { ApiKey, Asset, AssetUpdate, Rating, Tag, TagCategory, User, UserRole } from "@bunbooru/db";
 
+// The Drizzle handle type + migration runner, re-exported so the plugin loader
+// (and the SDK) reach them through Core rather than importing `@bunbooru/db`.
+export type { DB } from "@bunbooru/db";
+export { applyMigrations, type MigrationSet } from "@bunbooru/db";
+
 // Core assembly — the single wiring entry point for the API composition root.
 export {
   assembleCore,
   createCore,
+  createCoreRuntime,
   type Core,
   type CoreConfig,
+  type CoreRuntime,
 } from "./core";
 
 // Event bus — Core emits domain events; plugins subscribe (CLAUDE.md Event Rule).

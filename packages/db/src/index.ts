@@ -11,6 +11,7 @@ export const DB_PACKAGE = "@bunbooru/db" as const;
 export * from "./schema";
 export { createDb } from "./client";
 export type { DB } from "./client";
+export { applyMigrations, type MigrationSet } from "./migrator";
 export {
   createAssetRepository,
   type AssetPage,

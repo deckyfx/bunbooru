@@ -12,6 +12,7 @@
     "@bunbooru/core": "workspace:*",
     "@bunbooru/events": "workspace:*",
     "@bunbooru/search": "workspace:*",
-    "@bunbooru/storage": "workspace:*"
+    "@bunbooru/storage": "workspace:*",
+    "elysia": "^1.4.29"
   }
 }

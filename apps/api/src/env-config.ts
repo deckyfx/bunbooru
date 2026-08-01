@@ -230,6 +230,20 @@ class EnvConfig {
   get TRUST_PROXY(): boolean {
     return Bun.env.TRUST_PROXY?.trim() === "true";
   }
+
+  /**
+   * Which first-party plugins to load, as a comma-separated list of plugin ids
+   * (e.g. `example,shimmie-import`). Empty/unset → no plugins. Only ids present
+   * in the API's plugin registry are loaded; unknown ids are logged and skipped.
+   * This is the central on/off switch: a disabled plugin is never imported, so
+   * its module code never even runs.
+   */
+  get ENABLED_PLUGINS(): string[] {
+    const raw = Bun.env.ENABLED_PLUGINS?.trim();
+    if (!raw) return [];
+    // De-duplicate so a repeated id doesn't load (and migrate) a plugin twice.
+    return [...new Set(raw.split(",").map((id) => id.trim()).filter(Boolean))];
+  }
 }
 
 export const envConfig = EnvConfig.getInstance();
