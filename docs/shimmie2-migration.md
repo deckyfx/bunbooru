@@ -103,13 +103,56 @@ For each source post: obtain the **image bytes** + its **tags/rating/source/date
 > Everywhere else in this doc, "sha256 dedupe" means byte-level dedup only — the
 > ledger is what makes re-runs idempotent.
 
-### Source access — 3 options
-1. **HTTP scrape of the running shimmie (recommended; operator's instinct).** The web is exposed on `:5013`. No JSON API is enabled on this instance (`/post/list.json`, `/graphql`, danbooru_api all 404), BUT the HTML works: `/post/list/<page>` (200), `/post/view/<id>` (200, has tags/rating/source), and **direct file download `/_images/<md5>` (200)**. So: paginate the list, parse each post's metadata from HTML (or enable shimmie's `danbooru_api`/`graphql` ext for clean JSON), download bytes from `/_images/<hash>`. **Most general** (works for any reachable shimmie, no Docker/DB coupling) and avoids the sha256 problem (we have the bytes).
-   - *Optional cleaner variant:* enable `ext/danbooru_api` (or `graphql`) on shimmie → structured JSON of posts (md5, tags, source, rating, file URL) instead of HTML parsing.
+### Source access — chosen: GraphQL + api_key (verified 2026-08-01)
+The operator enabled shimmie's **GraphQL** + **User API** extensions, so the
+importer uses shimmie's GraphQL as the structured source (far more robust than
+HTML scraping). Verified against the live `:5013` instance (shimmie 2.12.2):
+
+- **Endpoint:** `POST /graphql` with `{ "query": "…" }` (JSON). Introspection works.
+- **Auth:** append **`?api_key=<key>`** to the URL — this resolves the acting user
+  (`{ me { name class { name } } }` → `{name: "decky", class: "admin"}`). The
+  `Authorization: Bearer` header does NOT authenticate (returns `Anonymous`). The
+  api_key is a **secret** — supply it at import time (redacted, non-persisted by
+  default per the security section); never commit it.
+  - ⚠️ Because the key rides in the **query string**, it can leak into
+    importer/proxy/source access logs and travels unencrypted over `http`.
+    **Require `https`** whenever an api_key is configured (permit `http` only via
+    an explicit trusted-local deployment exception), and **redact the full
+    request URL** from all logs and error reports.
+- **Fetch a post:** `post(post_id: N)` → `{ hash (md5), ext, width, height,
+  tags[], source, posted ("YYYY-MM-DD HH:MM:SS"), mime, owner { name },
+  image_link, thumb_link }`. Example (post 1): hash `436c5c59…`, ext `jpg`,
+  555×555, 7 tags, owner `decky`.
+- **Enumerate:** there is **no list/search query** on the GraphQL root (only
+  `post`, `user`, `me`, `wiki`). Post ids are **sequential** but not gapless
+  (deletions leave holes). Obtain a **fixed maximum id from `/post/list/1`**
+  (newest-first) — or enumerate all `/post/list` pages — then iterate every
+  `post_id` from 1 through that bound, fetching each; **treat a null result as a
+  deleted id and CONTINUE** (do NOT stop at the first null, or a deletion gap
+  would truncate the rest). **Filter by `owner.name`** client-side to implement
+  "pick user(s)".
+- **⚠️ `rating` is NOT exposed by GraphQL** (`Post` has no rating field). Fill it
+  from the post's HTML `/post/view/<id>` (rating indicator) **or** ask the
+  operator to also enable `danbooru_api` (its `find_posts` includes rating);
+  otherwise default to `unrated` and let the operator set it. `danbooru_api` is
+  currently **404** (not enabled) on this instance.
+- **Download bytes:** shimmie host + `image_link` (e.g.
+  `http://host:5013/_images/<md5>/<name>.jpg`), or the shorter `/_images/<md5>`.
+  Prepend the host — `image_link` is a site-relative path.
+
+**Preflight / graceful degradation (operator requirement):** the importer's
+scan step MUST probe the source before running and give a clear, actionable
+error when an extension is missing — e.g. `POST /graphql {__typename}` 404 →
+"enable the GraphQL extension on shimmie"; `{ me { name } }` returns `Anonymous`
+→ "invalid/expired api_key (or User API ext disabled)". Never fail with a cryptic
+parse error; tell the operator exactly which shimmie extension/key to fix.
+
+### Source access — fallback options
+1. **HTML scrape.** If GraphQL isn't available, `/post/list/<page>` + `/post/view/<id>` + `/_images/<md5>` still work over HTTP (brittle: tied to markup/theme). Kept as a fallback path in the `SourceAdapter`, not the primary.
 2. **Direct DB + files.** Read `shimmie-sql` rows + `data/images` files. Cleanest data, but the DB port is Docker-internal (would need a host port mapping) and files may be root-owned — more coupling/config. Rejected for now (operator: "the db is inside docker stack which will be hard to access").
 3. **shimmie bulk_download export** → a ZIP + JSON manifest, then import the ZIP. Extra manual step; only worth it for offline/portable migration.
 
-**Chosen direction: option 1 (HTTP scrape).** Source config in the admin UI = shimmie base URL (+ optional login cookie/API key for NSFW/private posts) + a query filter to pick user(s).
+**Chosen direction: GraphQL + `api_key`** (fallbacks above only if GraphQL is off). Source config in the admin UI = shimmie base URL + the **api_key** (secret) + a filter to pick source user(s)/all.
 
 ### Security requirements (must-haves for the importer PR)
 Because the importer makes the **server** fetch an admin-configured URL and holds

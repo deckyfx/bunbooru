@@ -17,6 +17,7 @@
     "@bunbooru/core": "workspace:*",
     "@bunbooru/plugin-example": "workspace:*",
     "@bunbooru/plugin-sdk": "workspace:*",
+    "@bunbooru/plugin-thumbnailer": "workspace:*",
     "elysia": "^1.4.29"
   }
 }

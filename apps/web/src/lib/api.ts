@@ -86,6 +86,16 @@ export function assetFileUrl(id: number): string {
 }
 
 /**
+ * URL for an asset's thumbnail, served by the thumbnailer plugin. Returns `404`
+ * when the plugin is disabled or a thumbnail doesn't exist yet — callers pair it
+ * with {@link assetFileUrl} as a fallback (see `AssetImage`). A plain URL builder
+ * (not a data call), so the gallery needn't import the plugin's web module.
+ */
+export function assetThumbUrl(id: number): string {
+  return `/api/v1/plugins/thumbnailer/asset/${id}/thumb`;
+}
+
+/**
  * Unwrap an Eden Treaty response: throw on transport/HTTP error, then narrow out
  * the API's `{ error }` envelope. The global `onError` handler's return type is
  * merged by Elysia into every route's response type, so `data` is typed as

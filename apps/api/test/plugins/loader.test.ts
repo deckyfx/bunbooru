@@ -7,6 +7,7 @@ import type {
   DB,
   SettingsService,
   StatsService,
+  StorageProvider,
   TagService,
 } from "@bunbooru/core";
 import { createCoreEvents } from "@bunbooru/core";
@@ -31,6 +32,9 @@ const core: Core = {
 /** No migrations are declared, so the db handle is never touched. */
 const db = {} as DB;
 
+/** The fake plugins don't use storage, so a dummy provider suffices. */
+const storage = {} as StorageProvider;
+
 /** A well-formed plugin that registers routes + an admin page. */
 function demoPlugin(id = "demo"): BunbooruPlugin {
   return definePlugin({
@@ -54,7 +58,7 @@ function registryOf(id: string, factory: () => Promise<PluginModule>) {
 describe("loadPlugins", () => {
   it("loads an enabled, known plugin with its metadata + routes", async () => {
     const registry = registryOf("demo", async () => ({ plugin: demoPlugin() }));
-    const loaded = await loadPlugins({ core, db, enabledIds: ["demo"], registry });
+    const loaded = await loadPlugins({ core, db, storage, enabledIds: ["demo"], registry });
 
     expect(loaded).toHaveLength(1);
     expect(loaded[0]?.id).toBe("demo");
@@ -65,13 +69,13 @@ describe("loadPlugins", () => {
 
   it("loads nothing when no plugins are enabled", async () => {
     const registry = registryOf("demo", async () => ({ plugin: demoPlugin() }));
-    const loaded = await loadPlugins({ core, db, enabledIds: [], registry });
+    const loaded = await loadPlugins({ core, db, storage, enabledIds: [], registry });
     expect(loaded).toHaveLength(0);
   });
 
   it("skips an enabled id that isn't in the registry", async () => {
     const registry = registryOf("demo", async () => ({ plugin: demoPlugin() }));
-    const loaded = await loadPlugins({ core, db, enabledIds: ["nope"], registry });
+    const loaded = await loadPlugins({ core, db, storage, enabledIds: ["nope"], registry });
     expect(loaded).toHaveLength(0);
   });
 
@@ -79,7 +83,7 @@ describe("loadPlugins", () => {
     // Registered under "demo" but the module's plugin.id is "other" — a mismatch
     // that could silently diverge the route prefix / migrations table.
     const registry = registryOf("demo", async () => ({ plugin: demoPlugin("other") }));
-    const loaded = await loadPlugins({ core, db, enabledIds: ["demo"], registry });
+    const loaded = await loadPlugins({ core, db, storage, enabledIds: ["demo"], registry });
     expect(loaded).toHaveLength(0);
   });
 
@@ -90,7 +94,7 @@ describe("loadPlugins", () => {
       },
       demo: async (): Promise<PluginModule> => ({ plugin: demoPlugin() }),
     };
-    const loaded = await loadPlugins({ core, db, enabledIds: ["broken", "demo"], registry });
+    const loaded = await loadPlugins({ core, db, storage, enabledIds: ["broken", "demo"], registry });
     expect(loaded.map((p) => p.id)).toEqual(["demo"]);
   });
 
@@ -104,7 +108,7 @@ describe("loadPlugins", () => {
       },
     });
     const registry = registryOf("throws", async () => ({ plugin: throwing }));
-    const loaded = await loadPlugins({ core, db, enabledIds: ["throws"], registry });
+    const loaded = await loadPlugins({ core, db, storage, enabledIds: ["throws"], registry });
     expect(loaded).toHaveLength(0);
   });
 
@@ -124,7 +128,7 @@ describe("loadPlugins", () => {
       hostile: async (): Promise<PluginModule> => ({ plugin: hostile }),
       demo: async (): Promise<PluginModule> => ({ plugin: demoPlugin() }),
     };
-    const loaded = await loadPlugins({ core, db, enabledIds: ["hostile", "demo"], registry });
+    const loaded = await loadPlugins({ core, db, storage, enabledIds: ["hostile", "demo"], registry });
     expect(loaded.map((p) => p.id)).toEqual(["demo"]);
   });
 
@@ -146,6 +150,7 @@ describe("loadPlugins", () => {
     const loaded = await loadPlugins({
       core,
       db,
+      storage,
       enabledIds: ["hangs", "demo"],
       registry,
       stepTimeoutMs: 20,

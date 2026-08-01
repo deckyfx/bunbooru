@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 
 import { ExampleSection } from "./example/ExampleSection";
+import { ThumbnailsSection } from "./thumbnailer/ThumbnailsSection";
 
 /**
  * Web admin UI for plugins, keyed by plugin id.
@@ -13,4 +14,5 @@ import { ExampleSection } from "./example/ExampleSection";
  */
 export const PLUGIN_ADMIN_SECTIONS: Record<string, ComponentType> = {
   example: ExampleSection,
+  thumbnailer: ThumbnailsSection,
 };

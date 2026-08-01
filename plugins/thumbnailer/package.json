@@ -1,0 +1,21 @@
+{
+  "name": "@bunbooru/plugin-thumbnailer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@bunbooru/plugin-sdk": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "elysia": "^1.4.29"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.10"
+  }
+}

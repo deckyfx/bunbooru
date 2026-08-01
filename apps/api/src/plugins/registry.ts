@@ -15,4 +15,5 @@ export interface PluginModule {
  */
 export const PLUGIN_REGISTRY: Record<string, () => Promise<PluginModule>> = {
   example: () => import("@bunbooru/plugin-example"),
+  thumbnailer: () => import("@bunbooru/plugin-thumbnailer"),
 };

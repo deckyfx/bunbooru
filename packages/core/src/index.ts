@@ -16,6 +16,9 @@ import { STORAGE_PACKAGE, type StorageProvider } from "@bunbooru/storage";
 export const CORE_PACKAGE = "@bunbooru/core" as const;
 
 export type { StorageProvider };
+// Re-exported so the plugin loader can type a namespaced StorageProvider wrapper
+// (for `ctx.storage`) without importing `@bunbooru/storage` directly.
+export type { StoredObject } from "@bunbooru/storage";
 
 // Domain row types, re-exported so downstream apps depend on Core, not db directly.
 export type { ApiKey, Asset, AssetUpdate, Rating, Tag, TagCategory, User, UserRole } from "@bunbooru/db";
