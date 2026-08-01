@@ -121,6 +121,12 @@ export interface CoreRuntime {
   core: Core;
   /** The shared Drizzle handle — reused for plugin migrations + `ctx.db`. */
   db: DB;
+  /**
+   * The shared asset {@link StorageProvider} — surfaced (through Core, not by
+   * importing `@bunbooru/storage` in `apps/*`) so the plugin loader can give a
+   * plugin a namespaced storage handle (`ctx.storage`) over the same backend.
+   */
+  storage: StorageProvider;
 }
 
 /**
@@ -135,9 +141,10 @@ export interface CoreRuntime {
  */
 export function createCoreRuntime(config: CoreConfig): CoreRuntime {
   const db = createDb(config.databaseUrl);
+  const storage = createFilesystemStorageProvider({ root: config.storageRoot });
   const core = assembleCore(
     db,
-    createFilesystemStorageProvider({ root: config.storageRoot }),
+    storage,
     // Staging lives under the (writable) storage root so resumable chunks land
     // on the same host volume as the final assets.
     createFilesystemStaging({ root: join(config.storageRoot, "uploads-staging") }),
@@ -148,7 +155,7 @@ export function createCoreRuntime(config: CoreConfig): CoreRuntime {
       sessionExpiryMs: config.sessionExpiryMs,
     },
   );
-  return { core, db };
+  return { core, db, storage };
 }
 
 /**

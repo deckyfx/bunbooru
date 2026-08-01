@@ -7,6 +7,7 @@ import type {
   DB,
   SettingsService,
   StatsService,
+  StorageProvider,
   TagService,
 } from "@bunbooru/core";
 import { createCoreEvents } from "@bunbooru/core";
@@ -43,6 +44,7 @@ const anonContext: PluginContext = {
   },
   events: createCoreEvents(),
   db: {} as DB,
+  storage: {} as StorageProvider,
   auth: { currentUser: async () => null },
   log: { info: () => {}, warn: () => {}, error: () => {} },
 };

@@ -116,6 +116,14 @@ export interface PluginContext {
   auth: PluginAuth;
   /** Drizzle handle for the plugin's OWN tables (see the note above). */
   db: DB;
+  /**
+   * A {@link StorageProvider} for the plugin's OWN binary artifacts (e.g. a
+   * thumbnailer's generated images). The host injects a handle **namespaced to
+   * the plugin** (keys are transparently prefixed with `plugins/<id>/`), so a
+   * plugin can't read or clobber Core's `assets/…` objects or another plugin's.
+   * Pass plain keys (e.g. `<sha>.webp`); the namespacing is invisible to the plugin.
+   */
+  storage: StorageProvider;
   /** Namespaced logger. */
   log: PluginLogger;
 }

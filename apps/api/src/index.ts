@@ -12,7 +12,7 @@ import { createApp } from "./server";
  * the enabled plugins over the SAME db handle (running their migrations, then
  * `register`), builds the HTTP app, mounts plugin routes, and serves it.
  */
-const { core, db } = createCoreRuntime({
+const { core, db, storage } = createCoreRuntime({
   databaseUrl: envConfig.DATABASE_URL,
   storageRoot: envConfig.STORAGE_ROOT,
   // Env values are the DEFAULTS; an admin can override the caps at runtime.
@@ -25,7 +25,7 @@ const { core, db } = createCoreRuntime({
 // Load enabled plugins before building the app: their migrations run here, and
 // their manifest metadata feeds `GET /api/v1/plugins`. (Top-level await is safe
 // — the production build does not use bytecode.)
-const loadedPlugins = await loadPlugins({ core, db, enabledIds: envConfig.ENABLED_PLUGINS });
+const loadedPlugins = await loadPlugins({ core, db, storage, enabledIds: envConfig.ENABLED_PLUGINS });
 
 const app = createApp({
   core,

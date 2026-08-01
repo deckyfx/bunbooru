@@ -1,4 +1,4 @@
-import { applyMigrations, type Core, type DB } from "@bunbooru/core";
+import { applyMigrations, type Core, type DB, type StorageProvider } from "@bunbooru/core";
 import type {
   AdminPage,
   BunbooruPlugin,
@@ -9,6 +9,7 @@ import type { AnyElysia } from "elysia";
 
 import { readSessionToken } from "../lib/auth";
 import { logger } from "../lib/logger";
+import { namespacedStorage } from "./namespaced-storage";
 import { PLUGIN_REGISTRY, type PluginModule } from "./registry";
 
 /** A successfully-loaded plugin: its manifest metadata + mounted routes. */
@@ -30,6 +31,8 @@ export interface LoadPluginsOptions {
   core: Core;
   /** Shared DB handle for plugin migrations + `ctx.db`. */
   db: DB;
+  /** Shared asset storage — each plugin gets a `plugins/<id>/`-namespaced view. */
+  storage: StorageProvider;
   /** Plugin ids to load (from `ENABLED_PLUGINS`). */
   enabledIds: string[];
   /** Registry of known plugins (injectable for tests; defaults to the real one). */
@@ -79,7 +82,7 @@ function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs: number): 
 }
 
 /** Assemble the {@link PluginContext} the host injects into a plugin. */
-function buildContext(id: string, core: Core, db: DB): PluginContext {
+function buildContext(id: string, core: Core, db: DB, storage: StorageProvider): PluginContext {
   return {
     services: {
       assets: core.assetService,
@@ -90,6 +93,8 @@ function buildContext(id: string, core: Core, db: DB): PluginContext {
     },
     events: core.events,
     db,
+    // Namespaced to `plugins/<id>/` so a plugin can't touch Core or peer keys.
+    storage: namespacedStorage(storage, `plugins/${id}`),
     auth: {
       // Resolve the caller the same way the core routes do (Bearer or cookie),
       // so a plugin route's auth is consistent with the rest of the API.
@@ -119,6 +124,7 @@ function buildContext(id: string, core: Core, db: DB): PluginContext {
 export async function loadPlugins({
   core,
   db,
+  storage,
   enabledIds,
   registry = PLUGIN_REGISTRY,
   stepTimeoutMs = DEFAULT_PLUGIN_STEP_TIMEOUT_MS,
@@ -169,7 +175,7 @@ export async function loadPlugins({
     let registration: PluginRegistration;
     try {
       registration = await withTimeout(
-        Promise.resolve(plugin.register(buildContext(id, core, db))),
+        Promise.resolve(plugin.register(buildContext(id, core, db, storage))),
         `plugin ${id} register`,
         stepTimeoutMs,
       );

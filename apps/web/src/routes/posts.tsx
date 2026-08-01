@@ -8,7 +8,8 @@ import { HoverPopover } from "../components/popover/hover-popover";
 import { PostHoverCard } from "../components/popover/post-hover-card";
 import { SearchBox } from "../components/popover/search-box";
 import { AssetImage } from "../components/asset-image";
-import { assetFileUrl } from "../lib/api";
+import { assetFileUrl, assetThumbUrl } from "../lib/api";
+import { usePlugins } from "../lib/plugins";
 import { useAssetsPage } from "../lib/assets";
 import { MAX_COLUMNS, MIN_COLUMNS, useGalleryStore } from "../stores/gallery";
 
@@ -45,6 +46,11 @@ export function PostsPage() {
   const { data, isLoading, isError, refetch } = useAssetsPage(page, q);
   const classic = boardMode === "classic";
   const pageCount = data?.pageCount ?? 0;
+  // Use the thumbnailer plugin's thumbnails when it's enabled; otherwise the grid
+  // requests full images. Either way `AssetImage` falls back to the full image if
+  // a thumbnail 404s (not generated yet), and to a placeholder if that also fails.
+  const { data: plugins, isLoading: pluginsLoading } = usePlugins();
+  const hasThumbnailer = plugins?.some((p) => p.id === "thumbnailer") ?? false;
 
   // If the total shrinks (e.g. deletions) so the current page no longer exists,
   // snap back to the last valid page — otherwise we'd render "No posts yet" for
@@ -177,12 +183,20 @@ export function PostsPage() {
                   className="relative block w-full overflow-hidden rounded border-2 border-line hover:border-link"
                   style={{ aspectRatio: classic ? "1 / 1" : `${asset.width} / ${asset.height}` }}
                 >
-                  <AssetImage
-                    src={assetFileUrl(asset.id)}
-                    alt={`Post ${asset.id}`}
-                    loading="lazy"
-                    className="h-full w-full object-cover"
-                  />
+                  {/* Hold off until the plugin manifest resolves: rendering with
+                      the default (thumbnailer off) would fetch full images, and a
+                      later src switch can't cancel those in-flight transfers. */}
+                  {pluginsLoading ? (
+                    <div className="h-full w-full animate-pulse bg-line/40" aria-hidden="true" />
+                  ) : (
+                    <AssetImage
+                      src={hasThumbnailer ? assetThumbUrl(asset.id) : assetFileUrl(asset.id)}
+                      fallbackSrc={hasThumbnailer ? assetFileUrl(asset.id) : undefined}
+                      alt={`Post ${asset.id}`}
+                      loading="lazy"
+                      className="h-full w-full object-cover"
+                    />
+                  )}
                 </Link>
               </HoverPopover>
             ))}
