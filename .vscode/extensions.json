@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "oven.bun-vscode",
+    "bradlc.vscode-tailwindcss",
+    "mikestead.dotenv",
+    "ms-azuretools.vscode-docker"
+  ]
+}

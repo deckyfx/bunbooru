@@ -1,0 +1,20 @@
+{
+  // Single-root workspace for the bunbooru monorepo (apps/*, packages/*, plugins/*).
+  // Opening this file loads the shared config in .vscode/ (settings, tasks, launch,
+  // recommended extensions). "Open Workspace from File…" or double-click to use.
+  "folders": [
+    {
+      "name": "bunbooru",
+      "path": "."
+    }
+  ],
+  "settings": {},
+  "extensions": {
+    "recommendations": [
+      "oven.bun-vscode",
+      "bradlc.vscode-tailwindcss",
+      "mikestead.dotenv",
+      "ms-azuretools.vscode-docker"
+    ]
+  }
+}
