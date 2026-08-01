@@ -45,9 +45,19 @@ export interface LoadPluginsOptions {
   stepTimeoutMs?: number;
 }
 
-/** Short, safe error text for logs. */
+/**
+ * Short, safe error text for logs. `String(error)` itself can throw (e.g. a
+ * null-prototype object, or one whose `toString` throws) — and this runs INSIDE
+ * the loader's catch blocks, so an unguarded throw here would escape
+ * `loadPlugins` and break the failure isolation it exists to provide. Fall back
+ * to a fixed message instead.
+ */
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  try {
+    return error instanceof Error ? error.message : String(error);
+  } catch {
+    return "Unknown error";
+  }
 }
 
 /**

@@ -82,13 +82,19 @@ For each source post: obtain the **image bytes** + its **tags/rating/source/date
 > real unit of idempotency:
 >
 > - Schema: `(sourceInstance, sourcePostId) → { assetId, status:
->   pending|complete|failed, importedAt }`, with a **UNIQUE constraint on
->   `(sourceInstance, sourcePostId)`**.
-> - Before `createFromSource`, do an **atomic insert-or-claim** of the ledger row
->   (`INSERT … ON CONFLICT DO NOTHING` / claim the `pending` row) so two
->   concurrent runs can't both ingest the same source post; only the claimer
->   proceeds, and a retry **finishes** a `pending`/`failed` row rather than
->   creating a duplicate.
+>   pending|complete|failed, ownerToken, leaseExpiresAt, importedAt }`, with a
+>   **UNIQUE constraint on `(sourceInstance, sourcePostId)`**.
+> - Before `createFromSource`, do an **atomic insert-or-claim with exclusive
+>   ownership**: `INSERT … ON CONFLICT DO UPDATE` that only succeeds when the row
+>   is claimable — i.e. `status IN (failed)` OR (`status = pending` AND
+>   `leaseExpiresAt < now()`, a stale/abandoned claim) — stamping a fresh
+>   `ownerToken` + `leaseExpiresAt`. `status = pending` with a live lease means
+>   **another runner owns it → skip**; `complete` → skip. Only the row's current
+>   `ownerToken` holder may then call `createFromSource` and flip it to
+>   `complete`. This prevents two concurrent runs from both ingesting the same
+>   source post, and lets a crashed run's claim be reclaimed after its lease
+>   expires (rather than being stuck `pending` forever). A retry **finishes** a
+>   reclaimed row rather than creating a duplicate.
 > - Define explicit **reapply/merge** behavior when the same *bytes* arrive from
 >   multiple *source posts* (union tags? keep first? operator choice), rather than
 >   silently skipping — sha256 dedup will collapse the asset, but each source post

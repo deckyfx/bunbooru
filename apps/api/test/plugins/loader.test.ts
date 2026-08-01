@@ -108,6 +108,26 @@ describe("loadPlugins", () => {
     expect(loaded).toHaveLength(0);
   });
 
+  it("isolates a plugin that throws a non-stringifiable value", async () => {
+    // A null-prototype value has no toString, so `String(value)` throws. If the
+    // loader's error formatting weren't guarded, that throw would escape the
+    // catch block and abort loadPlugins — taking down healthy plugins too.
+    const hostile = definePlugin({
+      id: "hostile",
+      name: "Hostile",
+      version: "1.0.0",
+      register(): never {
+        throw Object.create(null) as never;
+      },
+    });
+    const registry = {
+      hostile: async (): Promise<PluginModule> => ({ plugin: hostile }),
+      demo: async (): Promise<PluginModule> => ({ plugin: demoPlugin() }),
+    };
+    const loaded = await loadPlugins({ core, db, enabledIds: ["hostile", "demo"], registry });
+    expect(loaded.map((p) => p.id)).toEqual(["demo"]);
+  });
+
   it("times out a hanging register() so it can't stall startup", async () => {
     // register never resolves — without the per-step timeout, loadPlugins (which
     // the composition root awaits before listen) would hang the whole API.
