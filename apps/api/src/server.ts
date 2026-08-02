@@ -401,7 +401,9 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
                 (query.ids ?? "")
                   .split(",")
                   .map((part) => Number(part.trim()))
-                  .filter((n) => Number.isInteger(n) && n > 0),
+                  // isSafeInteger (not isInteger): a value past 2^53 rounds to a
+                  // different id — matches the `idParam` contract on the id routes.
+                  .filter((n) => Number.isSafeInteger(n) && n > 0),
               ),
             ].slice(0, MAX_PER_PAGE);
             const tags = await core.tagService.tagsForAssets(ids);
