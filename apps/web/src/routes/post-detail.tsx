@@ -156,16 +156,21 @@ function AssetInfo({ asset }: { asset: AssetDto }) {
     setEditing(false);
   }, [asset.id, asset.rating, asset.source]);
 
-  // Close + reset the editor if auth drops mid-edit (logout elsewhere, session
-  // expiry), rather than leaving an open form that only fails on save with a 401.
+  // Close the editor + re-sync the fields if auth drops (or the viewer is
+  // anonymous), rather than leaving an open form that only fails on save with a
+  // 401. NOTE: do NOT depend on `update` or call `update.reset()` here — the
+  // react-query mutation result is a NEW object every render, so this effect
+  // would run on every render, and `reset()` fires a query-core notification →
+  // re-render → infinite loop ("Maximum update depth exceeded") for anonymous
+  // viewers. The editor (and any stale error) is hidden while logged out anyway,
+  // and the Edit button resets the mutation state when reopened.
   useEffect(() => {
     if (!isLoggedIn) {
-      update.reset();
       setRating(asset.rating);
       setSource(asset.source ?? "");
       setEditing(false);
     }
-  }, [isLoggedIn, asset.rating, asset.source, update]);
+  }, [isLoggedIn, asset.rating, asset.source]);
 
   async function save() {
     try {
