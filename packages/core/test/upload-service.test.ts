@@ -160,6 +160,7 @@ function fakeAssetService(finalize: AssetService["createFromSource"]): AssetServ
     list: unused as AssetService["list"],
     getById: unused as AssetService["getById"],
     update: unused as AssetService["update"],
+    neighbors: unused as AssetService["neighbors"],
     openFile: unused as AssetService["openFile"],
     gcOrphanedBlobs: unused as AssetService["gcOrphanedBlobs"],
   };

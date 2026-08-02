@@ -105,6 +105,12 @@ export {
   type UploadLimits,
 } from "./services/settings-service";
 
+// Persisted plugin on/off state — the API's plugin host reads/writes this.
+export {
+  createPluginStateService,
+  type PluginStateService,
+} from "./services/plugin-state-service";
+
 // Authorization predicates — enforced on writes (owner-or-admin) + admin routes.
 export { canModerate, canWrite, isOwnerOrAdmin } from "./services/permissions";
 

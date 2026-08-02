@@ -25,6 +25,7 @@ const appCore = {
   statsService: {} as StatsService,
   authService: {} as AuthService,
   settingsService: {} as SettingsService,
+  pluginStateService: {} as Core["pluginStateService"],
   events: createCoreEvents(),
 } satisfies Core;
 

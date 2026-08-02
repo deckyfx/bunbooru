@@ -4,6 +4,7 @@ import {
   createApiKeyRepository,
   createAssetRepository,
   createDb,
+  createPluginStateRepository,
   createSessionRepository,
   createSettingsRepository,
   createStatsRepository,
@@ -22,6 +23,7 @@ import {
 import { createCoreEvents, type CoreEvents } from "./events";
 import { createAssetService, type AssetService } from "./services/asset-service";
 import { createAuthService, type AuthService } from "./services/auth-service";
+import { createPluginStateService, type PluginStateService } from "./services/plugin-state-service";
 import { createSettingsService, type SettingsService } from "./services/settings-service";
 import { createStatsService, type StatsService } from "./services/stats-service";
 import { createTagService, type TagService } from "./services/tag-service";
@@ -44,6 +46,8 @@ export interface Core {
   authService: AuthService;
   /** Admin-editable runtime settings (upload caps) — env defaults + DB overrides. */
   settingsService: SettingsService;
+  /** Persisted plugin on/off state — the source of truth the API's plugin host reads. */
+  pluginStateService: PluginStateService;
   /** Typed pub/sub bus — Core emits domain events (e.g. `asset.created`); plugins subscribe. */
   events: CoreEvents;
 }
@@ -108,7 +112,17 @@ export function assembleCore(
     createApiKeyRepository(db),
     { sessionExpiryMs: limits.sessionExpiryMs },
   );
-  return { assetService, uploadService, tagService, statsService, authService, settingsService, events };
+  const pluginStateService = createPluginStateService(createPluginStateRepository(db));
+  return {
+    assetService,
+    uploadService,
+    tagService,
+    statsService,
+    authService,
+    settingsService,
+    pluginStateService,
+    events,
+  };
 }
 
 /**

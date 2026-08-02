@@ -77,6 +77,11 @@ function fakeRepo(initial: Asset[] = []): AssetRepository {
       Object.assign(row, patch, { updatedAt: new Date(row.updatedAt.getTime() + 1) });
       return row;
     },
+    neighbors: async (id) => {
+      const newer = rows.filter((r) => r.id > id).sort((a, b) => a.id - b.id)[0];
+      const older = rows.filter((r) => r.id < id).sort((a, b) => b.id - a.id)[0];
+      return { newerId: newer?.id ?? null, olderId: older?.id ?? null };
+    },
   };
 }
 

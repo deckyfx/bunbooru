@@ -232,11 +232,11 @@ class EnvConfig {
   }
 
   /**
-   * Which first-party plugins to load, as a comma-separated list of plugin ids
-   * (e.g. `example,shimmie-import`). Empty/unset → no plugins. Only ids present
-   * in the API's plugin registry are loaded; unknown ids are logged and skipped.
-   * This is the central on/off switch: a disabled plugin is never imported, so
-   * its module code never even runs.
+   * First-boot seed for the plugin active set, as a comma-separated list of ids
+   * (e.g. `example,shimmie-import`). ALL registered plugins are loaded + migrated
+   * at startup; this list only decides which start ACTIVE the first time the
+   * `plugin_states` table is empty. After that the admin console owns activation
+   * at runtime and this value is ignored. Empty/unset → nothing active initially.
    */
   get ENABLED_PLUGINS(): string[] {
     const raw = Bun.env.ENABLED_PLUGINS?.trim();

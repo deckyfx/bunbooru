@@ -1,4 +1,4 @@
-import { desc, eq, inArray, type SQL } from "drizzle-orm";
+import { asc, desc, eq, gt, inArray, lt, type SQL } from "drizzle-orm";
 
 import { assets, type Asset, type NewAsset } from "../schema";
 import type { DB } from "../client";
@@ -39,6 +39,12 @@ export interface AssetRepository {
   create(input: NewAsset): Promise<Asset>;
   /** Patch a row's mutable metadata, returning the updated row or null if absent. */
   update(id: number, patch: AssetUpdate): Promise<Asset | null>;
+  /**
+   * Neighbours of an asset in the newest-first (id desc) browse order:
+   * `newerId` is the next-higher id (the post shown just before this one),
+   * `olderId` the next-lower id. Either is null at the ends. Unfiltered (all posts).
+   */
+  neighbors(id: number): Promise<{ newerId: number | null; olderId: number | null }>;
 }
 
 /** Mutable-after-create asset fields (immutable: dimensions, hashes, storage key). */
@@ -103,6 +109,23 @@ export function createAssetRepository(db: DB): AssetRepository {
         .where(eq(assets.id, id))
         .returning();
       return row ?? null;
+    },
+
+    async neighbors(id) {
+      // Two keyset lookups against the id index — cheap and gap-tolerant.
+      const [newer] = await db
+        .select({ id: assets.id })
+        .from(assets)
+        .where(gt(assets.id, id))
+        .orderBy(asc(assets.id))
+        .limit(1);
+      const [older] = await db
+        .select({ id: assets.id })
+        .from(assets)
+        .where(lt(assets.id, id))
+        .orderBy(desc(assets.id))
+        .limit(1);
+      return { newerId: newer?.id ?? null, olderId: older?.id ?? null };
     },
   };
 }

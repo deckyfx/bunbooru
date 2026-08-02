@@ -4,6 +4,7 @@ import type {
   BunbooruPlugin,
   PluginContext,
   PluginRegistration,
+  SdkCapability,
 } from "@bunbooru/plugin-sdk";
 import type { AnyElysia } from "elysia";
 
@@ -17,6 +18,10 @@ export interface LoadedPlugin {
   id: string;
   name: string;
   version: string;
+  /** One-line summary for the admin management UI (null if the plugin omits it). */
+  description: string | null;
+  /** SDK capabilities the plugin declares (badges in the management UI). */
+  capabilities: SdkCapability[];
   adminPages: AdminPage[];
   /** The plugin's Elysia app (prefixed by `pluginRoutePrefix`), if it has routes. */
   routes?: AnyElysia;
@@ -188,6 +193,8 @@ export async function loadPlugins({
       id: plugin.id,
       name: plugin.name,
       version: plugin.version,
+      description: plugin.description ?? null,
+      capabilities: [...(plugin.capabilities ?? [])],
       adminPages: registration.adminPages ?? [],
       routes: registration.routes,
     });

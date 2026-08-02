@@ -33,7 +33,7 @@ import type {
  * mounts the returned {@link PluginRegistration.routes} under
  * `/api/v1/plugins/<id>`.
  */
-export const PLUGIN_SDK_VERSION = "0.2.0" as const;
+export const PLUGIN_SDK_VERSION = "0.3.0" as const;
 
 /** Storage contract re-exported for plugins that register storage providers. */
 export type { StorageProvider };
@@ -181,6 +181,17 @@ export interface BunbooruPlugin {
   name: string;
   /** Plugin version (independent of the SDK version). */
   version: string;
+  /**
+   * One-line summary shown on the admin "Extensions" management cards. Read
+   * statically (no `register`), so it's available for inactive plugins too.
+   */
+  description?: string;
+  /**
+   * The SDK capabilities this plugin uses (e.g. `["routes", "admin-pages"]`) —
+   * surfaced as badges in the management UI. Purely descriptive; the host does
+   * not gate on it.
+   */
+  capabilities?: readonly SdkCapability[];
   /** Optional plugin-owned tables + migration tracking. */
   migrations?: PluginMigrations;
   /** Wire routes/pages over the injected context. May be async. */

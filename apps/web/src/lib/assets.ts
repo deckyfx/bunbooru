@@ -45,6 +45,19 @@ export function useAsset(id: number) {
   });
 }
 
+/**
+ * The neighbouring post ids in the newest-first browse order — `newerId` (the
+ * post shown just before this one) and `olderId` (just after). Null at the ends.
+ * Drives the detail page's prev/next navigation.
+ */
+export function usePostNeighbors(id: number) {
+  return useQuery({
+    queryKey: ["asset-neighbors", id],
+    enabled: Number.isInteger(id) && id > 0,
+    queryFn: async () => unwrap(await api.api.v1.assets({ id: String(id) }).neighbors.get()),
+  });
+}
+
 /** Mutable asset metadata a client may patch (rating/source). */
 export type AssetPatch = { rating?: AssetDto["rating"]; source?: string | null };
 

@@ -38,6 +38,8 @@ export interface TagService {
   setCategory(name: string, category: TagCategory): Promise<Tag | null>;
   /** Tags that co-occur with `name`, most-shared first; `limit` clamped. */
   relatedTags(name: string, limit?: number): Promise<Tag[]>;
+  /** The distinct tags across the given assets (a page), for the sidebar. */
+  tagsForAssets(assetIds: number[]): Promise<Tag[]>;
 }
 
 /** Build a {@link TagService} over a {@link TagRepository}. */
@@ -83,6 +85,12 @@ export function createTagService(tags: TagRepository): TagService {
       const requested = Number.isFinite(limit) ? Math.floor(limit) : DEFAULT_TAG_LIMIT;
       const clamped = Math.min(Math.max(1, requested), MAX_TAG_LIMIT);
       return tags.relatedTags(normalized, clamped);
+    },
+
+    tagsForAssets(assetIds) {
+      // De-duplicate + drop invalid ids before hitting the repository.
+      const ids = [...new Set(assetIds.filter((id) => Number.isInteger(id) && id > 0))];
+      return ids.length > 0 ? tags.tagsForAssets(ids) : Promise.resolve([]);
     },
   };
 }

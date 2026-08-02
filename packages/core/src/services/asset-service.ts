@@ -123,6 +123,12 @@ export interface AssetService {
   /** Open an asset's stored bytes for streaming, or null if the asset is absent. */
   openFile(id: number): Promise<AssetFile | null>;
   /**
+   * The neighbouring post ids in the newest-first browse order — `newerId` (shown
+   * just before this post) and `olderId` (just after). Null at the ends. Powers
+   * the detail page's prev/next navigation.
+   */
+  neighbors(id: number): Promise<{ newerId: number | null; olderId: number | null }>;
+  /**
    * Reclaim orphaned asset blobs — stored objects no asset row references, left
    * by a rare non-race insert failure after the blob was written (content keys
    * are deduped, so they're benign but waste space). Only objects last modified
@@ -317,6 +323,10 @@ export function createAssetService(
 
     update(id, patch) {
       return repository.update(id, patch);
+    },
+
+    neighbors(id) {
+      return repository.neighbors(id);
     },
 
     async openFile(id) {

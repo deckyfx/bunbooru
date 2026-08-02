@@ -43,6 +43,10 @@ export {
   type SettingsRepository,
 } from "./repositories/settings-repository";
 export {
+  createPluginStateRepository,
+  type PluginStateRepository,
+} from "./repositories/plugin-state-repository";
+export {
   createApiKeyRepository,
   type ApiKeyRepository,
 } from "./repositories/api-key-repository";

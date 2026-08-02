@@ -43,13 +43,18 @@ export function PostTagPanel({ assetId }: { assetId: number }) {
   }, [assetId]);
   // If auth drops mid-edit (logout in another tab, session expiry), close the
   // editor and discard the draft instead of leaving a form that only 401s on save.
+  // NOTE: do NOT depend on `setTags` or call `setTags.reset()` here — the
+  // react-query mutation result is a NEW object every render, so this effect
+  // would run every render, and `reset()` fires a query-core notification →
+  // re-render → infinite loop ("Maximum update depth exceeded") for anonymous
+  // viewers. The editor (and any stale error) is hidden while logged out anyway,
+  // and the Edit button resets the mutation state when reopened.
   useEffect(() => {
     if (!isLoggedIn) {
-      setTags.reset();
       setText((tags ?? []).map((t) => t.name).join(" "));
       setEditing(false);
     }
-  }, [isLoggedIn, tags, setTags]);
+  }, [isLoggedIn, tags]);
 
   const grouped = useMemo(() => {
     const map = new Map<TagDto["category"], TagDto[]>();
