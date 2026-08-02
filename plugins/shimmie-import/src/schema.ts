@@ -1,4 +1,4 @@
-import { integer, pgEnum, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { index, integer, pgEnum, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
 
 /** The lifecycle of an import run — constrained at the DB level (no stray values). */
 export const importRunStatus = pgEnum("shimmie_import_run_status", ["running", "done", "canceled"]);
@@ -54,5 +54,9 @@ export const importItems = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [unique().on(table.sourceInstance, table.sourcePostId)],
+  (table) => [
+    unique().on(table.sourceInstance, table.sourcePostId),
+    // retry-failed selects WHERE run_id = ? AND status = 'failed'; index it.
+    index("shimmie_import_items_run_status_idx").on(table.runId, table.status),
+  ],
 );

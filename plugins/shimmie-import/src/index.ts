@@ -110,20 +110,25 @@ export function buildImportRoutes(ctx: PluginContext) {
         }
       },
       {
-        body: t.Object({
-          baseUrl: t.String({ minLength: 1, maxLength: 2048 }),
-          apiKey: t.String({ minLength: 1, maxLength: 500 }),
-          // `*` = all users, else an explicit list of shimmie usernames.
-          users: t.Union([
-            t.Literal("*"),
-            // At least one username (an empty list would match nobody and import zero).
-            t.Array(t.String({ maxLength: 100 }), { minItems: 1, maxItems: 100 }),
-          ]),
-          // Target bunbooru username to attribute posts to; defaults to the admin.
-          targetUsername: t.Optional(t.String({ maxLength: 100 })),
-          // IANA timezone of the source's naive timestamps (default UTC).
-          sourceTimezone: t.Optional(t.String({ maxLength: 64 })),
-        }),
+        body: t.Object(
+          {
+            baseUrl: t.String({ minLength: 1, maxLength: 2048 }),
+            apiKey: t.String({ minLength: 1, maxLength: 500 }),
+            // `*` = all users, else an explicit list of shimmie usernames.
+            users: t.Union([
+              t.Literal("*"),
+              // At least one username (an empty list would match nobody and import zero).
+              t.Array(t.String({ maxLength: 100 }), { minItems: 1, maxItems: 100 }),
+            ]),
+            // Target bunbooru username to attribute posts to; defaults to the admin.
+            targetUsername: t.Optional(t.String({ maxLength: 100 })),
+            // IANA timezone of the source's naive timestamps (default UTC).
+            sourceTimezone: t.Optional(t.String({ maxLength: 64 })),
+          },
+          // Reject unknown fields (e.g. a stale `targetUserId` from an old client)
+          // rather than silently ignoring them and defaulting the target to the admin.
+          { additionalProperties: false },
+        ),
       },
     )
     // Process one bounded batch of a run. The client loops this until `done`.

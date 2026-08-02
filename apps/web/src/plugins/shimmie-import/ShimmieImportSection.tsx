@@ -49,6 +49,9 @@ export function ShimmieImportSection() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const cancelRef = useRef(false);
+  // The run the progress panel currently describes — read via ref so `onRetry`'s
+  // async loop can't act on a stale closure when deciding whether to update it.
+  const activeRunIdRef = useRef<number | null>(null);
 
   const queryClient = useQueryClient();
   const runsQuery = useQuery({
@@ -117,6 +120,7 @@ export function ShimmieImportSection() {
       }
       const activeRunId = started.runId;
       setRunId(activeRunId);
+      activeRunIdRef.current = activeRunId;
       for (;;) {
         if (cancelRef.current) {
           await importApi.runs({ id: activeRunId }).cancel.post();
@@ -169,9 +173,13 @@ export function ShimmieImportSection() {
           setError(res.error);
           break;
         }
-        setProgress((prev) =>
-          prev ? { ...prev, imported: prev.imported + res.recovered, failed: res.remainingFailed } : prev,
-        );
+        // Only touch the progress panel when retrying the run it describes — a
+        // history-row retry of a different run must not overwrite it.
+        if (targetRunId === activeRunIdRef.current) {
+          setProgress((prev) =>
+            prev ? { ...prev, imported: prev.imported + res.recovered, failed: res.remainingFailed } : prev,
+          );
+        }
         // Stop when nothing's left OR this batch made no progress — otherwise a
         // set of permanently-failing posts (re-selected each call) would loop forever.
         if (res.remainingFailed === 0 || res.recovered === 0) {
@@ -368,10 +376,20 @@ export function ShimmieImportSection() {
                 </span>
                 <span className="flex shrink-0 items-center gap-2 text-muted">
                   <span>
-                    {run.status} · {run.imported}✓
-                    {run.failed > 0 ? ` · ${run.failed}✗` : ""} · {run.cursor}/{run.maxId}
+                    {run.status} · {run.imported}
+                    <span aria-hidden="true">✓</span>
+                    <span className="sr-only"> imported</span>
+                    {run.failed > 0 ? (
+                      <>
+                        {" · "}
+                        {run.failed}
+                        <span aria-hidden="true">✗</span>
+                        <span className="sr-only"> failed</span>
+                      </>
+                    ) : null}{" "}
+                    · {run.cursor}/{run.maxId}
                   </span>
-                  {run.failed > 0 ? (
+                  {run.failed > 0 && run.status !== "canceled" ? (
                     <button
                       type="button"
                       onClick={() => void onRetry(run.id)}

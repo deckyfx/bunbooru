@@ -82,6 +82,11 @@ async function ingestPost(
   runId: number,
   targetUserId: number,
 ): Promise<"complete" | "failed"> {
+  // Track the asset once created so a LATER failure (e.g. setAssetTags) is logged
+  // WITH the asset id — the created asset isn't lost even though the ledger's
+  // `failed` row can't carry an assetId. A retry re-runs (sha256 dedupe returns
+  // the same asset) and re-applies the tags, recovering it.
+  let createdAssetId: number | undefined;
   try {
     const bytes = await adapter.fetchBytes(post);
     const { asset } = await ctx.services.assets.create({
@@ -91,6 +96,7 @@ async function ingestPost(
       uploaderId: targetUserId,
       createdAt: post.postedAt,
     });
+    createdAssetId = asset.id;
     if (post.tags.length > 0) await ctx.services.tags.setAssetTags(asset.id, post.tags);
     await upsertItem(ctx, adapter.sourceInstance, post.sourcePostId, runId, {
       assetId: asset.id,
@@ -104,7 +110,11 @@ async function ingestPost(
       status: "failed",
       error: errorMessage(error),
     });
-    ctx.log.warn("import_post_failed", { sourcePostId: post.sourcePostId, error: errorMessage(error) });
+    ctx.log.warn("import_post_failed", {
+      sourcePostId: post.sourcePostId,
+      createdAssetId,
+      error: errorMessage(error),
+    });
     return "failed";
   }
 }
@@ -273,7 +283,7 @@ export interface RetryResult {
   recovered: number;
   /** Still failing after the retry. */
   stillFailed: number;
-  /** Failed items remaining for the source after this call. */
+  /** Failed items remaining for THIS run after this call. */
   remainingFailed: number;
 }
 
@@ -303,6 +313,8 @@ export async function retryFailed(
   const runRows = await ctx.db.select().from(importRuns).where(eq(importRuns.id, runId)).limit(1);
   const run = runRows[0];
   if (!run) throw new Error("Import run not found");
+  // A canceled run is terminal — don't resurrect it by retrying/updating counters.
+  if (run.status === "canceled") throw new Error("Cannot retry a canceled import run");
 
   const failedRows = await ctx.db
     .select({ sourcePostId: importItems.sourcePostId })
@@ -313,6 +325,7 @@ export async function retryFailed(
 
   let recovered = 0;
   let stillFailed = 0;
+  let deleted = 0;
 
   for (const { sourcePostId } of failedRows) {
     let post;
@@ -334,24 +347,26 @@ export async function retryFailed(
         .where(
           and(eq(importItems.sourceInstance, adapter.sourceInstance), eq(importItems.sourcePostId, sourcePostId)),
         );
+      deleted += 1;
       continue;
     }
     if ((await ingestPost(ctx, adapter, post, runId, run.targetUserId)) === "complete") recovered += 1;
     else stillFailed += 1;
   }
 
-  // Recovered failures become imports in the run's running totals. Relative SQL
-  // increments (not absolute values from the stale snapshot) so a concurrent
-  // step's counter write isn't clobbered.
-  if (recovered > 0) {
+  // A recovered failure becomes an import; a deleted stale failure just disappears.
+  // Both reduce the run's `failed` count. Relative SQL increments (not absolute
+  // values from the stale snapshot) so a concurrent step's write isn't clobbered,
+  // and the status guard keeps a concurrently-canceled run terminal.
+  if (recovered > 0 || deleted > 0) {
     await ctx.db
       .update(importRuns)
       .set({
         imported: sql`${importRuns.imported} + ${recovered}`,
-        failed: sql`greatest(${importRuns.failed} - ${recovered}, 0)`,
+        failed: sql`greatest(${importRuns.failed} - ${recovered + deleted}, 0)`,
         updatedAt: new Date(),
       })
-      .where(eq(importRuns.id, runId));
+      .where(and(eq(importRuns.id, runId), ne(importRuns.status, "canceled")));
   }
 
   return {
