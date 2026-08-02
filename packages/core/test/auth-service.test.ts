@@ -164,6 +164,24 @@ describe("createAuthService.register", () => {
   });
 });
 
+describe("createAuthService.findByUsername", () => {
+  it("resolves a user case-insensitively, without the password hash", async () => {
+    const { service } = makeService();
+    const { user } = await service.register({ username: "Alice", password: "supersecret" });
+
+    const found = await service.findByUsername("ALICE");
+    expect(found?.id).toBe(user.id);
+    expect(found?.username).toBe("alice");
+    // PublicUser projection — the hash must never be exposed.
+    expect(found !== null && "passwordHash" in found).toBe(false);
+  });
+
+  it("returns null for an unknown user", async () => {
+    const { service } = makeService();
+    expect(await service.findByUsername("nobody")).toBeNull();
+  });
+});
+
 describe("createAuthService.login", () => {
   it("rejects an unknown user and a wrong password, accepts correct (case-insensitive) creds", async () => {
     const { service } = makeService();

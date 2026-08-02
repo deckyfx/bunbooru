@@ -8,6 +8,20 @@
       "when": 1785626693919,
       "tag": "0000_lying_tomas",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785634085457,
+      "tag": "0001_whole_shotgun",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785636312922,
+      "tag": "0002_next_steel_serpent",
+      "breakpoints": true
     }
   ]
 }

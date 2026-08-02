@@ -1,0 +1,1 @@
+CREATE INDEX "shimmie_import_items_run_status_idx" ON "shimmie_import_items" USING btree ("run_id","status");

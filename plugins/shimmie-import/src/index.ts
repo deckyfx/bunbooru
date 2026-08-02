@@ -13,7 +13,7 @@ import {
   type User,
 } from "@bunbooru/plugin-sdk";
 
-import { stepRun } from "./import";
+import { retryFailed, stepRun } from "./import";
 import { importRuns } from "./schema";
 import { ShimmieAdapter } from "./shimmie-adapter";
 
@@ -86,7 +86,18 @@ export function buildImportRoutes(ctx: PluginContext) {
           const adapter = makeAdapter(body.baseUrl, body.apiKey, timezone);
           const { maxId } = await adapter.preflight();
           const userFilter = body.users === "*" ? "*" : body.users.join(",");
-          const targetUserId = body.targetUserId ?? admin.id;
+          // Resolve the target bunbooru user by username (default: the admin
+          // running the import). Validate up front so a typo fails here, not on
+          // every post with an invalid uploaderId FK during stepping.
+          let targetUserId = admin.id;
+          const targetUsername = body.targetUsername?.trim();
+          if (targetUsername) {
+            const target = await ctx.services.auth.findByUsername(targetUsername);
+            if (!target) {
+              return { ok: false as const, error: `No bunbooru user named "${targetUsername}"` };
+            }
+            targetUserId = target.id;
+          }
           const inserted = await ctx.db
             .insert(importRuns)
             .values({ sourceInstance: adapter.sourceInstance, userFilter, sourceTimezone: timezone, targetUserId, maxId })
@@ -99,20 +110,25 @@ export function buildImportRoutes(ctx: PluginContext) {
         }
       },
       {
-        body: t.Object({
-          baseUrl: t.String({ minLength: 1, maxLength: 2048 }),
-          apiKey: t.String({ minLength: 1, maxLength: 500 }),
-          // `*` = all users, else an explicit list of shimmie usernames.
-          users: t.Union([
-            t.Literal("*"),
-            // At least one username (an empty list would match nobody and import zero).
-            t.Array(t.String({ maxLength: 100 }), { minItems: 1, maxItems: 100 }),
-          ]),
-          // Target bunbooru user id to attribute posts to; defaults to the admin.
-          targetUserId: t.Optional(t.Integer({ minimum: 1 })),
-          // IANA timezone of the source's naive timestamps (default UTC).
-          sourceTimezone: t.Optional(t.String({ maxLength: 64 })),
-        }),
+        body: t.Object(
+          {
+            baseUrl: t.String({ minLength: 1, maxLength: 2048 }),
+            apiKey: t.String({ minLength: 1, maxLength: 500 }),
+            // `*` = all users, else an explicit list of shimmie usernames.
+            users: t.Union([
+              t.Literal("*"),
+              // At least one username (an empty list would match nobody and import zero).
+              t.Array(t.String({ maxLength: 100 }), { minItems: 1, maxItems: 100 }),
+            ]),
+            // Target bunbooru username to attribute posts to; defaults to the admin.
+            targetUsername: t.Optional(t.String({ maxLength: 100 })),
+            // IANA timezone of the source's naive timestamps (default UTC).
+            sourceTimezone: t.Optional(t.String({ maxLength: 64 })),
+          },
+          // Reject unknown fields (e.g. a stale `targetUserId` from an old client)
+          // rather than silently ignoring them and defaulting the target to the admin.
+          { additionalProperties: false },
+        ),
       },
     )
     // Process one bounded batch of a run. The client loops this until `done`.
@@ -133,6 +149,35 @@ export function buildImportRoutes(ctx: PluginContext) {
           if (!run) return { ok: false as const, error: "Import run not found" };
           const adapter = makeAdapter(run.sourceInstance, body.apiKey, run.sourceTimezone);
           const result = await stepRun(ctx, adapter, params.id);
+          return { ok: true as const, ...result };
+        } catch (error) {
+          return { ok: false as const, error: errorMessage(error) };
+        }
+      },
+      {
+        params: t.Object({ id: t.Numeric({ minimum: 1, multipleOf: 1 }) }),
+        body: t.Object({ apiKey: t.String({ minLength: 1, maxLength: 500 }) }),
+      },
+    )
+    // Re-attempt a batch of this source's previously-failed posts. The client
+    // loops until `remainingFailed` is 0.
+    .post(
+      "/runs/:id/retry-failed",
+      async ({ params, body, request }) => {
+        await requireAdmin(ctx, request);
+        try {
+          const runRows = await ctx.db
+            .select({
+              sourceInstance: importRuns.sourceInstance,
+              sourceTimezone: importRuns.sourceTimezone,
+            })
+            .from(importRuns)
+            .where(eq(importRuns.id, params.id))
+            .limit(1);
+          const run = runRows[0];
+          if (!run) return { ok: false as const, error: "Import run not found" };
+          const adapter = makeAdapter(run.sourceInstance, body.apiKey, run.sourceTimezone);
+          const result = await retryFailed(ctx, adapter, params.id);
           return { ok: true as const, ...result };
         } catch (error) {
           return { ok: false as const, error: errorMessage(error) };

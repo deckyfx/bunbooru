@@ -145,6 +145,7 @@ function stubCore(
       createApiKey: async () => ({ key: "bnb_secret", record: sampleApiKey }),
       listApiKeys: async () => [sampleApiKey],
       revokeApiKey: async () => true,
+      findByUsername: async () => null,
       ...authOverrides,
     },
     settingsService: {

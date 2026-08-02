@@ -74,6 +74,12 @@ export interface AuthService {
   listApiKeys(userId: number): Promise<ApiKeySummary[]>;
   /** Revoke one of the user's API keys; true if a key was removed. */
   revokeApiKey(userId: number, id: number): Promise<boolean>;
+  /**
+   * Look up a user by username (case-insensitive), or null. Returns the
+   * public projection (never the password hash) — used e.g. by the importer to
+   * resolve/validate a target user before attributing imported posts to them.
+   */
+  findByUsername(username: string): Promise<PublicUser | null>;
 }
 
 /** Configuration for {@link createAuthService}. */
@@ -221,6 +227,14 @@ export function createAuthService(
 
     revokeApiKey(userId, id) {
       return apiKeys.deleteByIdForUser(id, userId);
+    },
+
+    async findByUsername(username) {
+      const user = await users.findByUsername(normalizeUsername(username));
+      if (!user) return null;
+      // Strip the password hash — callers only ever need the public projection.
+      const { passwordHash: _passwordHash, ...publicUser } = user;
+      return publicUser;
     },
   };
 }
