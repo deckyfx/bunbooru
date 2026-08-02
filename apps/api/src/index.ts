@@ -2,7 +2,9 @@ import { createCoreRuntime } from "@bunbooru/core";
 
 import { envConfig, MAX_REQUEST_BODY_BYTES } from "./env-config";
 import { logger } from "./lib/logger";
+import { createPluginHost } from "./plugins/host";
 import { loadPlugins } from "./plugins/loader";
+import { PLUGIN_REGISTRY } from "./plugins/registry";
 import { createApp } from "./server";
 
 /**
@@ -22,24 +24,31 @@ const { core, db, storage } = createCoreRuntime({
   sessionExpiryMs: envConfig.SESSION_EXPIRY_MS,
 });
 
-// Load enabled plugins before building the app: their migrations run here, and
-// their manifest metadata feeds `GET /api/v1/plugins`. (Top-level await is safe
-// — the production build does not use bytecode.)
-const loadedPlugins = await loadPlugins({ core, db, storage, enabledIds: envConfig.ENABLED_PLUGINS });
-
-const app = createApp({
+// Load ALL known plugins before building the app: their migrations run here and
+// their routes get mounted, so runtime activation is a pure in-memory/DB flip (no
+// route surgery) and routes still inherit the root app's auth/error handling. The
+// plugin host gates inactive plugins; `ENABLED_PLUGINS` only seeds the active set
+// on first boot. (Top-level await is safe — the production build has no bytecode.)
+const loadedPlugins = await loadPlugins({
   core,
-  plugins: loadedPlugins.map((p) => ({
-    id: p.id,
-    name: p.name,
-    version: p.version,
-    adminPages: p.adminPages,
-  })),
+  db,
+  storage,
+  enabledIds: Object.keys(PLUGIN_REGISTRY),
 });
+
+const pluginHost = createPluginHost({
+  pluginState: core.pluginStateService,
+  loaded: loadedPlugins,
+  seedActiveIds: envConfig.ENABLED_PLUGINS,
+});
+await pluginHost.init();
+
+const app = createApp({ core, host: pluginHost });
 
 // Mount each plugin's routes under its `/api/v1/plugins/<id>` prefix. Done here
 // (not inside `createApp`) so the exported `App` type stays Core-only — plugin
-// routes are consumed via each plugin's own exported app type on the web.
+// routes are consumed via each plugin's own exported app type on the web. The
+// host's `onRequest` gate 404s routes of inactive plugins.
 for (const p of loadedPlugins) {
   if (p.routes) app.use(p.routes);
 }
@@ -126,3 +135,4 @@ process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 
 export type { ApiKeyDto, App, AssetDto, TagDto, UploadLimitsDto, UserDto } from "./server";
+export type { ExtensionInfo as ExtensionDto } from "./plugins/host";

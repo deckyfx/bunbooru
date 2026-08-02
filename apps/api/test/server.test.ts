@@ -108,6 +108,7 @@ function stubCore(
       createFromSource: async () => ({ asset: sampleAsset, deduped: false }),
       update: async () => null,
       openFile: async () => null,
+      neighbors: async () => ({ newerId: null, olderId: null }),
       gcOrphanedBlobs: async () => 0,
       ...overrides,
     },
@@ -125,6 +126,7 @@ function stubCore(
       autocomplete: async () => [sampleTag],
       setCategory: async () => sampleTag,
       relatedTags: async () => [sampleTag],
+      tagsForAssets: async () => [sampleTag],
       ...tagOverrides,
     },
     statsService: {
@@ -158,6 +160,11 @@ function stubCore(
         maxResumableUploadBytes: patch.maxResumableUploadBytes ?? MAX_UPLOAD_BYTES,
       }),
       ...settingsOverrides,
+    },
+    pluginStateService: {
+      activeIds: async () => new Set<string>(),
+      setActive: async () => {},
+      seedIfEmpty: async () => false,
     },
     events: createCoreEvents(),
   };

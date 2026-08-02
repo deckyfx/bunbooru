@@ -41,6 +41,12 @@ export interface TagRepository {
    * unknown or shares no assets. `limit` bounds the result.
    */
   relatedTags(name: string, limit: number): Promise<Tag[]>;
+  /**
+   * The distinct tags appearing across the given assets (e.g. a gallery page),
+   * ordered by category then popularity (`postCount` desc) then name. Empty for
+   * an empty id list. Powers the "tags on this page" sidebar.
+   */
+  tagsForAssets(assetIds: number[]): Promise<Tag[]>;
 }
 
 /** Escape LIKE metacharacters so a user prefix is matched literally. */
@@ -82,6 +88,24 @@ export function createTagRepository(db: DB): TagRepository {
         .innerJoin(tags, eq(assetTags.tagId, tags.id))
         .where(eq(assetTags.assetId, assetId))
         .orderBy(asc(tags.category), asc(tags.name));
+    },
+
+    async tagsForAssets(assetIds) {
+      if (assetIds.length === 0) return [];
+      // DISTINCT across the join (a tag on several of the page's assets appears
+      // once), ordered category → popularity → name for a stable booru sidebar.
+      return db
+        .selectDistinct({
+          id: tags.id,
+          name: tags.name,
+          category: tags.category,
+          postCount: tags.postCount,
+          createdAt: tags.createdAt,
+        })
+        .from(assetTags)
+        .innerJoin(tags, eq(assetTags.tagId, tags.id))
+        .where(inArray(assetTags.assetId, assetIds))
+        .orderBy(asc(tags.category), desc(tags.postCount), asc(tags.name));
     },
 
     async setAssetTags(assetId, tagIds) {

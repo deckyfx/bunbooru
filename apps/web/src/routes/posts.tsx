@@ -8,9 +8,11 @@ import { HoverPopover } from "../components/popover/hover-popover";
 import { PostHoverCard } from "../components/popover/post-hover-card";
 import { SearchBox } from "../components/popover/search-box";
 import { AssetImage } from "../components/asset-image";
+import { TagListPanel } from "../components/tags/tag-list-panel";
 import { assetFileUrl, assetThumbUrl } from "../lib/api";
 import { usePlugins } from "../lib/plugins";
 import { useAssetsPage } from "../lib/assets";
+import { usePageTags } from "../lib/tags";
 import { MAX_COLUMNS, MIN_COLUMNS, useGalleryStore } from "../stores/gallery";
 
 const COLUMN_CHOICES = Array.from(
@@ -46,6 +48,8 @@ export function PostsPage() {
   const { data, isLoading, isError, refetch } = useAssetsPage(page, q);
   const classic = boardMode === "classic";
   const pageCount = data?.pageCount ?? 0;
+  // Tags appearing across the current page's posts (booru-style sidebar).
+  const pageTags = usePageTags(data?.assets.map((asset) => asset.id) ?? []);
   // Use the thumbnailer plugin's thumbnails when it's enabled; otherwise the grid
   // requests full images. Either way `AssetImage` falls back to the full image if
   // a thumbnail 404s (not generated yet), and to a placeholder if that also fails.
@@ -81,6 +85,14 @@ export function PostsPage() {
             <p className="text-[12px] text-muted">Showing all posts.</p>
           )}
         </section>
+
+        <TagListPanel
+          title="Tags"
+          tags={pageTags.data}
+          isLoading={pageTags.isLoading}
+          isError={pageTags.isError}
+          emptyLabel="No tags on this page."
+        />
       </aside>
 
       <section className="min-w-0 flex-1">

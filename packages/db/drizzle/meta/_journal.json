@@ -71,6 +71,13 @@
       "when": 1782898471419,
       "tag": "0009_settings_and_api_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785641626822,
+      "tag": "0010_plugin_states",
+      "breakpoints": true
     }
   ]
 }

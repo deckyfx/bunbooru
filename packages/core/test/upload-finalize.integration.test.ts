@@ -52,6 +52,7 @@ function memoryRepo(): AssetRepository {
       return row;
     },
     update: async () => null,
+    neighbors: async () => ({ newerId: null, olderId: null }),
   };
 }
 

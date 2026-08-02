@@ -62,8 +62,10 @@ Plugins may import **only** `plugin-sdk`. Reaching into `core` or `db`
 directly is forbidden — `plugin-sdk` is the single integration surface that
 keeps features cleanly removable and Core unaware of them.
 
-Plugins are optional first-party feature modules (in-repo, toggled on/off via
-config), not separately distributed packages.
+Plugins are optional first-party feature modules (in-repo), not separately
+distributed packages. They are activated/deactivated at runtime from the admin
+console (state persisted in `plugin_states`); `ENABLED_PLUGINS` only seeds the
+active set on first boot.
 
 Forbidden directions:
 

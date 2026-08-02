@@ -265,6 +265,8 @@ export const plugin = definePlugin({
   id: PLUGIN_ID,
   name: "Shimmie Import",
   version: "0.1.0",
+  description: "Imports posts, tags, and ratings from a Shimmie2 booru via its API.",
+  capabilities: ["routes", "tables", "admin-pages"],
   migrations: {
     migrationsFolder: fileURLToPath(new URL("../drizzle", import.meta.url)),
     migrationsTable: "__drizzle_migrations_shimmie_import",

@@ -130,6 +130,21 @@ describe.skipIf(!TEST_DATABASE_URL)("AssetRepository (integration)", () => {
     expect(firstPage.map((r) => r.storageKey)).toEqual(["key/c", "key/b"]);
     expect(secondPage.map((r) => r.storageKey)).toEqual(["key/a"]);
   });
+
+  it("neighbors returns adjacent ids in the newest-first browse order", async () => {
+    // Ascending ids 1,2,3 → browse order (desc) is 3,2,1. `newerId` is the post
+    // shown just BEFORE this one (higher id); `olderId` the one just after.
+    const a1 = await repo.create(seed("n1"));
+    const a2 = await repo.create(seed("n2"));
+    const a3 = await repo.create(seed("n3"));
+
+    expect(await repo.neighbors(a2.id)).toEqual({ newerId: a3.id, olderId: a1.id });
+    // Ends: newest has no newer, oldest has no older.
+    expect(await repo.neighbors(a3.id)).toEqual({ newerId: null, olderId: a2.id });
+    expect(await repo.neighbors(a1.id)).toEqual({ newerId: a2.id, olderId: null });
+    // A non-existent id still resolves positionally (both neighbors of a gap).
+    expect(await repo.neighbors(9999)).toEqual({ newerId: null, olderId: a3.id });
+  });
 });
 
 /** Bun's Postgres driver puts the violated constraint name on `error.cause`. */

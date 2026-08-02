@@ -19,30 +19,31 @@ import { PLUGIN_SDK_VERSION } from "@bunbooru/plugin-sdk";
 import { envConfig } from "./env-config";
 import { buildClearCookie, buildSessionCookie, readSessionToken, requireUser } from "./lib/auth";
 import { HttpError } from "./lib/errors";
+import {
+  staticPluginHost,
+  UnknownPluginError,
+  type ExtensionInfo,
+  type PluginHost,
+  type PluginManifestEntry,
+} from "./plugins/host";
 import { logger } from "./lib/logger";
 import { readRequestId, safeMessage, statusFor } from "./lib/http";
 import { clientIp, createRateLimiter } from "./lib/rate-limit";
-
-/**
- * Manifest entry for one enabled plugin, surfaced at `GET /api/v1/plugins` so
- * the web console can discover which plugins are active and what admin pages
- * they contribute. Metadata only — no secrets, no route internals.
- */
-export interface PluginManifestEntry {
-  id: string;
-  name: string;
-  version: string;
-  adminPages: { id: string; title: string }[];
-}
 
 /** Runtime collaborators the app is built over — injected so tests can stub them. */
 export interface AppDependencies {
   /** Assembled Core services (see `createCore` in `@bunbooru/core`). */
   core: Core;
   /**
-   * Manifest metadata for enabled plugins (from the plugin loader). Their actual
-   * routes are mounted separately by the composition root; this only drives the
-   * `GET /api/v1/plugins` discovery endpoint. Defaults to none.
+   * The runtime plugin host — owns which plugins are active, drives the manifest,
+   * the admin management endpoints, and the inactive-plugin route gate. Defaults
+   * to a permissive static host built from {@link plugins} (for tests/embeds).
+   */
+  host?: PluginHost;
+  /**
+   * Static manifest fallback when no {@link host} is given: the entries
+   * `GET /api/v1/plugins` returns (tests that mount plugin routes directly).
+   * Ignored when `host` is provided. Defaults to none.
    */
   plugins?: PluginManifestEntry[];
 }
@@ -172,11 +173,14 @@ function serializeAsset(asset: Asset): AssetDto {
  * global error handler that never leaks stack traces. API routes are versioned
  * under `/api/v1`.
  */
-export function createApp({ core, plugins = [] }: AppDependencies) {
+export function createApp({ core, host, plugins = [] }: AppDependencies) {
   // Per-app limiter instances (fresh per createApp, so tests don't share state;
   // one instance in production since the composition root builds the app once).
   const loginLimiter = createRateLimiter(LOGIN_RATE);
   const registerLimiter = createRateLimiter(REGISTER_RATE);
+  // The plugin host owns activation state; without one, fall back to a permissive
+  // static host so directly-mounted plugin routes (tests) aren't gated.
+  const pluginHost = host ?? staticPluginHost(plugins);
 
   return new Elysia()
     // Stamp every request (matched or not, so 404s are covered too) with an id,
@@ -189,6 +193,21 @@ export function createApp({ core, plugins = [] }: AppDependencies) {
         incoming && incoming.length > 0 && incoming.length <= 128
           ? incoming
           : crypto.randomUUID();
+
+      // Gate inactive plugins: a request to `/api/v1/plugins/<id>/…` for a plugin
+      // that isn't active 404s here — BEFORE routing — so a deactivated plugin's
+      // (still-mounted) routes are unreachable without a restart. The bare
+      // `/api/v1/plugins` manifest has no `<id>` segment, so it never matches.
+      // Collapse duplicate slashes first: Elysia doesn't normalize `//`, so a
+      // `//api/v1/plugins/<id>` variant must be gated the same as the canonical
+      // path (fail-closed — this only ever gates MORE, never fewer, requests).
+      const pathname = new URL(request.url).pathname.replace(/\/{2,}/g, "/");
+      const match = /^\/api\/v1\/plugins\/([^/]+)(?:\/|$)/.exec(pathname);
+      if (match && !pluginHost.isActive(match[1]!)) {
+        set.status = 404;
+        return { error: { message: "Plugin not found or inactive" } };
+      }
+      return undefined; // no short-circuit — continue to routing
     })
     // Expose the id + a start time to handlers on matched routes.
     .derive(({ set }) => ({
@@ -261,10 +280,11 @@ export function createApp({ core, plugins = [] }: AppDependencies) {
           };
         })
         .get("/health", () => ({ status: "ok" as const }))
-        // Enabled-plugin manifest (public metadata) so the web console can
+        // Active-plugin manifest (public metadata) so the web console can
         // discover active plugins + their admin pages. Plugin routes themselves
-        // are mounted by the composition root under `/api/v1/plugins/<id>`.
-        .get("/plugins", (): PluginManifestEntry[] => plugins)
+        // are mounted by the composition root under `/api/v1/plugins/<id>`;
+        // inactive ones are gated in `onRequest` above.
+        .get("/plugins", (): PluginManifestEntry[] => pluginHost.manifest())
         // --- Auth ----------------------------------------------------------
         // Open, self-serve registration. The first account created becomes the
         // site `admin`; the rest are `member`. Registration auto-logs-in: it sets
@@ -367,6 +387,30 @@ export function createApp({ core, plugins = [] }: AppDependencies) {
             }),
           },
         )
+        // Distinct tags appearing across a set of assets (a gallery page) — powers
+        // the "tags on this page" sidebar. `ids` is a comma-separated list, capped
+        // at one page's worth. Static path, so it's matched before `/assets/:id`.
+        .get(
+          "/assets/tags",
+          async ({ query }) => {
+            // De-dupe BEFORE the cap so a page's worth of DISTINCT ids survives
+            // even if the client repeats some (the service de-dupes too, but the
+            // cap must count distinct ids, not raw ones).
+            const ids = [
+              ...new Set(
+                (query.ids ?? "")
+                  .split(",")
+                  .map((part) => Number(part.trim()))
+                  // isSafeInteger (not isInteger): a value past 2^53 rounds to a
+                  // different id — matches the `idParam` contract on the id routes.
+                  .filter((n) => Number.isSafeInteger(n) && n > 0),
+              ),
+            ].slice(0, MAX_PER_PAGE);
+            const tags = await core.tagService.tagsForAssets(ids);
+            return tags.map(serializeTag);
+          },
+          { query: t.Object({ ids: t.Optional(t.String({ maxLength: 4096 })) }) },
+        )
         // Upload an image. The bytes are sniffed server-side (format/dimensions),
         // hashed, deduped on sha256, then stored + persisted. 201 for a new asset,
         // 200 when an identical upload already existed.
@@ -451,6 +495,13 @@ export function createApp({ core, plugins = [] }: AppDependencies) {
             if (!file) throw new HttpError(404, "Asset not found");
             return new Response(file.stream, { headers: { "content-type": file.mimeType } });
           },
+          { params: idParam },
+        )
+        // Neighbouring post ids in the newest-first browse order (for the detail
+        // page's prev/next). Null at the ends. Unfiltered (all posts).
+        .get(
+          "/assets/:id/neighbors",
+          ({ params }) => core.assetService.neighbors(params.id),
           { params: idParam },
         )
         // --- Tags ----------------------------------------------------------
@@ -683,6 +734,43 @@ export function createApp({ core, plugins = [] }: AppDependencies) {
               ),
             }),
           },
+        )
+        // --- Extensions / plugin management (admin) ------------------------
+        // Every known first-party plugin with metadata + current on/off state.
+        .get("/admin/extensions", ({ currentUser }): ExtensionInfo[] => {
+          const user = requireUser(currentUser);
+          if (!canModerate(user)) throw new AuthorizationError();
+          return pluginHost.describeAll();
+        })
+        // Turn a plugin on. Idempotent; 404 for an unknown id.
+        .post(
+          "/admin/extensions/:id/activate",
+          async ({ params, currentUser }): Promise<ExtensionInfo> => {
+            const user = requireUser(currentUser);
+            if (!canModerate(user)) throw new AuthorizationError();
+            try {
+              return await pluginHost.activate(params.id);
+            } catch (error) {
+              if (error instanceof UnknownPluginError) throw new HttpError(404, "Unknown plugin");
+              throw error;
+            }
+          },
+          { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }) },
+        )
+        // Turn a plugin off (routes/pages hidden; background work stops on restart).
+        .post(
+          "/admin/extensions/:id/deactivate",
+          async ({ params, currentUser }): Promise<ExtensionInfo> => {
+            const user = requireUser(currentUser);
+            if (!canModerate(user)) throw new AuthorizationError();
+            try {
+              return await pluginHost.deactivate(params.id);
+            } catch (error) {
+              if (error instanceof UnknownPluginError) throw new HttpError(404, "Unknown plugin");
+              throw error;
+            }
+          },
+          { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }) },
         )
         // --- API keys (own keys only) --------------------------------------
         // Mint a named API key. The raw `bnb_…` token is returned ONCE here.

@@ -71,6 +71,21 @@ export function useAssetTags(id: number) {
 }
 
 /**
+ * The distinct tags appearing across a set of assets (a gallery page), ordered
+ * category → popularity → name. Powers the "tags on this page" sidebar. Keyed by
+ * the id list, so it refetches when the page (or its posts) changes.
+ */
+export function usePageTags(assetIds: number[]) {
+  const ids = assetIds.join(",");
+  return useQuery({
+    queryKey: ["page-tags", ids],
+    enabled: assetIds.length > 0,
+    queryFn: async (): Promise<TagDto[]> =>
+      unwrap(await api.api.v1.assets.tags.get({ query: { ids } })),
+  });
+}
+
+/**
  * Replace an asset's tag set via `PATCH /assets/:id/tags` (full list, Danbooru
  * style). On success refreshes the asset's tag query so the panel reflects the
  * server's normalized + de-duplicated result.

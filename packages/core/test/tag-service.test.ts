@@ -80,6 +80,21 @@ function fakeTagRepo(): { repo: TagRepository; postCount: (name: string) => numb
         .slice(0, limit)
         .map((e) => e.tag);
     },
+    tagsForAssets: async (assetIds) => {
+      const tagIds = new Set<number>();
+      for (const assetId of assetIds) {
+        for (const tid of links.get(assetId) ?? []) tagIds.add(tid);
+      }
+      return [...tagIds]
+        .map((id) => byId.get(id))
+        .filter((t): t is Tag => t !== undefined)
+        .sort(
+          (a, b) =>
+            a.category.localeCompare(b.category) ||
+            b.postCount - a.postCount ||
+            a.name.localeCompare(b.name),
+        );
+    },
   };
   return { repo, postCount: (name) => byName.get(name)?.postCount ?? 0 };
 }
@@ -132,6 +147,26 @@ describe("createTagService.setAssetTags", () => {
 
     expect(result).toEqual([]);
     expect(postCount("1girl")).toBe(0);
+  });
+});
+
+describe("createTagService.tagsForAssets", () => {
+  it("unions tags across the given assets, de-duped, and drops invalid ids", async () => {
+    const { repo } = fakeTagRepo();
+    const service = createTagService(repo);
+    await service.setAssetTags(1, ["1girl", "solo"]);
+    await service.setAssetTags(2, ["1girl", "smile"]); // 1girl shared → once
+
+    const tags = await service.tagsForAssets([1, 2, -5, 0, 2]); // invalid + duplicate ids ignored
+
+    expect(tags.map((t) => t.name).sort()).toEqual(["1girl", "smile", "solo"]);
+  });
+
+  it("returns empty for no (valid) ids", async () => {
+    const { repo } = fakeTagRepo();
+    const service = createTagService(repo);
+    expect(await service.tagsForAssets([])).toEqual([]);
+    expect(await service.tagsForAssets([0, -1])).toEqual([]);
   });
 });
 

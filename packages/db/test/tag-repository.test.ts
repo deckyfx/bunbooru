@@ -167,4 +167,26 @@ describe.skipIf(!TEST_DATABASE_URL)("TagRepository (integration)", () => {
     // Unknown tag → empty.
     expect(await tags.relatedTags("ghost", 10)).toEqual([]);
   });
+
+  it("tagsForAssets unions tags across assets, de-duped and ordered", async () => {
+    const a1 = await seedAsset("t1");
+    const a2 = await seedAsset("t2");
+    const byName = new Map(
+      (await tags.getOrCreateByNames(["1girl", "solo", "smile"])).map((t) => [t.name, t]),
+    );
+    const id = (n: string) => byName.get(n)!.id;
+    await tags.setAssetTags(a1, [id("1girl"), id("solo")]);
+    await tags.setAssetTags(a2, [id("1girl"), id("smile")]); // 1girl shared → listed once
+
+    // All 'general' category → ordered by postCount desc, then name asc:
+    // 1girl (postCount 2) first, then smile & solo (postCount 1) by name.
+    expect((await tags.tagsForAssets([a1, a2])).map((t) => t.name)).toEqual([
+      "1girl",
+      "smile",
+      "solo",
+    ]);
+
+    // Empty input short-circuits to [] (no query).
+    expect(await tags.tagsForAssets([])).toEqual([]);
+  });
 });

@@ -10,6 +10,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   bigserial,
+  boolean,
   check,
   date,
   index,
@@ -260,6 +261,19 @@ export const settings = pgTable("settings", {
 });
 
 /**
+ * Runtime activation state for first-party plugins (extensions). `id` is the
+ * plugin id from the API's plugin registry. A row's `active` flag is the source
+ * of truth for whether a plugin is mounted; the env `ENABLED_PLUGINS` only seeds
+ * this table on first boot. Only plugins an admin has touched have a row —
+ * absence means "never toggled" (treated as inactive unless env-seeded).
+ */
+export const pluginStates = pgTable("plugin_states", {
+  id: text("id").primaryKey(),
+  active: boolean("active").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * A long-lived API key for non-browser (Bearer) clients. Like sessions, the DB
  * stores only the sha256 hash of the opaque token (`bnb_…`); the raw key is shown
  * once at creation. No expiry — a key is valid until revoked. Cascades when the
@@ -306,6 +320,9 @@ export type NewSession = typeof sessions.$inferInsert;
 
 export type Settings = typeof settings.$inferSelect;
 export type NewSettings = typeof settings.$inferInsert;
+
+export type PluginState = typeof pluginStates.$inferSelect;
+export type NewPluginState = typeof pluginStates.$inferInsert;
 
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type NewApiKey = typeof apiKeys.$inferInsert;

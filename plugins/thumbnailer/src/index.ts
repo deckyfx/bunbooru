@@ -267,6 +267,8 @@ export const plugin = definePlugin({
   id: PLUGIN_ID,
   name: "Thumbnailer",
   version: "0.1.0",
+  description: "Generates WebP thumbnails for uploaded images on the asset.created event.",
+  capabilities: ["routes", "tables", "events", "jobs", "admin-pages"],
   migrations: {
     migrationsFolder: fileURLToPath(new URL("../drizzle", import.meta.url)),
     migrationsTable: "__drizzle_migrations_thumbnailer",

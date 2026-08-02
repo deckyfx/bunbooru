@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 
 import { Link, useParams } from "@tanstack/react-router";
-import { Download } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 
 import { AssetImage } from "../components/asset-image";
 import { RatingControl, type Rating } from "../components/rating-control";
 import { SearchBox } from "../components/popover/search-box";
 import { PostTagPanel } from "../components/tags/post-tag-panel";
 import { assetFileUrl } from "../lib/api";
-import { useAsset, useUpdateAsset, type AssetDto } from "../lib/assets";
+import { useAsset, usePostNeighbors, useUpdateAsset, type AssetDto } from "../lib/assets";
 import { useIsLoggedIn } from "../lib/auth";
 import { useRecordView } from "../lib/stats";
 
@@ -34,6 +34,15 @@ function formatBytes(bytes: number): string {
 
 export function PostDetailPage() {
   const { id } = useParams({ from: "/posts/$id" });
+  // Remount the whole view on every id change. Prev/next navigate within the same
+  // `/posts/$id` route, so the component would otherwise stay mounted and reuse
+  // its subtree across posts — leaving the previous post's tag panel/state in
+  // place. Keying on the raw id tears the tree down and rebuilds it per post
+  // (react-query cache survives the remount, so cached neighbors stay instant).
+  return <PostDetailView key={id} id={id} />;
+}
+
+function PostDetailView({ id }: { id: string }) {
   // Validate the raw segment as plain decimal digits: `Number("1e2")`/`"0x10"`
   // would otherwise coerce to a different, valid-looking id and fetch the wrong
   // asset. Require a safe integer so it round-trips through the API unchanged.
@@ -43,6 +52,8 @@ export function PostDetailPage() {
   const { data: asset, isLoading, isError } = useAsset(postId);
   // Count a view once the post resolves (server debounces per visitor-session).
   useRecordView(asset?.id);
+  // Adjacent posts in the newest-first browse order (for prev/next).
+  const neighbors = usePostNeighbors(postId);
 
   if (!validId) {
     return (
@@ -72,11 +83,39 @@ export function PostDetailPage() {
       </aside>
 
       <section className="min-w-0 flex-1">
-        <div className="mb-2 text-[12px]">
+        <nav className="mb-2 flex items-center justify-between text-[12px]">
+          {neighbors.data?.newerId ? (
+            <Link
+              to="/posts/$id"
+              params={{ id: String(neighbors.data.newerId) }}
+              className="flex items-center gap-0.5 text-link hover:underline"
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" /> Prev
+            </Link>
+          ) : (
+            <span className="flex items-center gap-0.5 text-muted" aria-disabled="true">
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" /> Prev
+            </span>
+          )}
+
           <Link to="/posts" className="hover:underline">
-            « Back to posts
+            Back to posts
           </Link>
-        </div>
+
+          {neighbors.data?.olderId ? (
+            <Link
+              to="/posts/$id"
+              params={{ id: String(neighbors.data.olderId) }}
+              className="flex items-center gap-0.5 text-link hover:underline"
+            >
+              Next <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          ) : (
+            <span className="flex items-center gap-0.5 text-muted" aria-disabled="true">
+              Next <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </span>
+          )}
+        </nav>
 
         {isLoading ? (
           <div className="flex justify-center rounded border border-line bg-bg p-8 text-muted">
@@ -156,16 +195,20 @@ function AssetInfo({ asset }: { asset: AssetDto }) {
     setEditing(false);
   }, [asset.id, asset.rating, asset.source]);
 
-  // Close + reset the editor if auth drops mid-edit (logout elsewhere, session
-  // expiry), rather than leaving an open form that only fails on save with a 401.
+  // Close the editor + re-sync the fields if auth drops (or the viewer is
+  // anonymous). NOTE: do NOT depend on `update` or call `update.reset()` here —
+  // the react-query mutation result is a NEW object every render, so this effect
+  // would run on every render, and `reset()` fires a query-core notification →
+  // re-render → infinite loop ("Maximum update depth exceeded") for anonymous
+  // viewers. The editor (and any stale error) is hidden while logged out anyway,
+  // and the Edit button resets the mutation state when reopened.
   useEffect(() => {
     if (!isLoggedIn) {
-      update.reset();
       setRating(asset.rating);
       setSource(asset.source ?? "");
       setEditing(false);
     }
-  }, [isLoggedIn, asset.rating, asset.source, update]);
+  }, [isLoggedIn, asset.rating, asset.source]);
 
   async function save() {
     try {
