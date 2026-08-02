@@ -102,6 +102,17 @@ For each source post: obtain the **image bytes** + its **tags/rating/source/date
 >
 > Everywhere else in this doc, "sha256 dedupe" means byte-level dedup only — the
 > ledger is what makes re-runs idempotent.
+>
+> **Implemented in v1 (PR: shimmie importer):** a pragmatic subset — a
+> `shimmie_import_items` ledger with `UNIQUE(sourceInstance, sourcePostId)` +
+> insert-on-conflict-do-update (where `complete` is **terminal**, so a concurrent
+> `failed` can't demote a successful import), a `shimmie_import_runs` table holding
+> a resumable **cursor** + config + progress (updated with an **optimistic cursor
+> guard** so overlapping steps don't lose-update the counters), and Core's sha256
+> dedupe as the correctness backstop. The exclusive **ownerToken/lease** step
+> claim is DEFERRED — it only guards *concurrent* runs/steps, and v1 targets a
+> single-admin/single-instance deploy (the client also awaits each step before the
+> next). Add it when multi-runner concurrency is real.
 
 ### Source access — chosen: GraphQL + api_key (verified 2026-08-01)
 The operator enabled shimmie's **GraphQL** + **User API** extensions, so the
@@ -172,6 +183,11 @@ source **credentials**, the plan has to address two classes of risk up front:
     since the HTTP client normally does its own connect-time lookup, either **pin
     the approved IP** for the connection or route egress through a **proxy** that
     enforces the address policy.
+    - **Implemented in v1: DEFERRED.** The importer validates DNS then lets
+      `fetch` reconnect (a rebinding window). This is the accepted "pragmatic"
+      scope — admin-only, self-hosted, targeting a LAN/localhost IP literal (no
+      DNS to rebind) — and Bun's `fetch` lacks Node/undici's DNS-pinning surface.
+      Revisit (pin the IP / egress proxy) if a less-trusted role can set the host.
 - **Credential handling.** The optional shimmie cookie/API key must **not** sit
   as a raw value in ordinary plugin settings. Store it encrypted-at-rest or as a
   secret reference, **redact it from logs and job payloads**, and support

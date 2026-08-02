@@ -20,6 +20,7 @@
         "@bunbooru/core": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
         "@bunbooru/plugin-sdk": "workspace:*",
+        "@bunbooru/plugin-shimmie-import": "workspace:*",
         "@bunbooru/plugin-thumbnailer": "workspace:*",
         "elysia": "^1.4.29",
       },
@@ -30,6 +31,7 @@
       "dependencies": {
         "@bunbooru/api": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
+        "@bunbooru/plugin-shimmie-import": "workspace:*",
         "@bunbooru/plugin-thumbnailer": "workspace:*",
         "@elysiajs/eden": "^1.4.9",
         "@floating-ui/react": "^0.27.19",
@@ -117,6 +119,18 @@
         "drizzle-kit": "^0.31.10",
       },
     },
+    "plugins/shimmie-import": {
+      "name": "@bunbooru/plugin-shimmie-import",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/plugin-sdk": "workspace:*",
+        "drizzle-orm": "^0.45.2",
+        "elysia": "^1.4.29",
+      },
+      "devDependencies": {
+        "drizzle-kit": "^0.31.10",
+      },
+    },
     "plugins/thumbnailer": {
       "name": "@bunbooru/plugin-thumbnailer",
       "version": "0.1.0",
@@ -146,6 +160,8 @@
     "@bunbooru/plugin-example": ["@bunbooru/plugin-example@workspace:plugins/example"],
 
     "@bunbooru/plugin-sdk": ["@bunbooru/plugin-sdk@workspace:packages/plugin-sdk"],
+
+    "@bunbooru/plugin-shimmie-import": ["@bunbooru/plugin-shimmie-import@workspace:plugins/shimmie-import"],
 
     "@bunbooru/plugin-thumbnailer": ["@bunbooru/plugin-thumbnailer@workspace:plugins/thumbnailer"],
 
