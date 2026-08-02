@@ -48,7 +48,12 @@ async function upsertItem(
   ctx: PluginContext,
   sourceInstance: string,
   sourcePostId: number,
-  fields: { assetId: number | null; status: "complete" | "failed"; error: string | null },
+  // Discriminated union: a `complete` row always carries the asset it produced,
+  // a `failed` row never does — so the ledger can't record a success with no
+  // asset (or a failure that still points at one).
+  fields:
+    | { assetId: number; status: "complete"; error: null }
+    | { assetId: null; status: "failed"; error: string },
 ): Promise<void> {
   await ctx.db
     .insert(importItems)
@@ -118,7 +123,7 @@ export async function stepRun(
     scanned += 1;
     const sourcePostId = cursor;
 
-    let post;
+    let post: Awaited<ReturnType<SourceAdapter["fetchPost"]>>;
     try {
       post = await adapter.fetchPost(sourcePostId);
     } catch (error) {
@@ -179,10 +184,13 @@ export async function stepRun(
     skipped: run.skipped + skipped,
   };
   // Optimistic concurrency: only commit the new absolute totals if no other
-  // step advanced the cursor since we read it (WHERE cursor = the value we read).
-  // If a concurrent step won, we drop this counter write — our per-post ledger
-  // rows still stand, and Core's sha256 dedupe prevents duplicate assets.
-  await ctx.db
+  // step advanced the cursor since we read it (WHERE cursor = the value we read)
+  // AND the run is still `running`. The status guard matters because a step is
+  // long (network-bound) and `cancel` can land mid-flight: without it, this
+  // write would resurrect a canceled run back to `running`/`done`.
+  // If either guard fails, we drop this counter write — our per-post ledger rows
+  // still stand, and Core's sha256 dedupe prevents duplicate assets.
+  const committed = await ctx.db
     .update(importRuns)
     .set({
       cursor,
@@ -192,7 +200,42 @@ export async function stepRun(
       status: done ? "done" : "running",
       updatedAt: new Date(),
     })
-    .where(and(eq(importRuns.id, runId), eq(importRuns.cursor, run.cursor)));
+    .where(
+      and(
+        eq(importRuns.id, runId),
+        eq(importRuns.cursor, run.cursor),
+        eq(importRuns.status, "running"),
+      ),
+    )
+    .returning({ id: importRuns.id });
+
+  if (committed.length === 0) {
+    // Our write lost (cancel, or a concurrent step). The per-step counts below
+    // are still true — that work really happened — but cursor/done/totals must
+    // report the PERSISTED run, not our dropped local view, or the client would
+    // act on a state the database never accepted.
+    const currentRows = await ctx.db
+      .select()
+      .from(importRuns)
+      .where(eq(importRuns.id, runId))
+      .limit(1);
+    const current = currentRows[0];
+    if (current) {
+      return {
+        imported,
+        failed,
+        skipped,
+        cursor: current.cursor,
+        maxId: current.maxId,
+        done: current.status !== "running",
+        totals: {
+          imported: current.imported,
+          failed: current.failed,
+          skipped: current.skipped,
+        },
+      };
+    }
+  }
 
   return { imported, failed, skipped, cursor, maxId: run.maxId, done, totals };
 }
