@@ -107,8 +107,8 @@ describe("createPluginHost", () => {
   it("throws UnknownPluginError for an id that isn't a known plugin", async () => {
     const host = createPluginHost({ pluginState: fakeState(), loaded, seedActiveIds: [] });
     await host.init();
-    expect(host.activate("nope")).rejects.toBeInstanceOf(UnknownPluginError);
-    expect(host.deactivate("nope")).rejects.toBeInstanceOf(UnknownPluginError);
+    await expect(host.activate("nope")).rejects.toBeInstanceOf(UnknownPluginError);
+    await expect(host.deactivate("nope")).rejects.toBeInstanceOf(UnknownPluginError);
   });
 });
 

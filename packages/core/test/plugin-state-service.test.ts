@@ -42,10 +42,23 @@ describe("createPluginStateService.setActive", () => {
 });
 
 describe("createPluginStateService.seedIfEmpty", () => {
-  it("seeds the given ids as active ONLY when the table is empty", async () => {
-    const service = createPluginStateService(fakeRepo());
-    const seeded = await service.seedIfEmpty(["a", "b", "a"]); // de-duped
+  it("seeds the given ids as active ONLY when the table is empty (de-duping)", async () => {
+    // Spy on setActive so we can assert the duplicate "a" causes exactly ONE
+    // write (the Map-backed fake would collapse dupes anyway, hiding a missing
+    // de-dupe in the service).
+    const repo = fakeRepo();
+    const calls: string[] = [];
+    const spied: PluginStateRepository = {
+      getAll: repo.getAll,
+      setActive: async (id, active) => {
+        calls.push(id);
+        await repo.setActive(id, active);
+      },
+    };
+    const service = createPluginStateService(spied);
+    const seeded = await service.seedIfEmpty(["a", "b", "a"]);
     expect(seeded).toBe(true);
+    expect(calls).toEqual(["a", "b"]);
     expect([...(await service.activeIds())].sort()).toEqual(["a", "b"]);
   });
 

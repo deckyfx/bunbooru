@@ -199,6 +199,9 @@ function ExtensionsSection() {
               key={ext.id}
               ext={ext}
               busy={toggle.isPending && toggle.variables?.id === ext.id}
+              // Lock every toggle while any one is in flight, so an admin can't
+              // fire overlapping activate/deactivate requests.
+              disabled={toggle.isPending}
               onToggle={() => toggle.mutate({ id: ext.id, active: !ext.active })}
             />
           ))}
@@ -218,10 +221,12 @@ function ExtensionsSection() {
 function ExtensionCard({
   ext,
   busy,
+  disabled,
   onToggle,
 }: {
   ext: ExtensionDto;
   busy: boolean;
+  disabled: boolean;
   onToggle: () => void;
 }) {
   return (
@@ -261,7 +266,7 @@ function ExtensionCard({
         <button
           type="button"
           onClick={onToggle}
-          disabled={busy}
+          disabled={disabled}
           aria-label={`${ext.active ? "Deactivate" : "Activate"} ${ext.name}`}
           className={`flex shrink-0 items-center gap-1 rounded px-3 py-1.5 text-[12px] font-bold disabled:cursor-not-allowed disabled:opacity-60 ${
             ext.active

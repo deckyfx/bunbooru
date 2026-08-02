@@ -5,10 +5,7 @@ import { Loader2, LogIn } from "lucide-react";
 
 import { PasswordInput } from "../components/password-input";
 import { authErrorMessage, useLogin } from "../lib/auth";
-
-/** Shared field styling for the auth forms. */
-const TEXT_INPUT =
-  "block w-full rounded-md border border-line bg-bg py-2 px-2.5 text-sm outline-none transition-colors focus:border-link focus:ring-1 focus:ring-link/30";
+import { TEXT_INPUT } from "../lib/input-styles";
 
 /**
  * Sign-in form. On success the login mutation primes the current-user cache

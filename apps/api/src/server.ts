@@ -198,7 +198,11 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
       // that isn't active 404s here — BEFORE routing — so a deactivated plugin's
       // (still-mounted) routes are unreachable without a restart. The bare
       // `/api/v1/plugins` manifest has no `<id>` segment, so it never matches.
-      const match = /^\/api\/v1\/plugins\/([^/]+)(?:\/|$)/.exec(new URL(request.url).pathname);
+      // Collapse duplicate slashes first: Elysia doesn't normalize `//`, so a
+      // `//api/v1/plugins/<id>` variant must be gated the same as the canonical
+      // path (fail-closed — this only ever gates MORE, never fewer, requests).
+      const pathname = new URL(request.url).pathname.replace(/\/{2,}/g, "/");
+      const match = /^\/api\/v1\/plugins\/([^/]+)(?:\/|$)/.exec(pathname);
       if (match && !pluginHost.isActive(match[1]!)) {
         set.status = 404;
         return { error: { message: "Plugin not found or inactive" } };
@@ -389,11 +393,17 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
         .get(
           "/assets/tags",
           async ({ query }) => {
-            const ids = (query.ids ?? "")
-              .split(",")
-              .map((part) => Number(part.trim()))
-              .filter((n) => Number.isInteger(n) && n > 0)
-              .slice(0, MAX_PER_PAGE);
+            // De-dupe BEFORE the cap so a page's worth of DISTINCT ids survives
+            // even if the client repeats some (the service de-dupes too, but the
+            // cap must count distinct ids, not raw ones).
+            const ids = [
+              ...new Set(
+                (query.ids ?? "")
+                  .split(",")
+                  .map((part) => Number(part.trim()))
+                  .filter((n) => Number.isInteger(n) && n > 0),
+              ),
+            ].slice(0, MAX_PER_PAGE);
             const tags = await core.tagService.tagsForAssets(ids);
             return tags.map(serializeTag);
           },

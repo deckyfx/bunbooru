@@ -125,8 +125,11 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
     async activate(id) {
       const p = byId.get(id);
       if (!p) throw new UnknownPluginError(id);
-      active.add(id);
+      // Persist FIRST; only mirror into the in-memory set once the write lands, so
+      // a failed persist can't leave memory and DB disagreeing (the route 500s and
+      // the plugin stays as it was, matching what the next boot would restore).
       await pluginState.setActive(id, true);
+      active.add(id);
       logger.info("plugin_activated", { id });
       return describe(p);
     },
@@ -134,8 +137,8 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
     async deactivate(id) {
       const p = byId.get(id);
       if (!p) throw new UnknownPluginError(id);
-      active.delete(id);
       await pluginState.setActive(id, false);
+      active.delete(id);
       logger.info("plugin_deactivated", { id });
       return describe(p);
     },
@@ -163,10 +166,10 @@ export function staticPluginHost(manifest: readonly PluginManifestEntry[] = []):
         adminPages: e.adminPages,
         active: true,
       })),
-    activate: (id) => {
+    activate: async (id) => {
       throw new UnknownPluginError(id);
     },
-    deactivate: (id) => {
+    deactivate: async (id) => {
       throw new UnknownPluginError(id);
     },
   };

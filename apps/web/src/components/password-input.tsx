@@ -2,6 +2,8 @@ import { useId, useState } from "react";
 
 import { Eye, EyeOff } from "lucide-react";
 
+import { TEXT_INPUT_BASE } from "../lib/input-styles";
+
 /** A password field with a show/hide reveal toggle. Shared by the auth forms. */
 export function PasswordInput({
   value,
@@ -35,7 +37,7 @@ export function PasswordInput({
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="block w-full rounded-md border border-line bg-bg py-2 pl-2.5 pr-10 text-sm outline-none transition-colors focus:border-link focus:ring-1 focus:ring-link/30"
+        className={`${TEXT_INPUT_BASE} pl-2.5 pr-10`}
       />
       <button
         type="button"

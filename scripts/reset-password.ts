@@ -18,8 +18,18 @@ import { eq } from "drizzle-orm";
 /** Minimum password length — mirrors the registration rule. */
 const MIN_PASSWORD = 8;
 
-const DATABASE_URL =
-  Bun.env.DATABASE_URL?.trim() || "postgres://bunbooru:bunbooru@localhost:5432/bunbooru";
+// Require an explicit DATABASE_URL — never fall back to a default. Resetting a
+// password against the WRONG database (a silent localhost default) is exactly the
+// kind of surprise this recovery tool must avoid; fail loudly instead. Bun
+// auto-loads `.env`, so the normal case is covered.
+const rawDatabaseUrl = Bun.env.DATABASE_URL?.trim();
+if (!rawDatabaseUrl) {
+  console.error("✖ DATABASE_URL is required (set it in .env or the environment).");
+  process.exit(1);
+}
+// Narrow to a plain string so the value stays typed inside `main`'s closure
+// (control-flow narrowing on the module const wouldn't carry into the function).
+const DATABASE_URL: string = rawDatabaseUrl;
 
 async function main(): Promise<void> {
   p.intro("bunbooru · reset password");
