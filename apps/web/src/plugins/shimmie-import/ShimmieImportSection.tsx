@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 
 import { shimmieImportApi } from "./client";
@@ -38,15 +39,23 @@ export function ShimmieImportSection() {
   const [apiKey, setApiKey] = useState("");
   const [allUsers, setAllUsers] = useState(true);
   const [usersList, setUsersList] = useState("");
-  const [targetUserId, setTargetUserId] = useState("");
+  const [targetUsername, setTargetUsername] = useState("");
   const [sourceTimezone, setSourceTimezone] = useState("UTC");
 
-  const [busy, setBusy] = useState<"idle" | "preflight" | "importing">("idle");
+  const [busy, setBusy] = useState<"idle" | "preflight" | "importing" | "retrying">("idle");
   const [preflight, setPreflight] = useState<{ actingUser: string; maxId: number } | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
+  const [runId, setRunId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const cancelRef = useRef(false);
+
+  const queryClient = useQueryClient();
+  const runsQuery = useQuery({
+    queryKey: ["shimmie-import", "runs"],
+    queryFn: async () => call(await importApi.runs.get()),
+  });
+  const refreshRuns = () => queryClient.invalidateQueries({ queryKey: ["shimmie-import", "runs"] });
 
   // Stop the import loop if the component unmounts (leaving /admin), so it doesn't
   // keep hitting the API or setting state on an unmounted component.
@@ -93,17 +102,12 @@ export function ShimmieImportSection() {
         setError("List at least one shimmie username, or choose “all users”.");
         return;
       }
-      const targetId = targetUserId.trim() ? Number(targetUserId.trim()) : undefined;
-      if (targetId !== undefined && (!Number.isInteger(targetId) || targetId < 1)) {
-        setError("Target user id must be a positive integer (or blank for yourself).");
-        return;
-      }
       const started = await call(
         await importApi.runs.post({
           baseUrl,
           apiKey,
           users,
-          targetUserId: targetId,
+          targetUsername: targetUsername.trim() || undefined,
           sourceTimezone: sourceTimezone.trim() || "UTC",
         }),
       );
@@ -111,14 +115,15 @@ export function ShimmieImportSection() {
         setError(started.error);
         return;
       }
-      const runId = started.runId;
+      const activeRunId = started.runId;
+      setRunId(activeRunId);
       for (;;) {
         if (cancelRef.current) {
-          await importApi.runs({ id: runId }).cancel.post();
+          await importApi.runs({ id: activeRunId }).cancel.post();
           setNotice("Import canceled.");
           break;
         }
-        const step = await call(await importApi.runs({ id: runId }).step.post({ apiKey }));
+        const step = await call(await importApi.runs({ id: activeRunId }).step.post({ apiKey }));
         // Bail after the await if we were unmounted / canceled mid-request.
         if (cancelRef.current) break;
         if (!step.ok) {
@@ -142,6 +147,47 @@ export function ShimmieImportSection() {
       setError("Import request failed (are you signed in as an admin?).");
     } finally {
       setBusy("idle");
+      void refreshRuns();
+    }
+  }
+
+  async function onRetry(targetRunId: number) {
+    if (busy !== "idle") return;
+    if (!apiKey) {
+      setError("Enter the shimmie API key to retry.");
+      return;
+    }
+    resetMessages();
+    setBusy("retrying");
+    cancelRef.current = false;
+    try {
+      for (;;) {
+        if (cancelRef.current) break;
+        const res = await call(await importApi.runs({ id: targetRunId })["retry-failed"].post({ apiKey }));
+        if (cancelRef.current) break;
+        if (!res.ok) {
+          setError(res.error);
+          break;
+        }
+        setProgress((prev) =>
+          prev ? { ...prev, imported: prev.imported + res.recovered, failed: res.remainingFailed } : prev,
+        );
+        // Stop when nothing's left OR this batch made no progress — otherwise a
+        // set of permanently-failing posts (re-selected each call) would loop forever.
+        if (res.remainingFailed === 0 || res.recovered === 0) {
+          setNotice(
+            res.remainingFailed === 0
+              ? "Retry complete — all recovered."
+              : `Retry stopped · ${res.remainingFailed} still failing.`,
+          );
+          break;
+        }
+      }
+    } catch {
+      setError("Retry request failed (are you signed in as an admin?).");
+    } finally {
+      setBusy("idle");
+      void refreshRuns();
     }
   }
 
@@ -216,13 +262,13 @@ export function ShimmieImportSection() {
         </fieldset>
 
         <label className="block">
-          <span className="mb-1 block font-bold">Attribute to user id</span>
+          <span className="mb-1 block font-bold">Attribute to bunbooru user</span>
           <input
-            type="number"
-            min={1}
-            value={targetUserId}
-            onChange={(e) => setTargetUserId(e.target.value)}
-            placeholder="blank = you"
+            type="text"
+            value={targetUsername}
+            onChange={(e) => setTargetUsername(e.target.value)}
+            placeholder="username (blank = you)"
+            autoComplete="off"
             className={INPUT_CLASS}
           />
         </label>
@@ -267,7 +313,7 @@ export function ShimmieImportSection() {
             {busy === "importing" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
             Import
           </button>
-          {busy === "importing" ? (
+          {busy === "importing" || busy === "retrying" ? (
             <button
               type="button"
               onClick={() => (cancelRef.current = true)}
@@ -297,6 +343,49 @@ export function ShimmieImportSection() {
             {progress.failed > 0 ? ` · ${progress.failed} failed` : ""}
             {progress.done ? " · done" : ""}
           </p>
+          {progress.failed > 0 && runId !== null ? (
+            <button
+              type="button"
+              onClick={() => void onRetry(runId)}
+              disabled={busy !== "idle" || !apiKey}
+              className="mt-1 flex items-center gap-1 rounded border border-line px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy === "retrying" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+              Retry {progress.failed} failed
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {runsQuery.data && runsQuery.data.length > 0 ? (
+        <div className="mt-4">
+          <h3 className="mb-1 font-bold">Recent runs</h3>
+          <ul className="space-y-1 text-[11px]">
+            {runsQuery.data.map((run) => (
+              <li key={run.id} className="flex items-center justify-between gap-2 border-b border-line pb-1">
+                <span className="truncate">
+                  #{run.id} · {run.sourceInstance} · {run.userFilter === "*" ? "all users" : run.userFilter}
+                </span>
+                <span className="flex shrink-0 items-center gap-2 text-muted">
+                  <span>
+                    {run.status} · {run.imported}✓
+                    {run.failed > 0 ? ` · ${run.failed}✗` : ""} · {run.cursor}/{run.maxId}
+                  </span>
+                  {run.failed > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => void onRetry(run.id)}
+                      disabled={busy !== "idle" || !apiKey}
+                      title={apiKey ? "Retry this run's failed posts" : "Enter the API key above to retry"}
+                      className="rounded border border-line px-2 py-0.5 text-link disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Retry
+                    </button>
+                  ) : null}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
     </section>

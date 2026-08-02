@@ -43,6 +43,9 @@ export const importItems = pgTable(
     id: serial("id").primaryKey(),
     sourceInstance: text("source_instance").notNull(),
     sourcePostId: integer("source_post_id").notNull(),
+    /** The run that last processed this post — scopes retry-failed to a run so it
+     *  can't re-attribute another run's posts to the wrong target user. */
+    runId: integer("run_id").notNull(),
     /** The bunbooru asset created (or deduped onto); null on failure. */
     assetId: integer("asset_id"),
     /** `complete` | `failed`. */

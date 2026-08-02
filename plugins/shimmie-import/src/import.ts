@@ -1,9 +1,9 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 
 import type { PluginContext } from "@bunbooru/plugin-sdk";
 
 import { importItems, importRuns } from "./schema";
-import type { SourceAdapter } from "./source-adapter";
+import type { SourceAdapter, SourcePost } from "./source-adapter";
 
 /** Posts ATTEMPTED (imported + failed) per `step` call. */
 const IMPORT_BATCH = 25;
@@ -48,6 +48,7 @@ async function upsertItem(
   ctx: PluginContext,
   sourceInstance: string,
   sourcePostId: number,
+  runId: number,
   // Discriminated union: a `complete` row always carries the asset it produced,
   // a `failed` row never does — so the ledger can't record a success with no
   // asset (or a failure that still points at one).
@@ -57,14 +58,55 @@ async function upsertItem(
 ): Promise<void> {
   await ctx.db
     .insert(importItems)
-    .values({ sourceInstance, sourcePostId, ...fields })
+    .values({ sourceInstance, sourcePostId, runId, ...fields })
     .onConflictDoUpdate({
       target: [importItems.sourceInstance, importItems.sourcePostId],
-      set: { ...fields, updatedAt: new Date() },
+      // Record the run that last touched it (scopes retry-failed).
+      set: { ...fields, runId, updatedAt: new Date() },
       // `complete` is terminal: never let a later (e.g. concurrent) `failed`
       // overwrite a successful import and clear its assetId.
       setWhere: ne(importItems.status, "complete"),
     });
+}
+
+/**
+ * Ingest one already-fetched post: download bytes → `create` (preserving
+ * rating/source/date, attributing to the target user) → `setAssetTags` → record
+ * the outcome in the ledger. Never throws — a failure records a `failed` row and
+ * returns "failed". Shared by {@link stepRun} and {@link retryFailed}.
+ */
+async function ingestPost(
+  ctx: PluginContext,
+  adapter: SourceAdapter,
+  post: SourcePost,
+  runId: number,
+  targetUserId: number,
+): Promise<"complete" | "failed"> {
+  try {
+    const bytes = await adapter.fetchBytes(post);
+    const { asset } = await ctx.services.assets.create({
+      bytes,
+      rating: post.rating,
+      source: post.postUrl,
+      uploaderId: targetUserId,
+      createdAt: post.postedAt,
+    });
+    if (post.tags.length > 0) await ctx.services.tags.setAssetTags(asset.id, post.tags);
+    await upsertItem(ctx, adapter.sourceInstance, post.sourcePostId, runId, {
+      assetId: asset.id,
+      status: "complete",
+      error: null,
+    });
+    return "complete";
+  } catch (error) {
+    await upsertItem(ctx, adapter.sourceInstance, post.sourcePostId, runId, {
+      assetId: null,
+      status: "failed",
+      error: errorMessage(error),
+    });
+    ctx.log.warn("import_post_failed", { sourcePostId: post.sourcePostId, error: errorMessage(error) });
+    return "failed";
+  }
 }
 
 /** Whether this source post was already imported successfully (skip on re-run). */
@@ -128,7 +170,7 @@ export async function stepRun(
       post = await adapter.fetchPost(sourcePostId);
     } catch (error) {
       // A fetch/GraphQL error (not a deletion) is recorded + retryable on a new run.
-      await upsertItem(ctx, adapter.sourceInstance, sourcePostId, {
+      await upsertItem(ctx, adapter.sourceInstance, sourcePostId, run.id, {
         assetId: null,
         status: "failed",
         error: errorMessage(error),
@@ -150,30 +192,10 @@ export async function stepRun(
       continue;
     }
 
-    try {
-      const bytes = await adapter.fetchBytes(post);
-      const { asset } = await ctx.services.assets.create({
-        bytes,
-        rating: post.rating,
-        source: post.postUrl,
-        uploaderId: run.targetUserId,
-        createdAt: post.postedAt,
-      });
-      if (post.tags.length > 0) await ctx.services.tags.setAssetTags(asset.id, post.tags);
-      await upsertItem(ctx, adapter.sourceInstance, sourcePostId, {
-        assetId: asset.id,
-        status: "complete",
-        error: null,
-      });
+    if ((await ingestPost(ctx, adapter, post, run.id, run.targetUserId)) === "complete") {
       imported += 1;
-    } catch (error) {
-      await upsertItem(ctx, adapter.sourceInstance, sourcePostId, {
-        assetId: null,
-        status: "failed",
-        error: errorMessage(error),
-      });
+    } else {
       failed += 1;
-      ctx.log.warn("import_post_failed", { sourcePostId, error: errorMessage(error) });
     }
   }
 
@@ -238,4 +260,104 @@ export async function stepRun(
   }
 
   return { imported, failed, skipped, cursor, maxId: run.maxId, done, totals };
+}
+
+/** Failed posts re-attempted per `retry-failed` call. */
+const RETRY_BATCH = 25;
+
+/** Outcome of one {@link retryFailed} call. */
+export interface RetryResult {
+  /** Failed items attempted this call. */
+  retried: number;
+  /** Now imported. */
+  recovered: number;
+  /** Still failing after the retry. */
+  stillFailed: number;
+  /** Failed items remaining for the source after this call. */
+  remainingFailed: number;
+}
+
+/** Count the `failed` ledger rows owned by a run. */
+async function countFailed(ctx: PluginContext, runId: number): Promise<number> {
+  const rows = await ctx.db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(importItems)
+    .where(and(eq(importItems.runId, runId), eq(importItems.status, "failed")));
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * Re-attempt up to {@link RETRY_BATCH} previously-`failed` posts of ONE run
+ * (e.g. after a transient network blip), without re-scanning the whole id space.
+ * Scoped by `runId` (not the whole source) so it can't re-attribute another run's
+ * posts to this run's target user. A source post that has since been deleted has
+ * its stale `failed` row removed. Recovered items move from the run's `failed`
+ * counter to `imported`. The client loops until this run's failures reach 0 OR a
+ * batch recovers nothing (permanent failures).
+ */
+export async function retryFailed(
+  ctx: PluginContext,
+  adapter: SourceAdapter,
+  runId: number,
+): Promise<RetryResult> {
+  const runRows = await ctx.db.select().from(importRuns).where(eq(importRuns.id, runId)).limit(1);
+  const run = runRows[0];
+  if (!run) throw new Error("Import run not found");
+
+  const failedRows = await ctx.db
+    .select({ sourcePostId: importItems.sourcePostId })
+    .from(importItems)
+    .where(and(eq(importItems.runId, runId), eq(importItems.status, "failed")))
+    .orderBy(importItems.sourcePostId)
+    .limit(RETRY_BATCH);
+
+  let recovered = 0;
+  let stillFailed = 0;
+
+  for (const { sourcePostId } of failedRows) {
+    let post;
+    try {
+      post = await adapter.fetchPost(sourcePostId);
+    } catch (error) {
+      await upsertItem(ctx, adapter.sourceInstance, sourcePostId, runId, {
+        assetId: null,
+        status: "failed",
+        error: errorMessage(error),
+      });
+      stillFailed += 1;
+      continue;
+    }
+    if (!post) {
+      // Source post is gone now — drop the stale failed row (nothing to recover).
+      await ctx.db
+        .delete(importItems)
+        .where(
+          and(eq(importItems.sourceInstance, adapter.sourceInstance), eq(importItems.sourcePostId, sourcePostId)),
+        );
+      continue;
+    }
+    if ((await ingestPost(ctx, adapter, post, runId, run.targetUserId)) === "complete") recovered += 1;
+    else stillFailed += 1;
+  }
+
+  // Recovered failures become imports in the run's running totals. Relative SQL
+  // increments (not absolute values from the stale snapshot) so a concurrent
+  // step's counter write isn't clobbered.
+  if (recovered > 0) {
+    await ctx.db
+      .update(importRuns)
+      .set({
+        imported: sql`${importRuns.imported} + ${recovered}`,
+        failed: sql`greatest(${importRuns.failed} - ${recovered}, 0)`,
+        updatedAt: new Date(),
+      })
+      .where(eq(importRuns.id, runId));
+  }
+
+  return {
+    retried: failedRows.length,
+    recovered,
+    stillFailed,
+    remainingFailed: await countFailed(ctx, runId),
+  };
 }

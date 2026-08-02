@@ -1,0 +1,1 @@
+ALTER TABLE "shimmie_import_items" ADD COLUMN "run_id" integer NOT NULL;
