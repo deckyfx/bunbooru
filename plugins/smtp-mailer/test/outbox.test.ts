@@ -104,8 +104,17 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
   });
 
   it("drainOnce records a failure and pushes the next attempt out (backoff)", async () => {
-    await enqueue(db, MAIL);
     const now = new Date("2026-01-01T00:00:00.000Z");
+    // Insert already-due relative to the injected clock — `enqueue` would default
+    // next_attempt_at to the DB's real wall clock (well after `now`), leaving the
+    // row not-yet-due and never attempted.
+    await db.insert(mailOutbox).values({
+      idempotencyKey: MAIL.idempotencyKey,
+      to: MAIL.to,
+      subject: MAIL.subject,
+      text: MAIL.text,
+      nextAttemptAt: new Date("2025-12-31T00:00:00.000Z"),
+    });
     const result = await drainOnce({
       db,
       transport: transportThatFails("connection refused"),
