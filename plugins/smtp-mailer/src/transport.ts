@@ -130,6 +130,13 @@ export function createTransportResolver(db: DB): TransportResolver {
         }
         const key = keyOf(secrets);
         if (cached && cached.key === key) return cached.transport;
+        // DECISION (re: CodeRabbit "lease the cached transport"): we do NOT
+        // refcount active senders and defer this close. If an admin changes SMTP
+        // settings mid-drain, an in-flight send on the old transport may error —
+        // but that's a single RETRIABLE failure (the outbox retries with backoff;
+        // no loss, no duplicate), and the window is narrow (a ~15s-interval drain
+        // overlapping a rare settings change). A per-send lease + deferred close is
+        // over-engineering for a bounded, self-healing case at this stage.
         if (cached) await cached.transport.close();
         cached = { key, transport: createNodemailerTransport(secrets) };
         return cached.transport;
