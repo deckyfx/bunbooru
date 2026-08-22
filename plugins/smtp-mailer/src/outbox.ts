@@ -153,10 +153,11 @@ export async function drainOnce(deps: DrainDeps): Promise<DrainResult> {
 
   for (const row of due) {
     result.attempted += 1;
+    // Phase 1 — SEND. A failure here is genuine and retry-safe (the server
+    // accepted nothing): each send is bounded by the transport's own
+    // connection/greeting/socket timeouts, which abort the socket on expiry (we
+    // deliberately don't add our own non-cancelling race — see PER_SEND_BUDGET_MS).
     try {
-      // Each send is bounded by the transport's own connection/greeting/socket
-      // timeouts (which abort the socket on expiry — a real, retry-safe failure).
-      // We do NOT add our own timeout race here; see PER_SEND_BUDGET_MS.
       await transport.send({
         from: from as string, // held above when null
         to: row.to,
@@ -164,17 +165,6 @@ export async function drainOnce(deps: DrainDeps): Promise<DrainResult> {
         text: row.text,
         html: row.html ?? undefined,
         replyTo: settings.replyTo ?? undefined,
-      });
-      await db
-        .update(mailOutbox)
-        .set({ sentAt: now(), lastError: null, attempts: row.attempts + 1 })
-        .where(eq(mailOutbox.id, row.id));
-      result.sent += 1;
-      log.info("mail_sent", {
-        to: maskEmail(row.to),
-        subject: row.subject,
-        idempotencyKey: row.idempotencyKey,
-        attempt: row.attempts + 1,
       });
     } catch (error) {
       const attempts = row.attempts + 1;
@@ -192,6 +182,46 @@ export async function drainOnce(deps: DrainDeps): Promise<DrainResult> {
         permanent: isExhausted(attempts),
         error: message,
       });
+      continue;
+    }
+
+    // Phase 2 — DELIVERED (the server accepted it). Record it. A persistence
+    // failure HERE must NOT flow into the retry/backoff path: re-sending would
+    // deliver a DUPLICATE of a message the server already accepted. Park the row
+    // as terminal (best effort) and log loudly instead.
+    result.sent += 1;
+    try {
+      await db
+        .update(mailOutbox)
+        .set({ sentAt: now(), lastError: null, attempts: row.attempts + 1 })
+        .where(eq(mailOutbox.id, row.id));
+      log.info("mail_sent", {
+        to: maskEmail(row.to),
+        subject: row.subject,
+        idempotencyKey: row.idempotencyKey,
+        attempt: row.attempts + 1,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.error("mail_persist_after_send_failed", {
+        to: maskEmail(row.to),
+        subject: row.subject,
+        idempotencyKey: row.idempotencyKey,
+        error: message,
+      });
+      // Mark terminal so the normal retry path can't re-send an already-accepted
+      // message. If THIS write also fails, the claim lease still holds the row out
+      // of rotation until it expires — at-most-once then rests on the SMTP
+      // server's own dedupe / an idempotent provider, which is the ceiling for an
+      // external transport with no transactional send.
+      try {
+        await db
+          .update(mailOutbox)
+          .set({ attempts: MAX_SEND_ATTEMPTS, lastError: "delivered but persistence failed" })
+          .where(eq(mailOutbox.id, row.id));
+      } catch {
+        // Give up — already logged above.
+      }
     }
   }
   return result;
