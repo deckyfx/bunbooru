@@ -143,7 +143,11 @@ export const plugin = definePlugin({
     // the loader skip this plugin, so Core's MailService stays unconfigured and
     // forgot-password returns an honest 503 instead of a silent 200. Log-only
     // stays available in development/test for zero-config flows.
-    if (!secrets && Bun.env.NODE_ENV === "production") {
+    //
+    // Production is the DEFAULT when NODE_ENV is unset — mirror envConfig.NODE_ENV
+    // (`Bun.env.NODE_ENV ?? "production"`) so an unset env can't slip into log-only.
+    const isProduction = Bun.env.NODE_ENV !== "development" && Bun.env.NODE_ENV !== "test";
+    if (!secrets && isProduction) {
       throw new Error(
         "smtp-mailer: SMTP_HOST is required in production — refusing to run in log-only mode.",
       );

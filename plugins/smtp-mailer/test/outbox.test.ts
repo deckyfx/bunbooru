@@ -193,9 +193,12 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
       text: MAIL.text,
       nextAttemptAt: new Date("2000-01-01T00:00:00.000Z"),
     });
+    // Drive the two workers over SEPARATE connections (second pooled client), so a
+    // single pool serializing the statements can't mask a missing claim — the two
+    // claims genuinely race at the database. The delay widens the send window.
+    const client2 = new SQL(TEST_DATABASE_URL as string);
+    const db2 = drizzle({ client: client2 }) as unknown as DB;
     let sends = 0;
-    // A shared transport counting total sends across both workers; the small delay
-    // widens the window so both claims are genuinely in flight together.
     const transport: SmtpTransport = {
       send: mock(async () => {
         sends += 1;
@@ -204,17 +207,24 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
       verify: mock(async () => {}),
     };
 
-    const [a, b] = await Promise.all([
-      drainOnce({ db, transport, log: noopLog }),
-      drainOnce({ db, transport, log: noopLog }),
-    ]);
+    try {
+      const [a, b] = await Promise.all([
+        drainOnce({ db, transport, log: noopLog }),
+        drainOnce({ db: db2, transport, log: noopLog }),
+      ]);
 
-    expect(sends).toBe(1);
-    expect(a.sent + b.sent).toBe(1);
-    const [row] = await db
-      .select()
-      .from(mailOutbox)
-      .where(eq(mailOutbox.idempotencyKey, "reset:concurrent"));
-    expect(row?.sentAt).not.toBeNull();
+      expect(sends).toBe(1);
+      expect(a.sent + b.sent).toBe(1);
+      const [row] = await db
+        .select()
+        .from(mailOutbox)
+        .where(eq(mailOutbox.idempotencyKey, "reset:concurrent"));
+      // Assert the row EXISTS and is sent — `row?.sentAt` alone would pass on a
+      // missing row (undefined !== null).
+      expect(row).toBeDefined();
+      expect(row?.sentAt).not.toBeNull();
+    } finally {
+      await client2.close();
+    }
   });
 });

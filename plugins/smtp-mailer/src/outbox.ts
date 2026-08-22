@@ -9,17 +9,28 @@ import { getMailSettings, type MailSettings } from "./settings";
 import type { SmtpTransport } from "./transport";
 
 /** How many due rows one drain pass attempts (bounds work per tick). */
-const DRAIN_BATCH = 20;
+const DRAIN_BATCH = 10;
+
+/**
+ * Upper bound on a single send attempt — must be >= the transport's combined
+ * timeouts (connection + greeting + socket ≈ 50s; see `createNodemailerTransport`).
+ */
+const PER_SEND_BUDGET_MS = 60 * 1000;
 
 /**
  * How long a claimed row is leased before it becomes due again. The claim pushes
  * `nextAttemptAt` this far out so a concurrent worker (or the next tick) won't
  * re-select a row mid-send; the send outcome then overwrites it (`sentAt` on
- * success, the backoff schedule on failure). If the process dies mid-send the
- * row simply retries after the lease — at-most-once still holds via the unique
- * idempotency key and the SMTP server's own dedupe.
+ * success, the backoff schedule on failure).
+ *
+ * The lease MUST outlast a full SERIAL drain of the batch — the claim leases the
+ * whole batch up front, then sends one row at a time, so a late row could
+ * otherwise fall due again (and be sent twice) while the worker is still on
+ * earlier rows. Sized as batch × per-send budget + margin. If the process dies
+ * mid-drain the row retries after the lease (the unique idempotency key stops a
+ * duplicate ENQUEUE, not a duplicate SEND — hence the lease must not expire early).
  */
-const CLAIM_LEASE_MS = 2 * 60 * 1000;
+const CLAIM_LEASE_MS = DRAIN_BATCH * PER_SEND_BUDGET_MS + 60 * 1000;
 
 /**
  * Enqueue a message for delivery — idempotent on `idempotencyKey`. A duplicate
