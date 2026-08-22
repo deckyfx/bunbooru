@@ -8,26 +8,19 @@ import { mailOutbox } from "./schema";
 import { getMailSettings, type MailSettings } from "./settings";
 import type { SmtpTransport } from "./transport";
 
-/**
- * Race `promise` against `ms` so one hung dial can't exceed the per-send budget
- * the lease is sized against. On timeout the send is ABANDONED (nodemailer has no
- * abort hook here) and rejects, so the caller's catch treats it as a normal send
- * failure → backoff. The transport's own per-phase timeouts still apply beneath.
- */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
 /** How many due rows one drain pass attempts (bounds work per tick). */
 const DRAIN_BATCH = 10;
 
 /**
- * Upper bound on a single send attempt — must be >= the transport's combined
- * timeouts (connection + greeting + socket ≈ 50s; see `createNodemailerTransport`).
+ * Upper bound on a single send attempt, used ONLY to size the claim lease. It
+ * must stay >= the transport's combined connection/greeting/socket timeouts (≈50s;
+ * see `createNodemailerTransport`) — those are the REAL per-send cap: they abort
+ * the socket, so a timeout there is a genuine failure that's safe to retry.
+ *
+ * We deliberately do NOT wrap send() in our own Promise.race timeout: that
+ * wouldn't cancel the underlying send, so an "abandoned" send could still deliver
+ * while the retry delivers too — a duplicate email. Enforce the cap in the
+ * transport (which can actually abort), not here.
  */
 const PER_SEND_BUDGET_MS = 60 * 1000;
 
@@ -161,20 +154,17 @@ export async function drainOnce(deps: DrainDeps): Promise<DrainResult> {
   for (const row of due) {
     result.attempted += 1;
     try {
-      // Hard-cap each send at the budget the lease is sized against, so a stalled
-      // dial can't outlast the lease and let another worker re-send the row.
-      await withTimeout(
-        transport.send({
-          from: from as string, // held above when null
-          to: row.to,
-          subject: row.subject,
-          text: row.text,
-          html: row.html ?? undefined,
-          replyTo: settings.replyTo ?? undefined,
-        }),
-        PER_SEND_BUDGET_MS,
-        "smtp send",
-      );
+      // Each send is bounded by the transport's own connection/greeting/socket
+      // timeouts (which abort the socket on expiry — a real, retry-safe failure).
+      // We do NOT add our own timeout race here; see PER_SEND_BUDGET_MS.
+      await transport.send({
+        from: from as string, // held above when null
+        to: row.to,
+        subject: row.subject,
+        text: row.text,
+        html: row.html ?? undefined,
+        replyTo: settings.replyTo ?? undefined,
+      });
       await db
         .update(mailOutbox)
         .set({ sentAt: now(), lastError: null, attempts: row.attempts + 1 })
