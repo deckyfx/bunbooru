@@ -294,6 +294,7 @@ function UploadLimitsSection() {
   const update = useUpdateUploadLimits();
   const [maxUpload, setMaxUpload] = useState("");
   const [maxResumable, setMaxResumable] = useState("");
+  const [requireVerified, setRequireVerified] = useState(false);
   const seeded = useRef(false);
 
   // Seed the inputs from the server values ONCE — a later background refetch
@@ -302,6 +303,7 @@ function UploadLimitsSection() {
     if (limits.data && !seeded.current) {
       setMaxUpload(String(limits.data.maxUploadBytes));
       setMaxResumable(String(limits.data.maxResumableUploadBytes));
+      setRequireVerified(limits.data.requireVerifiedEmailForReset);
       seeded.current = true;
     }
   }, [limits.data]);
@@ -309,18 +311,23 @@ function UploadLimitsSection() {
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (update.isPending) return;
-    const patch: { maxUploadBytes?: number; maxResumableUploadBytes?: number } = {};
+    const patch: {
+      maxUploadBytes?: number;
+      maxResumableUploadBytes?: number;
+      requireVerifiedEmailForReset?: boolean;
+    } = {};
     const mu = Number(maxUpload);
     const mr = Number(maxResumable);
     if (Number.isSafeInteger(mu) && mu >= 1) patch.maxUploadBytes = mu;
     if (Number.isSafeInteger(mr) && mr >= 1) patch.maxResumableUploadBytes = mr;
-    if (Object.keys(patch).length === 0) return; // nothing valid to save
+    // Always send the policy flag (a boolean is always valid) so the toggle saves.
+    patch.requireVerifiedEmailForReset = requireVerified;
     update.mutate(patch);
   }
 
   return (
     <section className={`${CARD_CLASS} max-w-xl`}>
-      <h2 className="mb-2 text-base font-bold">Upload limits</h2>
+      <h2 className="mb-2 text-base font-bold">Settings</h2>
       {limits.isLoading ? (
         <p className="text-[12px] text-muted">Loading…</p>
       ) : limits.isError ? (
@@ -364,13 +371,32 @@ function UploadLimitsSection() {
           ) : null}
           {update.isSuccess ? <p className="text-[12px] text-tag-character">Saved.</p> : null}
 
+          <fieldset className="border-t border-line pt-3">
+            <legend className="mb-1 font-bold">Password reset</legend>
+            <label className="flex items-start gap-2 text-[12px]">
+              <input
+                type="checkbox"
+                checked={requireVerified}
+                onChange={(e) => setRequireVerified(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Require a <b>verified</b> email to reset a password.
+                <span className="mt-0.5 block text-[11px] text-muted">
+                  Recommended: blocks account takeover via a mistyped registration email. With this
+                  off, any stored address can reset.
+                </span>
+              </span>
+            </label>
+          </fieldset>
+
           <button
             type="submit"
             disabled={update.isPending}
             className="flex items-center justify-center gap-1 rounded bg-link px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             {update.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-            Save limits
+            Save settings
           </button>
         </form>
       )}

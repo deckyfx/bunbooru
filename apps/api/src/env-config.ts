@@ -213,6 +213,50 @@ class EnvConfig {
   }
 
   /**
+   * Absolute public base URL the site is reached at (e.g. `https://booru.example`),
+   * used to build the links in reset/verify emails. Returns null when unset.
+   *
+   * Validated as an absolute `http(s)` URL at boot so a misconfiguration fails
+   * fast rather than at the first email. The trailing slash is trimmed so callers
+   * can append paths without doubling it. This is the ONLY source of the link
+   * origin — it is never derived from the request `Host` header (host-header
+   * injection is the classic reset vulnerability). Required whenever a mail
+   * provider is active; the composition root enforces that.
+   */
+  get PUBLIC_BASE_URL(): string | null {
+    const raw = Bun.env.PUBLIC_BASE_URL?.trim();
+    if (!raw) return null;
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw new Error(`PUBLIC_BASE_URL must be an absolute URL, got "${raw}"`);
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error(`PUBLIC_BASE_URL must be an http(s) URL, got "${raw}"`);
+    }
+    // Normalize to origin + path without a trailing slash so `${base}/reset-…`
+    // never produces a double slash.
+    return (url.origin + url.pathname).replace(/\/+$/, "");
+  }
+
+  /**
+   * First-boot seed for the `require_verified_email_for_reset` policy (default
+   * false). Only seeds the setting's default; after first boot the admin console
+   * owns it at runtime. Accepts `true`/`false` (case-insensitive).
+   */
+  get REQUIRE_VERIFIED_EMAIL_FOR_RESET(): boolean {
+    const raw = Bun.env.REQUIRE_VERIFIED_EMAIL_FOR_RESET?.trim().toLowerCase();
+    if (raw === undefined || raw === "") return false;
+    if (raw !== "true" && raw !== "false") {
+      throw new Error(
+        `REQUIRE_VERIFIED_EMAIL_FOR_RESET must be "true" or "false", got "${raw}"`,
+      );
+    }
+    return raw === "true";
+  }
+
+  /**
    * Whether the session cookie gets the `Secure` attribute. On in production
    * (HTTPS-only) so the cookie never rides over plaintext; off in dev/test where
    * the API is served over http://localhost.

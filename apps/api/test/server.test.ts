@@ -9,6 +9,7 @@ import type {
   AuthService,
   Core,
   ListAssetsOptions,
+  MailService,
   SettingsService,
   StatsService,
   Tag,
@@ -66,6 +67,7 @@ const sampleUser: User = {
   email: null,
   passwordHash: "argon2-hash-should-never-leak",
   role: "member",
+  emailVerifiedAt: null,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
 };
 
@@ -99,6 +101,7 @@ function stubCore(
   statsOverrides: Partial<StatsService> = {},
   authOverrides: Partial<AuthService> = {},
   settingsOverrides: Partial<SettingsService> = {},
+  mailOverrides: Partial<MailService> = {},
 ): Core {
   return {
     assetService: {
@@ -148,6 +151,12 @@ function stubCore(
       listApiKeys: async () => [sampleApiKey],
       revokeApiKey: async () => true,
       findByUsername: async () => null,
+      requestPasswordReset: async () => undefined,
+      resetPassword: async () => undefined,
+      changePassword: async () => ({ token: SESSION_TOKEN, user: sampleUser }),
+      requestEmailVerification: async () => undefined,
+      confirmEmailVerification: async () => undefined,
+      gcExpiredTokens: async () => 0,
       ...authOverrides,
     },
     settingsService: {
@@ -159,7 +168,17 @@ function stubCore(
         maxUploadBytes: patch.maxUploadBytes ?? MAX_UPLOAD_BYTES,
         maxResumableUploadBytes: patch.maxResumableUploadBytes ?? MAX_UPLOAD_BYTES,
       }),
+      getRequireVerifiedEmailForReset: async () => false,
+      setRequireVerifiedEmailForReset: async (value) => value,
       ...settingsOverrides,
+    },
+    mailService: {
+      isConfigured: () => false,
+      activeProviderId: () => null,
+      setProvider: () => {},
+      send: async () => undefined,
+      verify: async () => undefined,
+      ...mailOverrides,
     },
     pluginStateService: {
       activeIds: async () => new Set<string>(),
@@ -1058,6 +1077,7 @@ describe("superadmin, settings, and API keys", () => {
     expect(await ok.json()).toEqual({
       maxUploadBytes: MAX_UPLOAD_BYTES,
       maxResumableUploadBytes: MAX_UPLOAD_BYTES,
+      requireVerifiedEmailForReset: false,
     });
 
     const forbidden = await buildApp(stubCore()).handle(
@@ -1071,7 +1091,11 @@ describe("superadmin, settings, and API keys", () => {
       jsonReq("/settings", "PATCH", { maxUploadBytes: 2048 }),
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ maxUploadBytes: 2048, maxResumableUploadBytes: MAX_UPLOAD_BYTES });
+    expect(await res.json()).toEqual({
+      maxUploadBytes: 2048,
+      maxResumableUploadBytes: MAX_UPLOAD_BYTES,
+      requireVerifiedEmailForReset: false,
+    });
   });
 
   it("PATCH /settings → 400 on a domain ValidationError", async () => {

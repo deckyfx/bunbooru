@@ -6,6 +6,7 @@ import {
   CORE_PACKAGE,
   isOwnerOrAdmin,
   MAX_PER_PAGE,
+  MIN_PASSWORD_LENGTH,
   type ApiKeySummary,
   type Asset,
   type AssetUpdate,
@@ -51,6 +52,11 @@ export interface AppDependencies {
 /** Per-IP throttles on the credential endpoints (in-memory, single-instance). */
 const LOGIN_RATE = { windowMs: 15 * 60 * 1000, max: 10 } as const;
 const REGISTER_RATE = { windowMs: 60 * 60 * 1000, max: 5 } as const;
+/** Forgot-password throttles: per-IP (flood) AND per-address (targeted spam). */
+const FORGOT_PASSWORD_IP_RATE = { windowMs: 15 * 60 * 1000, max: 10 } as const;
+const FORGOT_PASSWORD_ADDRESS_RATE = { windowMs: 60 * 60 * 1000, max: 5 } as const;
+/** Per-IP throttle on token redemption + verify requests (defence in depth). */
+const RESET_RATE = { windowMs: 15 * 60 * 1000, max: 20 } as const;
 
 /**
  * Wire shape of an asset. Timestamps are ISO strings (Drizzle hands back `Date`,
@@ -108,14 +114,25 @@ function serializeApiKey(key: ApiKeySummary): ApiKeyDto {
   };
 }
 
-/** Wire shape of the editable runtime upload caps. */
-export type UploadLimitsDto = { maxUploadBytes: number; maxResumableUploadBytes: number };
+/**
+ * Wire shape of the editable runtime settings — the upload caps plus the
+ * `require_verified_email_for_reset` policy flag. (Named `UploadLimitsDto` for
+ * historical continuity; it now carries the small set of admin-editable settings.)
+ */
+export type UploadLimitsDto = {
+  maxUploadBytes: number;
+  maxResumableUploadBytes: number;
+  requireVerifiedEmailForReset: boolean;
+};
 
 /**
  * Wire shape of a user — the password hash is NEVER included ({@link PublicUser}
- * omits it), and `createdAt` is an ISO string over the wire.
+ * omits it), and the timestamps are ISO strings (or null) over the wire.
  */
-export type UserDto = Omit<PublicUser, "createdAt"> & { createdAt: string };
+export type UserDto = Omit<PublicUser, "createdAt" | "emailVerifiedAt"> & {
+  createdAt: string;
+  emailVerifiedAt: string | null;
+};
 
 /**
  * Project a {@link User} onto its public JSON wire form. Enumerates fields
@@ -128,6 +145,7 @@ function serializeUser(user: User): UserDto {
     username: user.username,
     email: user.email,
     role: user.role,
+    emailVerifiedAt: user.emailVerifiedAt ? user.emailVerifiedAt.toISOString() : null,
     createdAt: user.createdAt.toISOString(),
   };
 }
@@ -178,6 +196,9 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
   // one instance in production since the composition root builds the app once).
   const loginLimiter = createRateLimiter(LOGIN_RATE);
   const registerLimiter = createRateLimiter(REGISTER_RATE);
+  const forgotPasswordIpLimiter = createRateLimiter(FORGOT_PASSWORD_IP_RATE);
+  const forgotPasswordAddressLimiter = createRateLimiter(FORGOT_PASSWORD_ADDRESS_RATE);
+  const resetLimiter = createRateLimiter(RESET_RATE);
   // The plugin host owns activation state; without one, fall back to a permissive
   // static host so directly-mounted plugin routes (tests) aren't gated.
   const pluginHost = host ?? staticPluginHost(plugins);
@@ -354,6 +375,110 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
         .get("/auth/me", ({ currentUser }) => ({
           user: currentUser ? serializeUser(currentUser) : null,
         }))
+        // Public auth capabilities the web gates its UI on — currently whether a
+        // mail provider is configured (so the "forgot password?" link is shown
+        // only when self-serve reset can actually work).
+        .get("/auth/config", () => ({ mailConfigured: core.mailService.isConfigured() }))
+        // Begin self-serve password reset. 503 when mail is unconfigured (the web
+        // hides the link in that case). Otherwise ALWAYS returns the same 200 body
+        // whether or not the address exists — no account-enumeration oracle.
+        // Throttled per-IP (flood) and per-address (targeted spam).
+        .post(
+          "/auth/forgot-password",
+          async ({ body, request, server }) => {
+            if (!core.mailService.isConfigured()) {
+              throw new HttpError(503, "Password reset is not configured on this server.");
+            }
+            const ip = clientIp(request, server, envConfig.TRUST_PROXY);
+            if (!forgotPasswordIpLimiter.hit(ip)) {
+              throw new HttpError(429, "Too many reset requests. Please try again later.");
+            }
+            const email = body.email.trim();
+            // Key the per-address limit on the canonical (lowercased) address so
+            // casing can't be used to bypass it. Applied to the supplied input
+            // regardless of whether it maps to a real account (no enumeration).
+            if (email && !forgotPasswordAddressLimiter.hit(`addr:${email.toLowerCase()}`)) {
+              throw new HttpError(429, "Too many reset requests. Please try again later.");
+            }
+            await core.authService.requestPasswordReset({ email, ip });
+            // Deliberately generic — identical whether or not the address exists.
+            return { ok: true as const };
+          },
+          { body: t.Object({ email: t.String({ minLength: 1, maxLength: 320 }) }) },
+        )
+        // Redeem a reset token: set a new password + revoke all the user's
+        // sessions. 400 for a too-short password, 401 for a bad/expired token.
+        .post(
+          "/auth/reset-password",
+          async ({ body, request, server, set }) => {
+            if (!resetLimiter.hit(clientIp(request, server, envConfig.TRUST_PROXY))) {
+              throw new HttpError(429, "Too many attempts. Please try again later.");
+            }
+            await core.authService.resetPassword(body.token, body.password);
+            set.status = 204;
+            return "";
+          },
+          {
+            body: t.Object({
+              token: t.String({ minLength: 1, maxLength: 512 }),
+              password: t.String({ minLength: MIN_PASSWORD_LENGTH, maxLength: 200 }),
+            }),
+          },
+        )
+        // Change the logged-in user's password (requires the current one). Revokes
+        // all sessions and re-issues a fresh one so this browser stays logged in.
+        .post(
+          "/auth/change-password",
+          async ({ body, currentUser, set }) => {
+            const user = requireUser(currentUser);
+            const { token } = await core.authService.changePassword(
+              user.id,
+              body.current,
+              body.next,
+            );
+            set.headers["set-cookie"] = buildSessionCookie(token, envConfig.SESSION_EXPIRY_MS, {
+              secure: envConfig.COOKIE_SECURE,
+            });
+            set.status = 204;
+            return "";
+          },
+          {
+            body: t.Object({
+              current: t.String({ minLength: 1, maxLength: 200 }),
+              next: t.String({ minLength: MIN_PASSWORD_LENGTH, maxLength: 200 }),
+            }),
+          },
+        )
+        // Email the logged-in user a verification link for the address on file.
+        // 503 when mail is unconfigured; 400 when the account has no email.
+        .post("/auth/verify-email/request", async ({ currentUser, request, server, set }) => {
+          const user = requireUser(currentUser);
+          if (!core.mailService.isConfigured()) {
+            throw new HttpError(503, "Email verification is not configured on this server.");
+          }
+          if (!resetLimiter.hit(clientIp(request, server, envConfig.TRUST_PROXY))) {
+            throw new HttpError(429, "Too many requests. Please try again later.");
+          }
+          await core.authService.requestEmailVerification({
+            userId: user.id,
+            ip: clientIp(request, server, envConfig.TRUST_PROXY),
+          });
+          set.status = 204;
+          return "";
+        })
+        // Confirm an email-verification token. 401 for a bad/expired token.
+        .post(
+          "/auth/verify-email/confirm",
+          async ({ body, request, server, set }) => {
+            if (!resetLimiter.hit(clientIp(request, server, envConfig.TRUST_PROXY))) {
+              throw new HttpError(429, "Too many attempts. Please try again later.");
+            }
+            await core.authService.confirmEmailVerification(body.token);
+            set.status = 204;
+            return "";
+          },
+          { body: t.Object({ token: t.String({ minLength: 1, maxLength: 512 }) }) },
+        )
         // Newest-first page of assets. `page`/`per_page` are coerced and
         // range-checked here; the service clamps defensively as well.
         .get(
@@ -709,22 +834,35 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
         .get("/settings", async ({ currentUser }): Promise<UploadLimitsDto> => {
           const user = requireUser(currentUser);
           if (!canModerate(user)) throw new AuthorizationError();
-          return core.settingsService.getUploadLimits();
+          const [limits, requireVerifiedEmailForReset] = await Promise.all([
+            core.settingsService.getUploadLimits(),
+            core.settingsService.getRequireVerifiedEmailForReset(),
+          ]);
+          return { ...limits, requireVerifiedEmailForReset };
         })
-        // Update one or both upload caps. Invalid values (non-positive, or a
-        // one-shot cap above the request-body ceiling) → 400 (ValidationError).
+        // Update the upload caps and/or the reset-verification policy. Invalid cap
+        // values (non-positive, or a one-shot cap above the request-body ceiling)
+        // → 400 (ValidationError). Only the provided fields change.
         .patch(
           "/settings",
           async ({ body, currentUser }): Promise<UploadLimitsDto> => {
             const user = requireUser(currentUser);
             if (!canModerate(user)) throw new AuthorizationError();
-            return core.settingsService.updateUploadLimits(
+            const limits = await core.settingsService.updateUploadLimits(
               {
                 maxUploadBytes: body.maxUploadBytes,
                 maxResumableUploadBytes: body.maxResumableUploadBytes,
               },
               user.id,
             );
+            const requireVerifiedEmailForReset =
+              body.requireVerifiedEmailForReset !== undefined
+                ? await core.settingsService.setRequireVerifiedEmailForReset(
+                    body.requireVerifiedEmailForReset,
+                    user.id,
+                  )
+                : await core.settingsService.getRequireVerifiedEmailForReset();
+            return { ...limits, requireVerifiedEmailForReset };
           },
           {
             body: t.Object({
@@ -732,6 +870,7 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
               maxResumableUploadBytes: t.Optional(
                 t.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
               ),
+              requireVerifiedEmailForReset: t.Optional(t.Boolean()),
             }),
           },
         )

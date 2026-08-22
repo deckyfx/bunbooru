@@ -19,7 +19,17 @@ function fakeRepo(initial: Record<string, string> = {}) {
   return { repo, calls };
 }
 
-const defaults = { maxUploadBytes: 1000, maxResumableUploadBytes: 5000 };
+const defaults = {
+  maxUploadBytes: 1000,
+  maxResumableUploadBytes: 5000,
+  requireVerifiedEmailForReset: false,
+};
+
+/** The upload-caps subset that `getUploadLimits` returns (no policy flag). */
+const uploadDefaults = {
+  maxUploadBytes: defaults.maxUploadBytes,
+  maxResumableUploadBytes: defaults.maxResumableUploadBytes,
+};
 const CEILING = 2000;
 
 function makeService(initial: Record<string, string> = {}) {
@@ -31,7 +41,7 @@ function makeService(initial: Record<string, string> = {}) {
 describe("createSettingsService", () => {
   it("returns the env defaults when nothing is overridden", async () => {
     const { service } = makeService();
-    expect(await service.getUploadLimits()).toEqual(defaults);
+    expect(await service.getUploadLimits()).toEqual(uploadDefaults);
   });
 
   it("applies a DB override over the default", async () => {

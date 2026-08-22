@@ -50,3 +50,7 @@ export {
   createApiKeyRepository,
   type ApiKeyRepository,
 } from "./repositories/api-key-repository";
+export {
+  createAuthTokenRepository,
+  type AuthTokenRepository,
+} from "./repositories/auth-token-repository";

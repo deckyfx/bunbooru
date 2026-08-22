@@ -50,6 +50,17 @@ export const tagCategoryEnum = pgEnum("tag_category", [
 export const userRoleEnum = pgEnum("user_role", ["admin", "member", "guest"]);
 
 /**
+ * Purpose of a short-lived, single-use {@link authTokens} token. Generic from the
+ * start so email verification is additive rather than a second table: reset uses
+ * `password-reset`, verification uses `verify-email`. Appended last, so a future
+ * purpose (e.g. `change-email`) is a plain `ALTER TYPE ... ADD VALUE`.
+ */
+export const authTokenPurposeEnum = pgEnum("auth_token_purpose", [
+  "password-reset",
+  "verify-email",
+]);
+
+/**
  * A registered account. Passwords are stored only as Bun-hashed digests.
  * `email` is optional (nullable) — registration needs only username + password;
  * the unique constraint still holds (Postgres allows multiple NULLs).
@@ -67,6 +78,11 @@ export const users = pgTable(
     email: text("email").unique(),
     passwordHash: text("password_hash").notNull(),
     role: userRoleEnum("role").notNull().default("member"),
+    // When the account's email was proven controlled (via a `verify-email` token).
+    // Nullable: an unverified (or email-less) account has NULL here. The
+    // `require_verified_email_for_reset` setting decides whether a NULL blocks
+    // self-serve password reset.
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("users_username_lower_idx").on(sql`lower(${table.username})`)],
@@ -294,6 +310,36 @@ export const apiKeys = pgTable(
   (table) => [index("api_keys_user_idx").on(table.userId)],
 );
 
+/**
+ * A short-lived, single-use auth token — the shared primitive behind self-serve
+ * password reset and email verification. Like sessions/API keys, only the sha256
+ * hash of the opaque token is stored (`tokenHash`), never the raw value; the raw
+ * token travels in an emailed link and is shown to the user exactly once.
+ *
+ * `consumedAt` enforces single use (set atomically when the token is redeemed),
+ * `expiresAt` bounds the exposure window (30 min), and `requestedIp` is retained
+ * for abuse investigation. Cascades when the owning user is deleted; expired rows
+ * are reclaimed by a periodic sweep alongside the session GC.
+ */
+export const authTokens = pgTable(
+  "auth_tokens",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    userId: bigint("user_id", { mode: "number" })
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    purpose: authTokenPurposeEnum("purpose").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // Best-effort origin IP of the request that minted the token (abuse forensics);
+    // nullable since it may be unknown behind an untrusted proxy.
+    requestedIp: text("requested_ip"),
+  },
+  (table) => [index("auth_tokens_user_purpose_idx").on(table.userId, table.purpose)],
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 
@@ -327,7 +373,11 @@ export type NewPluginState = typeof pluginStates.$inferInsert;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type NewApiKey = typeof apiKeys.$inferInsert;
 
+export type AuthToken = typeof authTokens.$inferSelect;
+export type NewAuthToken = typeof authTokens.$inferInsert;
+
 /** Domain enum unions, derived from the pg enums so they can't drift. */
 export type Rating = (typeof ratingEnum.enumValues)[number];
 export type TagCategory = (typeof tagCategoryEnum.enumValues)[number];
 export type UserRole = (typeof userRoleEnum.enumValues)[number];
+export type AuthTokenPurpose = (typeof authTokenPurposeEnum.enumValues)[number];

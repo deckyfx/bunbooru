@@ -4,7 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { Loader2, LogIn } from "lucide-react";
 
 import { PasswordInput } from "../components/password-input";
-import { authErrorMessage, useLogin } from "../lib/auth";
+import { authErrorMessage, useAuthConfig, useLogin } from "../lib/auth";
 import { TEXT_INPUT } from "../lib/input-styles";
 
 /**
@@ -15,6 +15,7 @@ import { TEXT_INPUT } from "../lib/input-styles";
 export function LoginPage() {
   const navigate = useNavigate();
   const login = useLogin();
+  const authConfig = useAuthConfig();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
@@ -54,7 +55,17 @@ export function LoginPage() {
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-[12px] font-semibold">Password</span>
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-[12px] font-semibold">Password</span>
+              {authConfig.data?.mailConfigured ? (
+                <Link
+                  to="/forgot-password"
+                  className="text-[11px] font-medium text-link hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              ) : null}
+            </div>
             <PasswordInput
               value={password}
               onChange={setPassword}

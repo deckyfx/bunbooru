@@ -20,6 +20,11 @@ export type { StorageProvider };
 // (for `ctx.storage`) without importing `@bunbooru/storage` directly.
 export type { StoredObject } from "@bunbooru/storage";
 
+// Mail transport contract — Core's dependency-inversion boundary for email
+// (like StorageProvider). A plugin implements it and registers it through the
+// SDK's `mailProvider`; Core's MailService holds the active one.
+export type { MailProvider, OutgoingMail } from "./mail/mail-provider";
+
 // Domain row types, re-exported so downstream apps depend on Core, not db directly.
 export type { ApiKey, Asset, AssetUpdate, Rating, Tag, TagCategory, User, UserRole } from "@bunbooru/db";
 
@@ -88,6 +93,7 @@ export {
 // Accounts + opaque server sessions + API keys — auth/currentUser + session GC.
 export {
   createAuthService,
+  MIN_PASSWORD_LENGTH,
   type ApiKeySummary,
   type AuthService,
   type AuthServiceConfig,
@@ -97,13 +103,22 @@ export {
   type RegisterInput,
 } from "./services/auth-service";
 
-// Admin-editable runtime settings — upload caps (env defaults + DB overrides).
+// Admin-editable runtime settings — upload caps + reset-verification policy.
 export {
   createSettingsService,
+  type SettingsDefaults,
   type SettingsService,
   type SettingsServiceConfig,
   type UploadLimits,
 } from "./services/settings-service";
+
+// Outgoing-mail hub — Core's dependency-inversion boundary for email delivery.
+export {
+  createLogMailProvider,
+  createMailService,
+  type MailLogger,
+  type MailService,
+} from "./mail/mail-service";
 
 // Persisted plugin on/off state — the API's plugin host reads/writes this.
 export {
@@ -118,6 +133,8 @@ export { canModerate, canWrite, isOwnerOrAdmin } from "./services/permissions";
 export {
   AuthenticationError,
   AuthorizationError,
+  MailNotConfiguredError,
+  MailProviderConflictError,
   RegistrationConflictError,
   UnsupportedMediaError,
   UploadConflictError,

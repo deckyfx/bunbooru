@@ -1,6 +1,7 @@
 import {
   AuthenticationError,
   AuthorizationError,
+  MailNotConfiguredError,
   RegistrationConflictError,
   UnsupportedMediaError,
   UploadConflictError,
@@ -24,6 +25,7 @@ export function statusFor(code: string | number, error: unknown): number {
   if (error instanceof RegistrationConflictError) return 409;
   if (error instanceof UploadConflictError) return 409;
   if (error instanceof UploadRangeError) return 400;
+  if (error instanceof MailNotConfiguredError) return 503;
   switch (code) {
     case "NOT_FOUND":
       return 404;

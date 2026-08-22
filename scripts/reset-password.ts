@@ -12,11 +12,12 @@
  * identical to registration, so the account logs in normally afterward.
  */
 import * as p from "@clack/prompts";
+import { MIN_PASSWORD_LENGTH } from "@bunbooru/core";
 import { createDb, users } from "@bunbooru/db";
 import { eq } from "drizzle-orm";
 
-/** Minimum password length — mirrors the registration rule. */
-const MIN_PASSWORD = 8;
+/** Minimum password length — the single shared rule from Core (reset/register/CLI). */
+const MIN_PASSWORD = MIN_PASSWORD_LENGTH;
 
 // Require an explicit DATABASE_URL — never fall back to a default. Resetting a
 // password against the WRONG database (a silent localhost default) is exactly the

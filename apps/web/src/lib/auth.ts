@@ -96,3 +96,73 @@ export function useLogout() {
     onSuccess: () => queryClient.setQueryData(CURRENT_USER_KEY, null),
   });
 }
+
+/**
+ * Public auth capabilities the UI gates on — currently `mailConfigured`, which
+ * decides whether the "forgot password?" link and email-verification affordances
+ * are shown (self-serve reset only works with a mail provider installed).
+ */
+export function useAuthConfig() {
+  return useQuery({
+    queryKey: ["auth-config"] as const,
+    // Server config rarely changes at runtime — cache generously.
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<{ mailConfigured: boolean }> =>
+      unwrap(await api.api.v1.auth.config.get()),
+  });
+}
+
+/** Request a password-reset email. Always resolves the same way (no enumeration). */
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: async (email: string) =>
+      unwrap(await api.api.v1.auth["forgot-password"].post({ email })),
+  });
+}
+
+/** Redeem a reset token with a new password (204 — check `error`, not `unwrap`). */
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: async (input: { token: string; password: string }) => {
+      const res = await api.api.v1.auth["reset-password"].post(input);
+      if (res.error) throw res.error;
+    },
+  });
+}
+
+/**
+ * Change the logged-in user's password. The server re-issues the session cookie,
+ * so the browser stays logged in; we refresh the cached user for good measure.
+ */
+export function useChangePassword() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { current: string; next: string }) => {
+      const res = await api.api.v1.auth["change-password"].post(input);
+      if (res.error) throw res.error;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY }),
+  });
+}
+
+/** Ask the server to email a verification link for the account's address. */
+export function useRequestEmailVerification() {
+  return useMutation({
+    mutationFn: async () => {
+      const res = await api.api.v1.auth["verify-email"].request.post();
+      if (res.error) throw res.error;
+    },
+  });
+}
+
+/** Confirm an email-verification token, then refresh the cached user (verified state). */
+export function useConfirmEmailVerification() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (token: string) => {
+      const res = await api.api.v1.auth["verify-email"].confirm.post({ token });
+      if (res.error) throw res.error;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY }),
+  });
+}

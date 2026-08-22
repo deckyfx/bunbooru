@@ -126,6 +126,9 @@ const core = createCore({
   requestBodyCeilingBytes: 2 * 1024 * 1024 * 1024,
   // Unused by the seeder (it never opens a session); any positive value works.
   sessionExpiryMs: 30 * 24 * 60 * 60 * 1000,
+  // The seeder never sends mail or resets passwords.
+  publicBaseUrl: null,
+  requireVerifiedEmailForReset: false,
 });
 
 /** Aspect variety so the masonry layout has something to do. */

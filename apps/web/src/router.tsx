@@ -7,12 +7,15 @@ import {
 import { AccountPage } from "./routes/account";
 import { AdminPage } from "./routes/admin";
 import { RootLayout } from "./routes/__root";
+import { ForgotPasswordPage } from "./routes/forgot-password";
 import { HomePage } from "./routes/home";
 import { LoginPage } from "./routes/login";
 import { PostDetailPage } from "./routes/post-detail";
 import { PostsPage } from "./routes/posts";
+import { ResetPasswordPage } from "./routes/reset-password";
 import { SignupPage } from "./routes/signup";
 import { UploadPage } from "./routes/upload";
+import { VerifyEmailPage } from "./routes/verify-email";
 
 const rootRoute = createRootRoute({ component: RootLayout });
 
@@ -57,6 +60,24 @@ const signupRoute = createRoute({
   component: SignupPage,
 });
 
+const forgotPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/forgot-password",
+  component: ForgotPasswordPage,
+});
+
+const resetPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/reset-password",
+  component: ResetPasswordPage,
+});
+
+const verifyEmailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/verify-email",
+  component: VerifyEmailPage,
+});
+
 const adminRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/admin",
@@ -76,6 +97,9 @@ const routeTree = rootRoute.addChildren([
   uploadRoute,
   loginRoute,
   signupRoute,
+  forgotPasswordRoute,
+  resetPasswordRoute,
+  verifyEmailRoute,
   adminRoute,
   accountRoute,
 ]);
