@@ -245,31 +245,46 @@ export function pluginRoutePrefix<Id extends string>(id: Id): `/api/v1/plugins/$
 }
 
 /**
- * Normalize a plugin id into a safe SQL identifier fragment: lowercase, every
- * run of non-alphanumeric characters collapsed to a single `_`, trimmed of
- * leading/trailing `_`. So `"smtp-mailer"` → `"smtp_mailer"`.
+ * Normalize a string into a safe SQL identifier fragment: lowercase, every run of
+ * non-alphanumeric characters collapsed to a single `_`, trimmed of leading/
+ * trailing `_`. So `"smtp-mailer"` → `"smtp_mailer"`, `"outbox-items"` →
+ * `"outbox_items"`. (Non-ASCII is stripped here, so the result is pure ASCII and
+ * its char length equals its byte length.)
  */
-function normalizePluginId(pluginId: string): string {
-  return pluginId
+function normalizeIdentifier(part: string): string {
+  return part
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
 }
 
 /**
- * The canonical DB table name for a plugin-owned table: `<plugin_id>_<name>`
- * (the id normalized to a SQL-safe identifier). Every plugin table MUST be named
- * with this so ownership is obvious from the name alone — `smtp-mailer`'s
- * `"outbox"` becomes `smtp_mailer_outbox`. Pair it with declaring the logical
- * names in {@link BunbooruPlugin.tables} so the host can catalog them.
+ * The canonical DB table name for a plugin-owned table: `<plugin_id>_<name>`,
+ * with BOTH parts normalized to a SQL-safe identifier. Every plugin table MUST be
+ * named with this so ownership is obvious from the name alone — `smtp-mailer`'s
+ * `"outbox"` becomes `smtp_mailer_outbox`. Pair it with {@link BunbooruPlugin.tables}.
  *
- * Throws if the result would exceed Postgres's 63-byte identifier limit (it would
- * be silently truncated otherwise, risking a collision).
+ * Throws when the inputs can't yield a valid unquoted Postgres identifier:
+ * - either part is empty after normalization (nothing to name),
+ * - the result would start with a digit (invalid unquoted), or
+ * - the result exceeds Postgres's 63-BYTE identifier limit (silent truncation →
+ *   collision). Byte-checked, not char-checked.
  */
 export function pluginTableName(pluginId: string, name: string): string {
-  const full = `${normalizePluginId(pluginId)}_${name}`;
-  if (full.length > 63) {
-    throw new Error(`Plugin table name "${full}" exceeds Postgres's 63-char identifier limit.`);
+  const id = normalizeIdentifier(pluginId);
+  const table = normalizeIdentifier(name);
+  if (!id || !table) {
+    throw new Error(
+      `pluginTableName: both parts must be non-empty after normalization ` +
+        `(got pluginId="${pluginId}", name="${name}").`,
+    );
+  }
+  const full = `${id}_${table}`;
+  if (/^[0-9]/.test(full)) {
+    throw new Error(`pluginTableName: "${full}" must not start with a digit.`);
+  }
+  if (new TextEncoder().encode(full).length > 63) {
+    throw new Error(`pluginTableName: "${full}" exceeds Postgres's 63-byte identifier limit.`);
   }
   return full;
 }

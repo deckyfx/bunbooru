@@ -6,7 +6,6 @@
  * changes flow: edit `schema.ts` → `bun run db:generate` → review SQL → `bun run
  * migrate`.
  */
-import { createDb } from "./client";
 import { applyCoreMigrations } from "./migrator";
 
 const url = Bun.env.DATABASE_URL;
@@ -15,12 +14,10 @@ if (!url) {
   process.exit(1);
 }
 
-const db = createDb(url);
-
 console.log("▶ Applying migrations…");
 try {
-  // Same code path (and folder) the API uses on boot — one source of truth.
-  await applyCoreMigrations(db);
+  // Same code path (advisory-locked, one source of truth) the API uses on boot.
+  await applyCoreMigrations(url);
   console.log("✔ Migrations applied.");
 } catch (error) {
   console.error("✖ Migration failed:", error instanceof Error ? error.message : error);

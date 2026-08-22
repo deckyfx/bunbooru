@@ -39,7 +39,7 @@ const { core, db, storage } = createCoreRuntime({
 // Apply any pending CORE migrations before serving, so adding a migration takes
 // effect on the next boot with no manual step (plugin migrations already
 // auto-apply in loadPlugins). Runs on the shared handle; idempotent.
-await applyCoreMigrations(db);
+await applyCoreMigrations(envConfig.DATABASE_URL);
 logger.info("core_migrations_applied", {});
 
 // Load ALL known plugins before building the app: their migrations run here and
