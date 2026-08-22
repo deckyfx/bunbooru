@@ -1,5 +1,5 @@
 import { SQL } from "bun";
-import { beforeAll, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from "bun:test";
 import { drizzle } from "drizzle-orm/bun-sql";
 import { eq, sql } from "drizzle-orm";
 
@@ -46,9 +46,20 @@ const MAIL: OutgoingMail = {
 
 describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
   let db: DB;
+  let client: SQL;
 
   beforeAll(async () => {
-    db = drizzle({ client: new SQL(TEST_DATABASE_URL as string) }) as unknown as DB;
+    // This suite issues DESTRUCTIVE DDL (DROP/CREATE its own tables). Fail closed
+    // if TEST_DATABASE_URL is (mis)pointed at the app database — it MUST be a
+    // dedicated throwaway database, per the integration-test convention.
+    if (TEST_DATABASE_URL === Bun.env.DATABASE_URL?.trim()) {
+      throw new Error(
+        "TEST_DATABASE_URL must not equal DATABASE_URL — this suite drops tables. " +
+          "Point it at a dedicated test database.",
+      );
+    }
+    client = new SQL(TEST_DATABASE_URL as string);
+    db = drizzle({ client }) as unknown as DB;
     // Self-contained schema (plugin tables aren't part of Core's migrations).
     await db.execute(sql`DROP TABLE IF EXISTS mail_outbox`);
     await db.execute(sql`DROP TABLE IF EXISTS mail_settings`);
@@ -77,6 +88,11 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
         updated_at timestamptz NOT NULL DEFAULT now()
       )
     `);
+  });
+
+  afterAll(async () => {
+    // Close the pooled connection so the suite doesn't leak it.
+    await client?.close();
   });
 
   beforeEach(async () => {
@@ -144,7 +160,13 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
     const first = await drainOnce({ db, transport, log: noopLog });
     expect(first).toMatchObject({ attempted: 1, failed: 1 });
 
-    // Now exhausted → no longer due → not attempted again.
+    // Force the row DUE again so the second pass can only be skipped by the
+    // budget filter (attempts >= MAX), not because backoff pushed it into the
+    // future — that's what actually proves exhausted rows aren't retried.
+    await db
+      .update(mailOutbox)
+      .set({ nextAttemptAt: new Date("2000-01-01T00:00:00.000Z") })
+      .where(eq(mailOutbox.idempotencyKey, "reset:doomed"));
     const second = await drainOnce({ db, transport, log: noopLog });
     expect(second.attempted).toBe(0);
 
