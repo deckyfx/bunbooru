@@ -14,6 +14,8 @@ export interface ExtensionInfo {
   version: string;
   description: string | null;
   capabilities: SdkCapability[];
+  /** The DB tables this plugin owns (from its `tables` declaration / the catalog). */
+  tables: string[];
   /** Admin pages this plugin contributes to the console. */
   adminPages: { id: string; title: string }[];
   /** Whether the plugin is currently mounted (its routes/pages are served). */
@@ -87,6 +89,7 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
       version: p.version,
       description: p.description,
       capabilities: [...p.capabilities],
+      tables: [...p.tables],
       adminPages: p.adminPages,
       active: active.has(p.id),
     };
@@ -163,6 +166,7 @@ export function staticPluginHost(manifest: readonly PluginManifestEntry[] = []):
         version: e.version,
         description: null,
         capabilities: [],
+        tables: [],
         adminPages: e.adminPages,
         active: true,
       })),

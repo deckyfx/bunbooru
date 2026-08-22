@@ -28,6 +28,8 @@ export interface LoadedPlugin {
   description: string | null;
   /** SDK capabilities the plugin declares (badges in the management UI). */
   capabilities: SdkCapability[];
+  /** The actual DB table names this plugin owns (its declared `tables`), for the catalog. */
+  tables: string[];
   adminPages: AdminPage[];
   /** The plugin's Elysia app (prefixed by `pluginRoutePrefix`), if it has routes. */
   routes?: AnyElysia;
@@ -203,6 +205,8 @@ export async function loadPlugins({
       version: plugin.version,
       description: plugin.description ?? null,
       capabilities: [...(plugin.capabilities ?? [])],
+      // Actual table names the plugin declares — recorded verbatim in the catalog.
+      tables: [...(plugin.tables ?? [])],
       adminPages: registration.adminPages ?? [],
       routes: registration.routes,
       mailProvider: registration.mailProvider,

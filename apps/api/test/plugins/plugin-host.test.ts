@@ -42,13 +42,14 @@ function betaRoutes() {
 }
 
 const loaded: LoadedPlugin[] = [
-  { id: "alpha", name: "Alpha", version: "1.0.0", description: "First", capabilities: ["routes"], adminPages: [] },
+  { id: "alpha", name: "Alpha", version: "1.0.0", description: "First", capabilities: ["routes"], tables: [], adminPages: [] },
   {
     id: "beta",
     name: "Beta",
     version: "2.0.0",
     description: null,
     capabilities: [],
+    tables: ["beta_widgets"],
     adminPages: [{ id: "x", title: "X" }],
     routes: betaRoutes(),
   },
@@ -123,6 +124,7 @@ const appCore = {
   settingsService: {} as SettingsService,
   mailService: {} as Core["mailService"],
   pluginStateService: {} as Core["pluginStateService"],
+  pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
 } satisfies Core;
 

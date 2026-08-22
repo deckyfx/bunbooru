@@ -130,6 +130,7 @@ export const plugin = definePlugin({
   version: "0.1.0",
   description: "Outgoing email via SMTP (nodemailer) with a retrying outbox; log-only without SMTP config.",
   capabilities: ["routes", "tables", "mail-providers", "jobs", "admin-pages"],
+  tables: ["mail_outbox", "mail_settings"],
   migrations: {
     migrationsFolder: fileURLToPath(new URL("../drizzle", import.meta.url)),
     migrationsTable: "__drizzle_migrations_smtp-mailer",

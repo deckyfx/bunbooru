@@ -1,4 +1,4 @@
-import { createCoreRuntime, createLogMailProvider } from "@bunbooru/core";
+import { applyCoreMigrations, createCoreRuntime, createLogMailProvider } from "@bunbooru/core";
 
 import { envConfig, MAX_REQUEST_BODY_BYTES } from "./env-config";
 import { logger } from "./lib/logger";
@@ -35,6 +35,12 @@ const { core, db, storage } = createCoreRuntime({
   publicBaseUrl,
   requireVerifiedEmailForReset: envConfig.REQUIRE_VERIFIED_EMAIL_FOR_RESET,
 });
+
+// Apply any pending CORE migrations before serving, so adding a migration takes
+// effect on the next boot with no manual step (plugin migrations already
+// auto-apply in loadPlugins). Runs on the shared handle; idempotent.
+await applyCoreMigrations(envConfig.DATABASE_URL);
+logger.info("core_migrations_applied", {});
 
 // Load ALL known plugins before building the app: their migrations run here and
 // their routes get mounted, so runtime activation is a pure in-memory/DB flip (no
@@ -77,6 +83,13 @@ if (core.mailService.isConfigured() && !publicBaseUrl) {
     "PUBLIC_BASE_URL is required when a mail provider is active (set it to the site's absolute URL).",
   );
 }
+
+// Record every loaded plugin's owned tables in the catalog in ONE atomic write
+// (so a partial failure can't leave it half-written) — this is how the admin
+// console shows which table belongs to which plugin.
+await core.pluginCatalogService.recordAll(
+  loadedPlugins.map((p) => ({ pluginId: p.id, tables: p.tables })),
+);
 
 const pluginHost = createPluginHost({
   pluginState: core.pluginStateService,

@@ -297,6 +297,26 @@ export const pluginStates = pgTable("plugin_states", {
 });
 
 /**
+ * Catalog of the tables each plugin owns — populated by the host at load time
+ * from every plugin's declared `tables` (already prefixed via `pluginTableName`,
+ * e.g. `smtp_mailer_outbox`). With many plugins this is how the admin console
+ * shows which table belongs to which plugin, and it gives a future "uninstall"
+ * the exact drop-list. Keyed by (plugin_id, table_name).
+ */
+export const pluginTables = pgTable(
+  "plugin_tables",
+  {
+    pluginId: text("plugin_id").notNull(),
+    tableName: text("table_name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.pluginId, table.tableName] })],
+);
+
+export type PluginTable = typeof pluginTables.$inferSelect;
+export type NewPluginTable = typeof pluginTables.$inferInsert;
+
+/**
  * A long-lived API key for non-browser (Bearer) clients. Like sessions, the DB
  * stores only the sha256 hash of the opaque token (`bnb_…`); the raw key is shown
  * once at creation. No expiry — a key is valid until revoked. Cascades when the

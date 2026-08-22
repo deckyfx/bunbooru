@@ -261,6 +261,12 @@ function ExtensionCard({
               ))}
             </ul>
           ) : null}
+          {ext.tables.length > 0 ? (
+            <p className="mt-2 text-[11px] text-muted">
+              <span className="font-bold">Owns tables:</span>{" "}
+              <span className="font-mono">{ext.tables.join(", ")}</span>
+            </p>
+          ) : null}
         </div>
 
         <button

@@ -6,8 +6,7 @@
  * changes flow: edit `schema.ts` → `bun run db:generate` → review SQL → `bun run
  * migrate`.
  */
-import { createDb } from "./client";
-import { applyMigrations } from "./migrator";
+import { applyCoreMigrations } from "./migrator";
 
 const url = Bun.env.DATABASE_URL;
 if (!url) {
@@ -15,12 +14,10 @@ if (!url) {
   process.exit(1);
 }
 
-const db = createDb(url);
-const migrationsFolder = `${import.meta.dir}/../drizzle`;
-
 console.log("▶ Applying migrations…");
 try {
-  await applyMigrations(db, { migrationsFolder });
+  // Same code path (advisory-locked, one source of truth) the API uses on boot.
+  await applyCoreMigrations(url);
   console.log("✔ Migrations applied.");
 } catch (error) {
   console.error("✖ Migration failed:", error instanceof Error ? error.message : error);

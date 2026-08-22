@@ -185,6 +185,11 @@ function stubCore(
       setActive: async () => {},
       seedIfEmpty: async () => false,
     },
+    pluginCatalogService: {
+      record: async () => {},
+      recordAll: async () => {},
+      list: async () => [],
+    },
     events: createCoreEvents(),
   };
 }
