@@ -6,7 +6,7 @@ import { isExhausted, MAX_SEND_ATTEMPTS, nextAttemptAt } from "./backoff";
 import { maskEmail } from "./mask";
 import { mailOutbox } from "./schema";
 import { getMailSettings, type MailSettings } from "./settings";
-import type { SmtpTransport } from "./transport";
+import type { TransportResolver } from "./transport";
 
 /** How many due rows one drain pass attempts (bounds work per tick). */
 const DRAIN_BATCH = 10;
@@ -88,7 +88,8 @@ export interface DrainResult {
 /** Dependencies for {@link drainOnce} — injectable so tests control time. */
 export interface DrainDeps {
   db: DB;
-  transport: SmtpTransport;
+  /** Resolves the current transport from settings (null → no SMTP host → hold). */
+  resolver: TransportResolver;
   log: PluginLogger;
   /** Clock, injectable for deterministic tests. Defaults to `new Date()`. */
   now?: () => Date;
@@ -103,12 +104,15 @@ export interface DrainDeps {
  *   row is no longer due and stays visible as permanently failed.
  */
 export async function drainOnce(deps: DrainDeps): Promise<DrainResult> {
-  const { db, transport, log } = deps;
+  const { db, resolver, log } = deps;
   const now = deps.now ?? (() => new Date());
   const result: DrainResult = { attempted: 0, sent: 0, failed: 0, held: 0 };
 
   const settings = await getMailSettings(db);
   const from = resolveFrom(settings);
+  // Resolve the current transport from settings (rebuilt on change). Null → no
+  // SMTP host configured → hold everything.
+  const transport = await resolver.get();
 
   const isDue = and(
     isNull(mailOutbox.sentAt),
@@ -118,17 +122,15 @@ export async function drainOnce(deps: DrainDeps): Promise<DrainResult> {
 
   // Sending is paused or misconfigured: HOLD (don't claim) so nothing burns the
   // retry budget — count the backlog for the log without touching rows.
-  if (!settings.enabled || !from) {
+  if (!transport || !settings.enabled || !from) {
     const due = await db
       .select({ id: mailOutbox.id })
       .from(mailOutbox)
       .where(isDue)
       .limit(DRAIN_BATCH);
     if (due.length > 0) {
-      log.warn("mail_outbox_held", {
-        reason: settings.enabled ? "no_from_address" : "disabled",
-        held: due.length,
-      });
+      const reason = !settings.enabled ? "disabled" : !transport ? "no_smtp_host" : "no_from_address";
+      log.warn("mail_outbox_held", { reason, held: due.length });
       result.held = due.length;
     }
     return result;

@@ -9,7 +9,7 @@ import { MAX_SEND_ATTEMPTS } from "../src/backoff";
 import { drainOnce, enqueue, outboxCounts } from "../src/outbox";
 import { mailOutbox } from "../src/schema";
 import { updateMailSettings } from "../src/settings";
-import type { SmtpTransport } from "../src/transport";
+import type { SmtpTransport, TransportResolver } from "../src/transport";
 
 /**
  * Integration tests against a real Postgres (opt-in `TEST_DATABASE_URL`, same
@@ -26,7 +26,7 @@ const noopLog: PluginLogger = { info: () => {}, warn: () => {}, error: () => {} 
 
 /** A transport whose send/verify outcome the test controls. */
 function transportThatSucceeds(): SmtpTransport {
-  return { send: mock(async () => {}), verify: mock(async () => {}) };
+  return { send: mock(async () => {}), verify: mock(async () => {}), close: mock(async () => {}) };
 }
 function transportThatFails(message: string): SmtpTransport {
   return {
@@ -34,6 +34,16 @@ function transportThatFails(message: string): SmtpTransport {
       throw new Error(message);
     }),
     verify: mock(async () => {}),
+    close: mock(async () => {}),
+  };
+}
+
+/** A resolver over a fixed transport (null → no SMTP host → hold). */
+function resolverFor(transport: SmtpTransport | null): TransportResolver {
+  return {
+    get: async () => transport,
+    isConfigured: async () => transport !== null,
+    close: async () => {},
   };
 }
 
@@ -80,6 +90,11 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
         from_name text,
         from_address text,
         reply_to text,
+        host text,
+        port integer,
+        secure boolean NOT NULL DEFAULT false,
+        username text,
+        password text,
         enabled boolean NOT NULL DEFAULT true,
         updated_at timestamptz NOT NULL DEFAULT now()
       )
@@ -108,7 +123,7 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
   it("drainOnce delivers a queued row and stamps sent_at", async () => {
     await enqueue(db, MAIL);
     const transport = transportThatSucceeds();
-    const result = await drainOnce({ db, transport, log: noopLog });
+    const result = await drainOnce({ db, resolver: resolverFor(transport), log: noopLog });
     expect(result).toMatchObject({ attempted: 1, sent: 1, failed: 0 });
     expect(transport.send).toHaveBeenCalledTimes(1);
     const [row] = await db.select().from(mailOutbox);
@@ -130,7 +145,7 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
     });
     const result = await drainOnce({
       db,
-      transport: transportThatFails("connection refused"),
+      resolver: resolverFor(transportThatFails("connection refused")),
       log: noopLog,
       now: () => now,
     });
@@ -154,8 +169,9 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
       nextAttemptAt: new Date("2000-01-01T00:00:00.000Z"),
     });
     const transport = transportThatFails("still failing");
+    const resolver = resolverFor(transport);
 
-    const first = await drainOnce({ db, transport, log: noopLog });
+    const first = await drainOnce({ db, resolver, log: noopLog });
     expect(first).toMatchObject({ attempted: 1, failed: 1 });
 
     // Force the row DUE again so the second pass can only be skipped by the
@@ -165,7 +181,7 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
       .update(mailOutbox)
       .set({ nextAttemptAt: new Date("2000-01-01T00:00:00.000Z") })
       .where(eq(mailOutbox.idempotencyKey, "reset:doomed"));
-    const second = await drainOnce({ db, transport, log: noopLog });
+    const second = await drainOnce({ db, resolver, log: noopLog });
     expect(second.attempted).toBe(0);
 
     const counts = await outboxCounts(db);
@@ -180,7 +196,7 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
     await updateMailSettings(db, { enabled: false });
     await enqueue(db, MAIL);
     const transport = transportThatSucceeds();
-    const result = await drainOnce({ db, transport, log: noopLog });
+    const result = await drainOnce({ db, resolver: resolverFor(transport), log: noopLog });
     expect(result).toMatchObject({ attempted: 0, held: 1 });
     expect(transport.send).not.toHaveBeenCalled();
   });
@@ -208,12 +224,14 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
       }),
       verify: mock(async () => {}),
+      close: mock(async () => {}),
     };
+    const resolver = resolverFor(transport);
 
     try {
       const [a, b] = await Promise.all([
-        drainOnce({ db, transport, log: noopLog }),
-        drainOnce({ db: db2, transport, log: noopLog }),
+        drainOnce({ db, resolver, log: noopLog }),
+        drainOnce({ db: db2, resolver, log: noopLog }),
       ]);
 
       expect(sends).toBe(1);

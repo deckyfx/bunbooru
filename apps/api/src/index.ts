@@ -75,10 +75,11 @@ if (mailPlugin) {
   core.mailService.setProvider(createLogMailProvider(logger), "core:log-only");
 }
 
-// A configured mail provider needs an absolute link origin. Enforce it now that
-// we know whether mail is active — a boot-time failure beats a silent one at the
-// first reset email.
-if (core.mailService.isConfigured() && !publicBaseUrl) {
+// A mail provider needs an absolute link origin for its messages. Base this on
+// whether a provider is REGISTERED (sync) — not on isConfigured() — because an
+// admin may configure the SMTP host at runtime later; we still want the link
+// origin guaranteed up front. A boot-time failure beats a silent one at first send.
+if (core.mailService.activeProviderId() !== null && !publicBaseUrl) {
   throw new Error(
     "PUBLIC_BASE_URL is required when a mail provider is active (set it to the site's absolute URL).",
   );

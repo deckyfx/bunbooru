@@ -44,4 +44,12 @@ export interface MailProvider {
   send(mail: OutgoingMail): Promise<void>;
   /** Cheap liveness probe for the admin console (e.g. verify the SMTP connection). */
   verify(): Promise<void>;
+  /**
+   * Whether the provider is actually usable right now (e.g. an SMTP host has been
+   * configured). Optional: a provider that omits it is treated as always
+   * configured (e.g. the dev log-only provider). Drives whether Core exposes the
+   * self-serve reset/verify flows — a provider that merely exists but isn't set up
+   * yet reports `false` here so those endpoints 503 honestly.
+   */
+  isConfigured?(): boolean | Promise<boolean>;
 }

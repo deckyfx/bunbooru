@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 import type {
   AssetService,
@@ -27,10 +27,17 @@ function fakeLogger(): PluginLogger & { messages: string[] } {
 }
 
 /**
- * A stub {@link PluginContext} — enough to exercise `register`. In log-only mode
- * (no SMTP host) `register` never starts a worker and never touches the db, so a
- * bare db stub is fine.
+ * A read-only db stub whose SELECT chain always returns no rows — so
+ * `getMailSettings` falls back to defaults (no host → log-only) and the drain
+ * loop finds nothing. No host means the provider never INSERTs, so this is enough
+ * to exercise `register` + log-only delivery without a real database.
  */
+function stubDb(): DB {
+  const chain = { from: () => chain, where: () => chain, limit: async () => [] as unknown[] };
+  return { select: () => chain } as unknown as DB;
+}
+
+/** A stub {@link PluginContext} — enough to exercise `register` in log-only mode. */
 function stubContext(log: PluginLogger): PluginContext {
   return {
     services: {
@@ -40,24 +47,13 @@ function stubContext(log: PluginLogger): PluginContext {
       settings: {} as SettingsService,
       auth: {} as AuthService,
     },
-    // Not used by register in log-only mode (no event subscriptions).
     events: {} as CoreEvents,
-    db: {} as DB,
+    db: stubDb(),
     storage: {} as StorageProvider,
     auth: { currentUser: async () => null },
     log,
   };
 }
-
-// Force log-only mode regardless of the developer's environment.
-let savedHost: string | undefined;
-beforeAll(() => {
-  savedHost = Bun.env.SMTP_HOST;
-  delete Bun.env.SMTP_HOST;
-});
-afterAll(() => {
-  if (savedHost !== undefined) Bun.env.SMTP_HOST = savedHost;
-});
 
 describe("smtp-mailer plugin manifest", () => {
   it("declares a stable id, description, and the mail-providers capability", () => {
@@ -80,7 +76,7 @@ describe("smtp-mailer register (log-only, over a stub context)", () => {
     expect(registration.adminPages).toEqual([{ id: "smtp-mailer", title: "Email (SMTP)" }]);
   });
 
-  it("installs a provider that delivers in log-only mode (no db, no SMTP)", async () => {
+  it("installs a provider that delivers in log-only mode (no SMTP host configured)", async () => {
     const log = fakeLogger();
     const registration = await plugin.register(stubContext(log));
     await registration.mailProvider?.send({

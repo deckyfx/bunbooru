@@ -49,6 +49,20 @@ export const mailSettings = pgTable("mail_settings", {
   fromAddress: text("from_address"),
   /** Optional Reply-To address. */
   replyTo: text("reply_to"),
+  // ─── SMTP connection (admin-editable via the UI; no env) ───────────────────
+  /** SMTP server host. NULL → log-only mode (nothing dialed). */
+  host: text("host"),
+  /** SMTP port (465 implicit-TLS, 587/25 STARTTLS). NULL → default 587. */
+  port: integer("port"),
+  /** true → implicit TLS (465); false → STARTTLS. */
+  secure: boolean("secure").notNull().default(false),
+  /** SMTP AUTH username (paired with {@link password}); NULL for open relays. */
+  username: text("username"),
+  /**
+   * SMTP AUTH password. Stored here (plugin-owned table); the API NEVER returns
+   * it to a browser — the admin form is write-only (see the routes in index.ts).
+   */
+  password: text("password"),
   /**
    * Operator kill-switch. When false, `send()` still enqueues (so nothing is
    * lost), but the worker holds delivery — useful to pause a misconfigured

@@ -1,7 +1,7 @@
 import type { DB, PluginLogger } from "@bunbooru/plugin-sdk";
 
 import { createOutboxWorker, type OutboxWorker } from "./outbox";
-import type { SmtpTransport } from "./transport";
+import type { TransportResolver } from "./transport";
 
 /**
  * How often the outbox worker polls for due messages (ms). Overridable via
@@ -21,7 +21,7 @@ function pollIntervalMs(env: Record<string, string | undefined> = Bun.env): numb
 /** Inputs for {@link startWorker}. */
 export interface StartWorkerDeps {
   db: DB;
-  transport: SmtpTransport;
+  resolver: TransportResolver;
   log: PluginLogger;
 }
 

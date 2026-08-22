@@ -10,9 +10,13 @@ import type { MailProvider, OutgoingMail } from "./mail-provider";
  * fast rather than silently rerouting mail.
  */
 export interface MailService {
-  /** Whether a provider is currently installed (gates the reset/verify flows). */
-  isConfigured(): boolean;
-  /** The id of the plugin that installed the active provider, or null. */
+  /**
+   * Whether mail is actually usable right now — a provider is installed AND (if it
+   * reports readiness) it's configured. Async because a provider may need to check
+   * runtime config (e.g. an SMTP host saved in the DB). Gates the reset/verify flows.
+   */
+  isConfigured(): Promise<boolean>;
+  /** The id of the plugin that installed the active provider, or null (sync). */
   activeProviderId(): string | null;
   /**
    * Install `provider`, attributing it to `pluginId`. Re-installing from the SAME
@@ -37,8 +41,11 @@ export function createMailService(): MailService {
   let active: { provider: MailProvider; pluginId: string } | null = null;
 
   return {
-    isConfigured() {
-      return active !== null;
+    async isConfigured() {
+      if (!active) return false;
+      // A provider without an isConfigured() hook is treated as ready (e.g. the
+      // dev log-only provider); one with it defers to its runtime check.
+      return (await active.provider.isConfigured?.()) ?? true;
     },
 
     activeProviderId() {

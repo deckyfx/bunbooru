@@ -2,36 +2,36 @@ import type { DB, MailProvider, OutgoingMail, PluginLogger } from "@bunbooru/plu
 
 import { maskEmail } from "./mask";
 import { enqueue } from "./outbox";
-import type { SmtpTransport } from "./transport";
+import type { TransportResolver } from "./transport";
 
 /** What the provider needs, resolved once at registration. */
 export interface ProviderDeps {
   db: DB;
   log: PluginLogger;
-  /**
-   * The SMTP transport, or `null` for log-only mode (no SMTP host configured).
-   * In log-only mode `send()` logs instead of enqueuing/dialing.
-   */
-  transport: SmtpTransport | null;
+  /** Resolves the current transport from the admin-saved settings (may be log-only). */
+  resolver: TransportResolver;
 }
 
 /**
  * Build the {@link MailProvider} the host installs on Core's `MailService`.
  *
- * `send()` never dials SMTP inline: it ENQUEUES to the outbox and returns
- * (accepted != delivered — the worker drains it). In log-only mode it renders
- * the message to the log instead, so mail-dependent flows work with zero config.
+ * `send()` never dials SMTP inline: with a host configured it ENQUEUES to the
+ * outbox and returns (accepted != delivered — the worker drains it). With NO host
+ * configured (log-only) it renders the message to the log instead, so mail-
+ * dependent flows work with zero config. `isConfigured()` reflects the live
+ * setting, so Core's reset/verify flows 503 honestly until an admin sets SMTP up.
  *
  * Logging discipline (doc §6): the recipient is masked and only subject +
  * idempotency key are logged — never the body, tokens, or reset URLs.
  */
 export function createMailProvider(deps: ProviderDeps): MailProvider {
-  const { db, log, transport } = deps;
-  const logOnly = transport === null;
+  const { db, log, resolver } = deps;
 
   return {
     async send(mail: OutgoingMail): Promise<void> {
-      if (logOnly) {
+      // No SMTP host configured → log-only: log instead of enqueuing (nothing
+      // would ever dial a queued row).
+      if (!(await resolver.isConfigured())) {
         log.info("mail_log_only", {
           to: maskEmail(mail.to),
           subject: mail.subject,
@@ -49,9 +49,14 @@ export function createMailProvider(deps: ProviderDeps): MailProvider {
     },
 
     async verify(): Promise<void> {
+      const transport = await resolver.get();
       // Log-only "works" — mail is captured to the log; nothing to probe.
-      if (logOnly) return;
+      if (!transport) return;
       await transport.verify();
+    },
+
+    async isConfigured(): Promise<boolean> {
+      return resolver.isConfigured();
     },
   };
 }

@@ -1,11 +1,12 @@
 /**
- * SMTP secrets — read from ENV only (doc §6 config split). These are credentials
- * and connection details: never admin-editable, never returned to a browser.
- * Non-secret presentation settings (from name/address, reply-to) live in the
- * plugin's own table instead (see `schema.ts` / `settings.ts`).
+ * SMTP connection secrets, derived from the admin-saved settings (the plugin's
+ * own table) — NOT from env. The whole configuration is UI-driven; there is no
+ * `SMTP_*` env path. The password lives in the settings table and is never
+ * returned to a browser (the admin form is write-only).
  */
+import type { MailSettings } from "./settings";
 
-/** Parsed, validated SMTP connection secrets from env. */
+/** Parsed SMTP connection secrets. */
 export interface SmtpSecrets {
   host: string;
   port: number;
@@ -17,60 +18,26 @@ export interface SmtpSecrets {
   secure: boolean;
 }
 
-/** Default SMTP port when `SMTP_PORT` is unset: STARTTLS submission (587). */
+/** Default SMTP port when none is set: STARTTLS submission (587). */
 const DEFAULT_SMTP_PORT = 587;
 
 /**
- * Read SMTP secrets from env. Returns `null` when `SMTP_HOST` is unset/blank —
- * the signal to run in log-only mode (see {@link isLogOnly}). A present-but-
- * invalid `SMTP_PORT`/`SMTP_SECURE` throws so a misconfiguration fails loudly
- * rather than dialing the wrong port silently.
+ * Derive connection secrets from the saved settings, or `null` when no host is
+ * configured — the signal to run in log-only mode. An out-of-range port falls
+ * back to {@link DEFAULT_SMTP_PORT} (the admin UI validates on input too).
  */
-export function readSmtpSecrets(env: Record<string, string | undefined> = Bun.env): SmtpSecrets | null {
-  const host = env.SMTP_HOST?.trim();
+export function secretsFromSettings(settings: MailSettings): SmtpSecrets | null {
+  const host = settings.host?.trim();
   if (!host) return null;
 
-  const rawPort = env.SMTP_PORT?.trim();
-  let port = DEFAULT_SMTP_PORT;
-  if (rawPort) {
-    port = Number(rawPort);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      throw new Error(`SMTP_PORT must be an integer between 1 and 65535, got "${rawPort}"`);
-    }
-  }
+  const port =
+    settings.port !== null && Number.isInteger(settings.port) && settings.port >= 1 && settings.port <= 65535
+      ? settings.port
+      : DEFAULT_SMTP_PORT;
 
-  const rawSecure = env.SMTP_SECURE?.trim().toLowerCase();
-  let secure: boolean;
-  if (rawSecure === undefined || rawSecure === "") {
-    // Implicit TLS iff the well-known SMTPS port; otherwise STARTTLS.
-    secure = port === 465;
-  } else if (rawSecure === "true" || rawSecure === "1") {
-    secure = true;
-  } else if (rawSecure === "false" || rawSecure === "0") {
-    secure = false;
-  } else {
-    throw new Error(`SMTP_SECURE must be true/false (or 1/0), got "${rawSecure}"`);
-  }
-
-  const user = env.SMTP_USER?.trim() || undefined;
+  const user = settings.username?.trim() || undefined;
   // Not trimmed: passwords may hold spaces. Empty/unset counts as absent.
-  const rawPassword = env.SMTP_PASSWORD;
-  const password = rawPassword !== undefined && rawPassword !== "" ? rawPassword : undefined;
-  // AUTH is all-or-nothing: a lone user is silently ignored by nodemailer, and a
-  // lone password reaches it as `pass: undefined` — both signal a misconfiguration
-  // that could send unauthenticated. Fail loudly instead.
-  if ((user === undefined) !== (password === undefined)) {
-    throw new Error("SMTP_USER and SMTP_PASSWORD must be set together (or both omitted).");
-  }
+  const password = settings.password && settings.password !== "" ? settings.password : undefined;
 
-  return { host, port, user, password, secure };
-}
-
-/**
- * Whether the plugin runs in log-only mode — true when no SMTP host is
- * configured. In this mode `send()` logs the message instead of dialing SMTP, so
- * mail-dependent flows are testable with zero configuration (doc §6 Development).
- */
-export function isLogOnly(env: Record<string, string | undefined> = Bun.env): boolean {
-  return readSmtpSecrets(env) === null;
+  return { host, port, user, password, secure: settings.secure };
 }
