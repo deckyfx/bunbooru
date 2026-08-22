@@ -1,3 +1,11 @@
+// NOTE (intentional, re: CodeRabbit): Core depends on @bunbooru/db here — this is
+// the SANCTIONED dependency edge (CLAUDE.md: apps → plugins → plugin-sdk → core →
+// db; dependency-cruiser passes with 0 violations). Every Core service composes
+// over a repository interface from @bunbooru/db (auth, settings, plugin-state,
+// stats, …); this one is no different. We deliberately do NOT invert it into a
+// Core-defined port or route persistence through the event bus — that would add
+// an event-sourcing layer for a single catalog write and make this service
+// inconsistent with the rest of Core, for no real benefit.
 import { type PluginTableRepository } from "@bunbooru/db";
 
 /** One plugin's owned tables, as surfaced to the admin console. */
