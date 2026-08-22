@@ -112,6 +112,7 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
     expect(result).toMatchObject({ attempted: 1, sent: 1, failed: 0 });
     expect(transport.send).toHaveBeenCalledTimes(1);
     const [row] = await db.select().from(mailOutbox);
+    expect(row).toBeDefined();
     expect(row?.sentAt).not.toBeNull();
   });
 
@@ -135,6 +136,7 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
     });
     expect(result).toMatchObject({ attempted: 1, sent: 0, failed: 1 });
     const [row] = await db.select().from(mailOutbox);
+    expect(row).toBeDefined();
     expect(row?.sentAt).toBeNull();
     expect(row?.attempts).toBe(1);
     expect(row?.lastError).toBe("connection refused");
@@ -170,6 +172,7 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
     expect(counts.failed).toBe(1);
     expect(counts.queued).toBe(0);
     const [row] = await db.select().from(mailOutbox).where(eq(mailOutbox.idempotencyKey, "reset:doomed"));
+    expect(row).toBeDefined();
     expect(row?.attempts).toBe(MAX_SEND_ATTEMPTS); // still present, not deleted
   });
 
