@@ -75,7 +75,7 @@ export const users = pgTable(
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
     username: text("username").notNull(),
-    email: text("email").unique(),
+    email: text("email"),
     passwordHash: text("password_hash").notNull(),
     role: userRoleEnum("role").notNull().default("member"),
     // When the account's email was proven controlled (via a `verify-email` token).
@@ -85,7 +85,14 @@ export const users = pgTable(
     emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("users_username_lower_idx").on(sql`lower(${table.username})`)],
+  (table) => [
+    uniqueIndex("users_username_lower_idx").on(sql`lower(${table.username})`),
+    // Case-insensitive uniqueness matching findByEmail's lower(email) lookup, so
+    // mixed-case variants of one address can't coexist (which would make the
+    // reset lookup ambiguous). NULLs stay distinct — email is optional. Mirrors
+    // the username index above.
+    uniqueIndex("users_email_lower_idx").on(sql`lower(${table.email})`),
+  ],
 );
 
 /**

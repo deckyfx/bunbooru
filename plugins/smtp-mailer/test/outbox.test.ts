@@ -49,15 +49,11 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
   let client: SQL;
 
   beforeAll(async () => {
-    // This suite issues DESTRUCTIVE DDL (DROP/CREATE its own tables). Fail closed
-    // if TEST_DATABASE_URL is (mis)pointed at the app database — it MUST be a
-    // dedicated throwaway database, per the integration-test convention.
-    if (TEST_DATABASE_URL === Bun.env.DATABASE_URL?.trim()) {
-      throw new Error(
-        "TEST_DATABASE_URL must not equal DATABASE_URL — this suite drops tables. " +
-          "Point it at a dedicated test database.",
-      );
-    }
+    // NOTE: this suite issues DESTRUCTIVE DDL (DROP/CREATE its own tables), so
+    // TEST_DATABASE_URL MUST be a dedicated throwaway database — the same opt-in
+    // contract the db-package integration tests rely on (they TRUNCATE). It is
+    // intentionally allowed to equal DATABASE_URL: CI provisions ONE disposable
+    // Postgres and uses it for both.
     client = new SQL(TEST_DATABASE_URL as string);
     db = drizzle({ client }) as unknown as DB;
     // Self-contained schema (plugin tables aren't part of Core's migrations).

@@ -92,6 +92,13 @@
       "when": 1787384045313,
       "tag": "0012_reflective_harrier",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1787384954142,
+      "tag": "0013_magical_sabra",
+      "breakpoints": true
     }
   ]
 }
