@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+
 import { migrate } from "drizzle-orm/bun-sql/migrator";
 
 import type { DB } from "./client";
@@ -24,4 +26,21 @@ export interface MigrationSet {
  */
 export async function applyMigrations(db: DB, set: MigrationSet): Promise<void> {
   await migrate(db, set);
+}
+
+/**
+ * Absolute path to Core's own generated migrations (`packages/db/drizzle`),
+ * resolved relative to this module so callers never hardcode it. Works when the
+ * package runs from source (dev/CI); bundling this SQL into the production
+ * single-file binary is a separate follow-up (same caveat as plugin migrations).
+ */
+export const CORE_MIGRATIONS_FOLDER = fileURLToPath(new URL("../drizzle", import.meta.url));
+
+/**
+ * Apply all pending CORE migrations to `db`. The API composition root calls this
+ * on boot so a freshly-added migration takes effect without a manual step (the
+ * same convention plugin migrations already follow). Idempotent.
+ */
+export async function applyCoreMigrations(db: DB): Promise<void> {
+  await applyMigrations(db, { migrationsFolder: CORE_MIGRATIONS_FOLDER });
 }

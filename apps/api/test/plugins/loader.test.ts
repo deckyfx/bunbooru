@@ -28,6 +28,7 @@ const core: Core = {
   settingsService: {} as SettingsService,
   mailService: {} as Core["mailService"],
   pluginStateService: {} as Core["pluginStateService"],
+  pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
 };
 

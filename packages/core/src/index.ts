@@ -31,7 +31,7 @@ export type { ApiKey, Asset, AssetUpdate, Rating, Tag, TagCategory, User, UserRo
 // The Drizzle handle type + migration runner, re-exported so the plugin loader
 // (and the SDK) reach them through Core rather than importing `@bunbooru/db`.
 export type { DB } from "@bunbooru/db";
-export { applyMigrations, type MigrationSet } from "@bunbooru/db";
+export { applyCoreMigrations, applyMigrations, type MigrationSet } from "@bunbooru/db";
 
 // Core assembly — the single wiring entry point for the API composition root.
 export {
@@ -125,6 +125,13 @@ export {
   createPluginStateService,
   type PluginStateService,
 } from "./services/plugin-state-service";
+
+// Catalog of which DB tables each plugin owns — recorded by the host at load.
+export {
+  createPluginCatalogService,
+  type PluginCatalogService,
+  type PluginTableOwnership,
+} from "./services/plugin-catalog-service";
 
 // Authorization predicates — enforced on writes (owner-or-admin) + admin routes.
 export { canModerate, canWrite, isOwnerOrAdmin } from "./services/permissions";

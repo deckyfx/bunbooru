@@ -6,6 +6,7 @@ import {
   createAuthTokenRepository,
   createDb,
   createPluginStateRepository,
+  createPluginTableRepository,
   createSessionRepository,
   createSettingsRepository,
   createStatsRepository,
@@ -25,6 +26,7 @@ import { createCoreEvents, type CoreEvents } from "./events";
 import { createMailService, type MailService } from "./mail/mail-service";
 import { createAssetService, type AssetService } from "./services/asset-service";
 import { createAuthService, type AuthService } from "./services/auth-service";
+import { createPluginCatalogService, type PluginCatalogService } from "./services/plugin-catalog-service";
 import { createPluginStateService, type PluginStateService } from "./services/plugin-state-service";
 import { createSettingsService, type SettingsService } from "./services/settings-service";
 import { createStatsService, type StatsService } from "./services/stats-service";
@@ -52,6 +54,8 @@ export interface Core {
   mailService: MailService;
   /** Persisted plugin on/off state — the source of truth the API's plugin host reads. */
   pluginStateService: PluginStateService;
+  /** Catalog of which DB tables each plugin owns (recorded by the host at load). */
+  pluginCatalogService: PluginCatalogService;
   /** Typed pub/sub bus — Core emits domain events (e.g. `asset.created`); plugins subscribe. */
   events: CoreEvents;
 }
@@ -139,6 +143,7 @@ export function assembleCore(
     },
   );
   const pluginStateService = createPluginStateService(createPluginStateRepository(db));
+  const pluginCatalogService = createPluginCatalogService(createPluginTableRepository(db));
   return {
     assetService,
     uploadService,
@@ -148,6 +153,7 @@ export function assembleCore(
     settingsService,
     mailService,
     pluginStateService,
+    pluginCatalogService,
     events,
   };
 }

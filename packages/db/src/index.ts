@@ -11,7 +11,7 @@ export const DB_PACKAGE = "@bunbooru/db" as const;
 export * from "./schema";
 export { createDb } from "./client";
 export type { DB } from "./client";
-export { applyMigrations, type MigrationSet } from "./migrator";
+export { applyCoreMigrations, applyMigrations, CORE_MIGRATIONS_FOLDER, type MigrationSet } from "./migrator";
 export {
   createAssetRepository,
   type AssetPage,
@@ -46,6 +46,11 @@ export {
   createPluginStateRepository,
   type PluginStateRepository,
 } from "./repositories/plugin-state-repository";
+export {
+  createPluginTableRepository,
+  type PluginTableRepository,
+  type PluginTablesRecord,
+} from "./repositories/plugin-table-repository";
 export {
   createApiKeyRepository,
   type ApiKeyRepository,

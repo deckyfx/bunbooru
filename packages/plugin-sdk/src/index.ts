@@ -204,6 +204,18 @@ export interface BunbooruPlugin {
    * not gate on it.
    */
   capabilities?: readonly SdkCapability[];
+  /**
+   * The ACTUAL DB table names this plugin owns (exactly as created by its
+   * {@link migrations}, e.g. `["mail_outbox", "mail_settings"]`). The host records
+   * them in Core's `plugin_tables` catalog so, across many plugins, every table's
+   * owner is known (and a future uninstall knows what to drop). Declarative only —
+   * it does not create tables; keep it in sync with the migrations.
+   *
+   * NEW plugins should name their tables via {@link pluginTableName} so the name
+   * itself encodes ownership (`<plugin_id>_<name>`); then list those same names
+   * here. (A few first-party plugins predate the convention and keep legacy names.)
+   */
+  tables?: readonly string[];
   /** Optional plugin-owned tables + migration tracking. */
   migrations?: PluginMigrations;
   /** Wire routes/pages over the injected context. May be async. */
@@ -230,6 +242,36 @@ export function definePlugin(plugin: BunbooruPlugin): BunbooruPlugin {
  */
 export function pluginRoutePrefix<Id extends string>(id: Id): `/api/v1/plugins/${Id}` {
   return `/api/v1/plugins/${id}`;
+}
+
+/**
+ * Normalize a plugin id into a safe SQL identifier fragment: lowercase, every
+ * run of non-alphanumeric characters collapsed to a single `_`, trimmed of
+ * leading/trailing `_`. So `"smtp-mailer"` → `"smtp_mailer"`.
+ */
+function normalizePluginId(pluginId: string): string {
+  return pluginId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+/**
+ * The canonical DB table name for a plugin-owned table: `<plugin_id>_<name>`
+ * (the id normalized to a SQL-safe identifier). Every plugin table MUST be named
+ * with this so ownership is obvious from the name alone — `smtp-mailer`'s
+ * `"outbox"` becomes `smtp_mailer_outbox`. Pair it with declaring the logical
+ * names in {@link BunbooruPlugin.tables} so the host can catalog them.
+ *
+ * Throws if the result would exceed Postgres's 63-byte identifier limit (it would
+ * be silently truncated otherwise, risking a collision).
+ */
+export function pluginTableName(pluginId: string, name: string): string {
+  const full = `${normalizePluginId(pluginId)}_${name}`;
+  if (full.length > 63) {
+    throw new Error(`Plugin table name "${full}" exceeds Postgres's 63-char identifier limit.`);
+  }
+  return full;
 }
 
 // Authorization predicates + auth errors, re-exported so plugin routes gate

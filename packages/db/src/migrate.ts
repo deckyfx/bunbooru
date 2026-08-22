@@ -7,7 +7,7 @@
  * migrate`.
  */
 import { createDb } from "./client";
-import { applyMigrations } from "./migrator";
+import { applyCoreMigrations } from "./migrator";
 
 const url = Bun.env.DATABASE_URL;
 if (!url) {
@@ -16,11 +16,11 @@ if (!url) {
 }
 
 const db = createDb(url);
-const migrationsFolder = `${import.meta.dir}/../drizzle`;
 
 console.log("▶ Applying migrations…");
 try {
-  await applyMigrations(db, { migrationsFolder });
+  // Same code path (and folder) the API uses on boot — one source of truth.
+  await applyCoreMigrations(db);
   console.log("✔ Migrations applied.");
 } catch (error) {
   console.error("✖ Migration failed:", error instanceof Error ? error.message : error);
