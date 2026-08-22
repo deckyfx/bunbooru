@@ -6,7 +6,7 @@ import { isExhausted, MAX_SEND_ATTEMPTS, nextAttemptAt } from "./backoff";
 import { maskEmail } from "./mask";
 import { mailOutbox } from "./schema";
 import { getMailSettings, type MailSettings } from "./settings";
-import type { SmtpTransport } from "./transport";
+import type { TransportResolver } from "./transport";
 
 /** How many due rows one drain pass attempts (bounds work per tick). */
 const DRAIN_BATCH = 10;
@@ -70,6 +70,10 @@ export function resolveFrom(settings: MailSettings): string | null {
   // can't inject extra SMTP headers via the From line (email header injection).
   const address = settings.fromAddress?.trim().replace(/\p{Cc}/gu, "");
   if (!address) return null;
+  // Basic envelope-sender sanity: a malformed address (e.g. "not-an-email") would
+  // make readiness lie and the send fail on an invalid MAIL FROM. Reject it here
+  // so `isConfigured()` is honest and the worker holds rather than hard-failing.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) return null;
   const name = settings.fromName?.trim().replace(/\p{Cc}/gu, "");
   if (!name) return address;
   // Quote + escape the display name so specials (commas, quotes, angle brackets)
@@ -88,7 +92,8 @@ export interface DrainResult {
 /** Dependencies for {@link drainOnce} — injectable so tests control time. */
 export interface DrainDeps {
   db: DB;
-  transport: SmtpTransport;
+  /** Resolves the current transport from settings (null → no SMTP host → hold). */
+  resolver: TransportResolver;
   log: PluginLogger;
   /** Clock, injectable for deterministic tests. Defaults to `new Date()`. */
   now?: () => Date;
@@ -103,12 +108,16 @@ export interface DrainDeps {
  *   row is no longer due and stays visible as permanently failed.
  */
 export async function drainOnce(deps: DrainDeps): Promise<DrainResult> {
-  const { db, transport, log } = deps;
+  const { db, resolver, log } = deps;
   const now = deps.now ?? (() => new Date());
   const result: DrainResult = { attempted: 0, sent: 0, failed: 0, held: 0 };
 
   const settings = await getMailSettings(db);
   const from = resolveFrom(settings);
+  // Resolve the transport from THIS SAME snapshot (rebuilt on change) — not a
+  // second read — so an admin disabling mail mid-drain can't leave a stale
+  // `enabled` here while the transport still resolves. Null → no host → hold.
+  const transport = await resolver.get(settings);
 
   const isDue = and(
     isNull(mailOutbox.sentAt),
@@ -118,17 +127,15 @@ export async function drainOnce(deps: DrainDeps): Promise<DrainResult> {
 
   // Sending is paused or misconfigured: HOLD (don't claim) so nothing burns the
   // retry budget — count the backlog for the log without touching rows.
-  if (!settings.enabled || !from) {
+  if (!transport || !settings.enabled || !from) {
     const due = await db
       .select({ id: mailOutbox.id })
       .from(mailOutbox)
       .where(isDue)
       .limit(DRAIN_BATCH);
     if (due.length > 0) {
-      log.warn("mail_outbox_held", {
-        reason: settings.enabled ? "no_from_address" : "disabled",
-        held: due.length,
-      });
+      const reason = !settings.enabled ? "disabled" : !transport ? "no_smtp_host" : "no_from_address";
+      log.warn("mail_outbox_held", { reason, held: due.length });
       result.held = due.length;
     }
     return result;

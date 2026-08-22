@@ -378,7 +378,7 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
         // Public auth capabilities the web gates its UI on — currently whether a
         // mail provider is configured (so the "forgot password?" link is shown
         // only when self-serve reset can actually work).
-        .get("/auth/config", () => ({ mailConfigured: core.mailService.isConfigured() }))
+        .get("/auth/config", async () => ({ mailConfigured: await core.mailService.isConfigured() }))
         // Begin self-serve password reset. 503 when mail is unconfigured (the web
         // hides the link in that case). Otherwise ALWAYS returns the same 200 body
         // whether or not the address exists — no account-enumeration oracle.
@@ -386,7 +386,7 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
         .post(
           "/auth/forgot-password",
           async ({ body, request, server }) => {
-            if (!core.mailService.isConfigured()) {
+            if (!(await core.mailService.isConfigured())) {
               throw new HttpError(503, "Password reset is not configured on this server.");
             }
             const ip = clientIp(request, server, envConfig.TRUST_PROXY);
@@ -459,7 +459,7 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
         // 503 when mail is unconfigured; 400 when the account has no email.
         .post("/auth/verify-email/request", async ({ currentUser, request, server, set }) => {
           const user = requireUser(currentUser);
-          if (!core.mailService.isConfigured()) {
+          if (!(await core.mailService.isConfigured())) {
             throw new HttpError(503, "Email verification is not configured on this server.");
           }
           if (!resetLimiter.hit(clientIp(request, server, envConfig.TRUST_PROXY))) {

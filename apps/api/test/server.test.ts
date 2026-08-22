@@ -173,7 +173,7 @@ function stubCore(
       ...settingsOverrides,
     },
     mailService: {
-      isConfigured: () => false,
+      isConfigured: async () => false,
       activeProviderId: () => null,
       setProvider: () => {},
       send: async () => undefined,
@@ -1181,7 +1181,7 @@ describe("superadmin, settings, and API keys", () => {
 describe("auth: password reset + email verification", () => {
   /** A Core whose mail transport reports configured (drives the non-503 paths). */
   const mailOn = (authOverrides: Partial<AuthService> = {}) =>
-    stubCore({}, {}, {}, {}, authOverrides, {}, { isConfigured: () => true });
+    stubCore({}, {}, {}, {}, authOverrides, {}, { isConfigured: async () => true });
 
   /** A JSON POST request (optionally authenticated via {@link AUTH_HEADER}). */
   function jsonPost(path: string, body: unknown, headers: Record<string, string> = {}): Request {

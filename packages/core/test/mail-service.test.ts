@@ -24,7 +24,7 @@ const sampleMail: OutgoingMail = {
 describe("createMailService", () => {
   it("is unconfigured until a provider is installed", async () => {
     const mail = createMailService();
-    expect(mail.isConfigured()).toBe(false);
+    expect(await mail.isConfigured()).toBe(false);
     expect(mail.activeProviderId()).toBeNull();
     await expect(mail.send(sampleMail)).rejects.toBeInstanceOf(MailNotConfiguredError);
     await expect(mail.verify()).rejects.toBeInstanceOf(MailNotConfiguredError);
@@ -35,7 +35,7 @@ describe("createMailService", () => {
     const { provider, sent } = recordingProvider();
     mail.setProvider(provider, "smtp-mailer");
 
-    expect(mail.isConfigured()).toBe(true);
+    expect(await mail.isConfigured()).toBe(true);
     expect(mail.activeProviderId()).toBe("smtp-mailer");
     await mail.send(sampleMail);
     expect(sent).toEqual([sampleMail]);
