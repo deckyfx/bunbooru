@@ -4,11 +4,14 @@ BEGIN
   -- The old users_email_unique was case-SENSITIVE, so case-variant duplicates of
   -- one address (alice@ / Alice@) may exist. The new lower(email) unique index
   -- would abort on them — fail early with the offending addresses instead.
-  SELECT string_agg(lower(email), ', ') INTO dupes
-  FROM users
-  WHERE email IS NOT NULL
-  GROUP BY lower(email)
-  HAVING count(*) > 1;
+  SELECT string_agg(dupe, ', ' ORDER BY dupe) INTO dupes
+  FROM (
+    SELECT lower(email) AS dupe
+    FROM users
+    WHERE email IS NOT NULL
+    GROUP BY lower(email)
+    HAVING count(*) > 1
+  ) d;
   IF dupes IS NOT NULL THEN
     RAISE EXCEPTION 'Cannot enforce case-insensitive email uniqueness. Resolve duplicate addresses first: %', dupes;
   END IF;

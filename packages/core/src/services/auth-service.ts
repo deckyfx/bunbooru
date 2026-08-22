@@ -278,6 +278,7 @@ export function createAuthService(
 
   return {
     async register({ username, password, email }) {
+      assertPasswordLength(password);
       const normalized = normalizeUsername(username);
       const passwordHash = await Bun.password.hash(password);
 
