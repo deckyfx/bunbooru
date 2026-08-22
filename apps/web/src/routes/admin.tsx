@@ -294,6 +294,8 @@ function UploadLimitsSection() {
   const update = useUpdateUploadLimits();
   const [maxUpload, setMaxUpload] = useState("");
   const [maxResumable, setMaxResumable] = useState("");
+  const [requireVerified, setRequireVerified] = useState(false);
+  const [capError, setCapError] = useState<string | null>(null);
   const seeded = useRef(false);
 
   // Seed the inputs from the server values ONCE — a later background refetch
@@ -302,6 +304,7 @@ function UploadLimitsSection() {
     if (limits.data && !seeded.current) {
       setMaxUpload(String(limits.data.maxUploadBytes));
       setMaxResumable(String(limits.data.maxResumableUploadBytes));
+      setRequireVerified(limits.data.requireVerifiedEmailForReset);
       seeded.current = true;
     }
   }, [limits.data]);
@@ -309,18 +312,30 @@ function UploadLimitsSection() {
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (update.isPending) return;
-    const patch: { maxUploadBytes?: number; maxResumableUploadBytes?: number } = {};
+    // Validate the caps up front and REJECT the whole save on a bad value, rather
+    // than silently dropping it from the patch (which looked like a successful save
+    // while leaving the cap unchanged). Both must be whole numbers of bytes >= 1.
     const mu = Number(maxUpload);
     const mr = Number(maxResumable);
-    if (Number.isSafeInteger(mu) && mu >= 1) patch.maxUploadBytes = mu;
-    if (Number.isSafeInteger(mr) && mr >= 1) patch.maxResumableUploadBytes = mr;
-    if (Object.keys(patch).length === 0) return; // nothing valid to save
-    update.mutate(patch);
+    const invalid: string[] = [];
+    if (!maxUpload.trim() || !Number.isSafeInteger(mu) || mu < 1) invalid.push("One-shot upload cap");
+    if (!maxResumable.trim() || !Number.isSafeInteger(mr) || mr < 1) invalid.push("Resumable upload cap");
+    if (invalid.length > 0) {
+      setCapError(`${invalid.join(" and ")} must be a whole number of bytes ≥ 1.`);
+      return;
+    }
+    setCapError(null);
+    update.mutate({
+      maxUploadBytes: mu,
+      maxResumableUploadBytes: mr,
+      // A boolean is always valid, so the policy toggle always saves.
+      requireVerifiedEmailForReset: requireVerified,
+    });
   }
 
   return (
     <section className={`${CARD_CLASS} max-w-xl`}>
-      <h2 className="mb-2 text-base font-bold">Upload limits</h2>
+      <h2 className="mb-2 text-base font-bold">Settings</h2>
       {limits.isLoading ? (
         <p className="text-[12px] text-muted">Loading…</p>
       ) : limits.isError ? (
@@ -357,6 +372,11 @@ function UploadLimitsSection() {
             </span>
           </label>
 
+          {capError ? (
+            <p role="alert" className="text-[12px] text-tag-artist">
+              {capError}
+            </p>
+          ) : null}
           {update.isError ? (
             <p role="alert" className="text-[12px] text-tag-artist">
               {authErrorMessage(update.error, "Couldn’t save. Please check the values.")}
@@ -364,13 +384,32 @@ function UploadLimitsSection() {
           ) : null}
           {update.isSuccess ? <p className="text-[12px] text-tag-character">Saved.</p> : null}
 
+          <fieldset className="border-t border-line pt-3">
+            <legend className="mb-1 font-bold">Password reset</legend>
+            <label className="flex items-start gap-2 text-[12px]">
+              <input
+                type="checkbox"
+                checked={requireVerified}
+                onChange={(e) => setRequireVerified(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Require a <b>verified</b> email to reset a password.
+                <span className="mt-0.5 block text-[11px] text-muted">
+                  Recommended: blocks account takeover via a mistyped registration email. With this
+                  off, any stored address can reset.
+                </span>
+              </span>
+            </label>
+          </fieldset>
+
           <button
             type="submit"
             disabled={update.isPending}
             className="flex items-center justify-center gap-1 rounded bg-link px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-60"
           >
             {update.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-            Save limits
+            Save settings
           </button>
         </form>
       )}

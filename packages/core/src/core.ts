@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   createApiKeyRepository,
   createAssetRepository,
+  createAuthTokenRepository,
   createDb,
   createPluginStateRepository,
   createSessionRepository,
@@ -21,6 +22,7 @@ import {
 } from "@bunbooru/storage";
 
 import { createCoreEvents, type CoreEvents } from "./events";
+import { createMailService, type MailService } from "./mail/mail-service";
 import { createAssetService, type AssetService } from "./services/asset-service";
 import { createAuthService, type AuthService } from "./services/auth-service";
 import { createPluginStateService, type PluginStateService } from "./services/plugin-state-service";
@@ -46,6 +48,8 @@ export interface Core {
   authService: AuthService;
   /** Admin-editable runtime settings (upload caps) — env defaults + DB overrides. */
   settingsService: SettingsService;
+  /** Outgoing-mail hub — holds the active {@link MailProvider} a plugin registers. */
+  mailService: MailService;
   /** Persisted plugin on/off state — the source of truth the API's plugin host reads. */
   pluginStateService: PluginStateService;
   /** Typed pub/sub bus — Core emits domain events (e.g. `asset.created`); plugins subscribe. */
@@ -66,6 +70,14 @@ export interface CoreConfig {
   requestBodyCeilingBytes: number;
   /** Login session lifetime in milliseconds (e.g. 30 days). */
   sessionExpiryMs: number;
+  /**
+   * Absolute public base URL for links in outgoing mail (no trailing slash), or
+   * null when unset. Required whenever a mail provider is active — the API
+   * composition root enforces that (fail fast in production).
+   */
+  publicBaseUrl: string | null;
+  /** Env seed for the `require_verified_email_for_reset` policy (default false). */
+  requireVerifiedEmailForReset: boolean;
 }
 
 /** Numeric limits {@link assembleCore} needs, grouped to avoid a long arg list. */
@@ -74,6 +86,10 @@ export interface CoreLimits {
   maxResumableUploadBytes: number;
   requestBodyCeilingBytes: number;
   sessionExpiryMs: number;
+  /** Absolute public base URL for mail links (no trailing slash), or null. */
+  publicBaseUrl: string | null;
+  /** Env seed for the `require_verified_email_for_reset` policy. */
+  requireVerifiedEmailForReset: boolean;
 }
 
 /**
@@ -89,11 +105,13 @@ export function assembleCore(
   limits: CoreLimits,
 ): Core {
   const events = createCoreEvents();
+  const mailService = createMailService();
   const assetService = createAssetService(createAssetRepository(db), storage, events);
   const settingsService = createSettingsService(createSettingsRepository(db), {
     defaults: {
       maxUploadBytes: limits.maxUploadBytes,
       maxResumableUploadBytes: limits.maxResumableUploadBytes,
+      requireVerifiedEmailForReset: limits.requireVerifiedEmailForReset,
     },
     requestBodyCeilingBytes: limits.requestBodyCeilingBytes,
   });
@@ -110,7 +128,15 @@ export function assembleCore(
     createUserRepository(db),
     createSessionRepository(db),
     createApiKeyRepository(db),
-    { sessionExpiryMs: limits.sessionExpiryMs },
+    createAuthTokenRepository(db),
+    mailService,
+    {
+      sessionExpiryMs: limits.sessionExpiryMs,
+      publicBaseUrl: limits.publicBaseUrl,
+      // Read the (runtime-editable) policy at call time so an admin toggle takes
+      // effect without rebuilding the service.
+      resetRequiresVerifiedEmail: () => settingsService.getRequireVerifiedEmailForReset(),
+    },
   );
   const pluginStateService = createPluginStateService(createPluginStateRepository(db));
   return {
@@ -120,6 +146,7 @@ export function assembleCore(
     statsService,
     authService,
     settingsService,
+    mailService,
     pluginStateService,
     events,
   };
@@ -167,6 +194,8 @@ export function createCoreRuntime(config: CoreConfig): CoreRuntime {
       maxResumableUploadBytes: config.maxResumableUploadBytes,
       requestBodyCeilingBytes: config.requestBodyCeilingBytes,
       sessionExpiryMs: config.sessionExpiryMs,
+      publicBaseUrl: config.publicBaseUrl,
+      requireVerifiedEmailForReset: config.requireVerifiedEmailForReset,
     },
   );
   return { core, db, storage };

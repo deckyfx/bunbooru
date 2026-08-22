@@ -33,8 +33,18 @@ export interface UserRepository {
   countAll(): Promise<number>;
   /** One user by username, matched case-insensitively (canonical lowercase). */
   findByUsername(username: string): Promise<User | null>;
+  /**
+   * One user by email, matched case-insensitively, or null. Emails are stored
+   * verbatim but compared lower-cased so a differently-cased address still
+   * resolves the same account (used by password-reset lookup).
+   */
+  findByEmail(email: string): Promise<User | null>;
   /** One user by id, or null. */
   findById(id: number): Promise<User | null>;
+  /** Overwrite a user's password hash (self-serve reset / change-password). */
+  setPasswordHash(id: number, passwordHash: string): Promise<void>;
+  /** Stamp (or clear) when the account's email was proven controlled. */
+  setEmailVerifiedAt(id: number, at: Date | null): Promise<void>;
 }
 
 /** Build a {@link UserRepository} over a {@link DB} handle. */
@@ -88,9 +98,28 @@ export function createUserRepository(db: DB): UserRepository {
       return row ?? null;
     },
 
+    async findByEmail(email) {
+      // Match on lower(email) so a differently-cased address resolves the same
+      // row. `email` is nullable/unique; a blank lookup can never match a NULL.
+      const [row] = await db
+        .select()
+        .from(users)
+        .where(eq(sql`lower(${users.email})`, email.toLowerCase()))
+        .limit(1);
+      return row ?? null;
+    },
+
     async findById(id) {
       const [row] = await db.select().from(users).where(eq(users.id, id)).limit(1);
       return row ?? null;
+    },
+
+    async setPasswordHash(id, passwordHash) {
+      await db.update(users).set({ passwordHash }).where(eq(users.id, id));
+    },
+
+    async setEmailVerifiedAt(id, at) {
+      await db.update(users).set({ emailVerifiedAt: at }).where(eq(users.id, id));
     },
   };
 }

@@ -1,4 +1,10 @@
-import { applyMigrations, type Core, type DB, type StorageProvider } from "@bunbooru/core";
+import {
+  applyMigrations,
+  type Core,
+  type DB,
+  type MailProvider,
+  type StorageProvider,
+} from "@bunbooru/core";
 import type {
   AdminPage,
   BunbooruPlugin,
@@ -25,6 +31,8 @@ export interface LoadedPlugin {
   adminPages: AdminPage[];
   /** The plugin's Elysia app (prefixed by `pluginRoutePrefix`), if it has routes. */
   routes?: AnyElysia;
+  /** The mail transport this plugin supplies, if any (installed on `core.mailService`). */
+  mailProvider?: MailProvider;
 }
 
 /** Default per-step timeout (ms) — see {@link LoadPluginsOptions.stepTimeoutMs}. */
@@ -197,6 +205,7 @@ export async function loadPlugins({
       capabilities: [...(plugin.capabilities ?? [])],
       adminPages: registration.adminPages ?? [],
       routes: registration.routes,
+      mailProvider: registration.mailProvider,
     });
     logger.info("plugin_loaded", {
       id,

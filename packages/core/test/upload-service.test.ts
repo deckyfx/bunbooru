@@ -21,6 +21,7 @@ const adminUser: User = {
   email: null,
   passwordHash: "h",
   role: "admin",
+  emailVerifiedAt: null,
   createdAt: new Date(0),
 };
 
@@ -414,7 +415,7 @@ describe("createUploadService.gcExpired", () => {
 });
 
 describe("createUploadService — ownership", () => {
-  const owner: User = { id: 7, username: "owner", email: null, passwordHash: "h", role: "member", createdAt: new Date(0) };
+  const owner: User = { id: 7, username: "owner", email: null, passwordHash: "h", role: "member", emailVerifiedAt: null, createdAt: new Date(0) };
   const stranger: User = { ...owner, id: 8, username: "stranger" };
 
   function build() {

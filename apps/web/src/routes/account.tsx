@@ -1,10 +1,21 @@
 import { useState, type FormEvent } from "react";
 
 import { Link } from "@tanstack/react-router";
-import { Loader2, Trash2 } from "lucide-react";
+import { BadgeCheck, Loader2, MailCheck, ShieldAlert, Trash2 } from "lucide-react";
 
-import { authErrorMessage, useCurrentUser } from "../lib/auth";
+import { PasswordInput } from "../components/password-input";
+import {
+  authErrorMessage,
+  useAuthConfig,
+  useChangePassword,
+  useCurrentUser,
+  useRequestEmailVerification,
+  type UserDto,
+} from "../lib/auth";
 import { useApiKeys, useCreateApiKey, useRevokeApiKey } from "../lib/api-keys";
+
+/** Client-side minimum, mirroring the API's `password` schema (>= 8 chars). */
+const MIN_PASSWORD_LENGTH = 8;
 
 /** ISO timestamp → `YYYY-MM-DD`, tolerant of a null/invalid value. */
 function formatDate(value: string | null): string {
@@ -37,8 +48,156 @@ export function AccountPage() {
   return (
     <div className="mx-auto max-w-lg space-y-6">
       <h1 className="border-b border-line pb-1 text-base font-bold">Account · {user.username}</h1>
+      <EmailSection user={user} />
+      <ChangePasswordSection />
       <ApiKeysSection />
     </div>
+  );
+}
+
+/** Show the account's email + verification state, with a "verify email" action. */
+function EmailSection({ user }: { user: UserDto }) {
+  const authConfig = useAuthConfig();
+  const requestVerify = useRequestEmailVerification();
+  const verified = user.emailVerifiedAt !== null;
+  const mailConfigured = authConfig.data?.mailConfigured ?? false;
+
+  return (
+    <section className="space-y-2">
+      <h2 className="font-bold">Email</h2>
+      {!user.email ? (
+        <p className="text-[12px] text-muted">
+          No email address is set on this account, so self-serve password reset isn’t available.
+          Adding one keeps you able to recover access.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2 text-[12px]">
+            <span className="font-mono">{user.email}</span>
+            {verified ? (
+              <span className="inline-flex items-center gap-1 rounded bg-tag-character/15 px-1.5 py-0.5 text-[10px] font-bold uppercase text-tag-character">
+                <BadgeCheck className="h-3 w-3" aria-hidden="true" /> Verified
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded bg-tag-artist/15 px-1.5 py-0.5 text-[10px] font-bold uppercase text-tag-artist">
+                <ShieldAlert className="h-3 w-3" aria-hidden="true" /> Unverified
+              </span>
+            )}
+          </div>
+
+          {!verified && mailConfigured ? (
+            requestVerify.isSuccess ? (
+              <p className="flex items-center gap-1.5 text-[12px] text-tag-character">
+                <MailCheck className="h-4 w-4" aria-hidden="true" /> Verification email sent — check
+                your inbox.
+              </p>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => requestVerify.mutate()}
+                  disabled={requestVerify.isPending}
+                  className="flex items-center gap-1 rounded bg-link px-3 py-1.5 text-[12px] text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {requestVerify.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  ) : null}
+                  Verify email
+                </button>
+                {requestVerify.isError ? (
+                  <p role="alert" className="text-[12px] text-tag-artist">
+                    {authErrorMessage(requestVerify.error, "Couldn’t send the email. Try again.")}
+                  </p>
+                ) : null}
+              </>
+            )
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Change the account password (requires the current one). */
+function ChangePasswordSection() {
+  const change = useChangePassword();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+
+  const tooShort = next.length > 0 && next.length < MIN_PASSWORD_LENGTH;
+  const mismatch = confirm.length > 0 && confirm !== next;
+
+  function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (change.isPending) return;
+    if (next.length < MIN_PASSWORD_LENGTH || next !== confirm || !current) return;
+    change.mutate(
+      { current, next },
+      {
+        onSuccess: () => {
+          setCurrent("");
+          setNext("");
+          setConfirm("");
+        },
+      },
+    );
+  }
+
+  return (
+    <section className="space-y-3">
+      <h2 className="font-bold">Change password</h2>
+      <p className="text-[12px] text-muted">
+        Changing your password signs out every other session. This browser stays logged in.
+      </p>
+      <form onSubmit={onSubmit} className="space-y-3">
+        <label className="block">
+          <span className="mb-1 block text-[12px] font-semibold">Current password</span>
+          <PasswordInput
+            value={current}
+            onChange={setCurrent}
+            autoComplete="current-password"
+            required
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-[12px] font-semibold">New password</span>
+          <PasswordInput
+            value={next}
+            onChange={setNext}
+            autoComplete="new-password"
+            required
+            minLength={MIN_PASSWORD_LENGTH}
+          />
+          <span className={`mt-1 block text-[11px] ${tooShort ? "text-tag-artist" : "text-muted"}`}>
+            At least {MIN_PASSWORD_LENGTH} characters.
+          </span>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-[12px] font-semibold">Confirm new password</span>
+          <PasswordInput value={confirm} onChange={setConfirm} autoComplete="new-password" required />
+          {mismatch ? (
+            <span className="mt-1 block text-[11px] text-tag-artist">Passwords don’t match.</span>
+          ) : null}
+        </label>
+
+        {change.isError ? (
+          <p role="alert" className="text-[12px] text-tag-artist">
+            {authErrorMessage(change.error, "Couldn’t change your password. Check the current one.")}
+          </p>
+        ) : null}
+        {change.isSuccess ? <p className="text-[12px] text-tag-character">Password changed.</p> : null}
+
+        <button
+          type="submit"
+          disabled={change.isPending || tooShort || mismatch || !current || !next || !confirm}
+          className="flex items-center gap-1 rounded bg-link px-4 py-2 text-[12px] text-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {change.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+          Change password
+        </button>
+      </form>
+    </section>
   );
 }
 

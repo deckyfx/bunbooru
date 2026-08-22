@@ -12,6 +12,8 @@ import type {
   AuthService,
   CoreEvents,
   DB,
+  MailProvider,
+  OutgoingMail,
   SettingsService,
   StatsService,
   StorageProvider,
@@ -33,10 +35,13 @@ import type {
  * mounts the returned {@link PluginRegistration.routes} under
  * `/api/v1/plugins/<id>`.
  */
-export const PLUGIN_SDK_VERSION = "0.3.0" as const;
+export const PLUGIN_SDK_VERSION = "0.4.0" as const;
 
 /** Storage contract re-exported for plugins that register storage providers. */
 export type { StorageProvider };
+
+/** Mail contract re-exported for plugins that register a mail provider. */
+export type { MailProvider, OutgoingMail };
 
 /**
  * The integration points a plugin may register through this SDK.
@@ -53,6 +58,7 @@ export const SDK_CAPABILITIES = [
   "events",
   "search-providers",
   "storage-providers",
+  "mail-providers",
   "permissions",
   "jobs",
   "admin-pages",
@@ -167,6 +173,12 @@ export interface PluginRegistration {
   routes?: AnyElysia;
   /** Admin pages this plugin contributes to the web console. */
   adminPages?: AdminPage[];
+  /**
+   * A mail transport this plugin supplies. The host installs it on Core's
+   * `MailService` as the active provider. At most one enabled plugin may register
+   * one — the host fails fast at boot if two do, naming both plugin ids.
+   */
+  mailProvider?: MailProvider;
 }
 
 /**

@@ -59,3 +59,37 @@ export class ValidationError extends Error {
     this.name = "ValidationError";
   }
 }
+
+/**
+ * A mail-dependent operation (send/verify) was attempted while no
+ * {@link MailProvider} is registered. The API maps this to 503 — the feature is
+ * unconfigured, not the request malformed. Callers can pre-check
+ * `mailService.isConfigured()` to avoid triggering it.
+ */
+export class MailNotConfiguredError extends Error {
+  constructor(message = "Mail delivery is not configured") {
+    super(message);
+    this.name = "MailNotConfiguredError";
+  }
+}
+
+/**
+ * Two different plugins tried to register a {@link MailProvider}. Fails fast
+ * (naming both plugin ids) rather than silently last-wins, which would send mail
+ * out an unintended transport. Thrown at boot by the composition root. API → 500
+ * if it ever surfaced at request time (it shouldn't — it's a startup error).
+ */
+export class MailProviderConflictError extends Error {
+  constructor(
+    /** The plugin that already owns the active provider. */
+    readonly existingPluginId: string,
+    /** The plugin that attempted to replace it. */
+    readonly incomingPluginId: string,
+  ) {
+    super(
+      `Mail provider already registered by plugin "${existingPluginId}"; ` +
+        `plugin "${incomingPluginId}" cannot register a second one`,
+    );
+    this.name = "MailProviderConflictError";
+  }
+}

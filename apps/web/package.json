@@ -12,6 +12,7 @@
     "@bunbooru/api": "workspace:*",
     "@bunbooru/plugin-example": "workspace:*",
     "@bunbooru/plugin-shimmie-import": "workspace:*",
+    "@bunbooru/plugin-smtp-mailer": "workspace:*",
     "@bunbooru/plugin-thumbnailer": "workspace:*",
     "@elysiajs/eden": "^1.4.9",
     "@floating-ui/react": "^0.27.19",

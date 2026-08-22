@@ -19,6 +19,11 @@ export interface SessionRepository {
   /** Delete a session by token hash (logout/revoke; no-op if already gone). */
   deleteByTokenHash(tokenHash: string): Promise<void>;
   /**
+   * Revoke ALL of a user's sessions; returns how many were removed. Used when a
+   * password changes — a compromised account's live sessions must not survive.
+   */
+  deleteAllForUser(userId: number): Promise<number>;
+  /**
    * Delete up to `limit` sessions expired before `now`; returns how many were
    * removed. Bounded by design so a large backlog is reclaimed over several
    * sweeps in constant memory rather than materialized all at once.
@@ -48,6 +53,14 @@ export function createSessionRepository(db: DB): SessionRepository {
 
     async deleteByTokenHash(tokenHash) {
       await db.delete(sessions).where(eq(sessions.tokenHash, tokenHash));
+    },
+
+    async deleteAllForUser(userId) {
+      const rows = await db
+        .delete(sessions)
+        .where(eq(sessions.userId, userId))
+        .returning({ id: sessions.id });
+      return rows.length;
     },
 
     async deleteExpired(now, limit) {

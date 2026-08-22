@@ -26,6 +26,7 @@ const appCore = {
   statsService: {} as StatsService,
   authService: {} as AuthService,
   settingsService: {} as SettingsService,
+  mailService: {} as Core["mailService"],
   pluginStateService: {} as Core["pluginStateService"],
   events: createCoreEvents(),
 } satisfies Core;
@@ -36,6 +37,7 @@ const member: User = {
   email: null,
   passwordHash: "x",
   role: "member",
+  emailVerifiedAt: null,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
 };
 

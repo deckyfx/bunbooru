@@ -1,4 +1,4 @@
-import { createCoreRuntime } from "@bunbooru/core";
+import { createCoreRuntime, createLogMailProvider } from "@bunbooru/core";
 
 import { envConfig, MAX_REQUEST_BODY_BYTES } from "./env-config";
 import { logger } from "./lib/logger";
@@ -14,6 +14,16 @@ import { createApp } from "./server";
  * the enabled plugins over the SAME db handle (running their migrations, then
  * `register`), builds the HTTP app, mounts plugin routes, and serves it.
  */
+const isProduction = envConfig.NODE_ENV === "production";
+
+// Public base URL for links in outgoing mail. In dev it defaults to localhost so
+// reset/verify are testable with zero config; in production it must be set
+// explicitly whenever a mail provider is active (enforced after plugins load).
+// Never derived from the request `Host` header (host-header injection is the
+// classic password-reset vulnerability).
+const publicBaseUrl =
+  envConfig.PUBLIC_BASE_URL ?? (isProduction ? null : `http://localhost:${envConfig.SERVER_PORT}`);
+
 const { core, db, storage } = createCoreRuntime({
   databaseUrl: envConfig.DATABASE_URL,
   storageRoot: envConfig.STORAGE_ROOT,
@@ -22,6 +32,8 @@ const { core, db, storage } = createCoreRuntime({
   maxResumableUploadBytes: envConfig.MAX_RESUMABLE_UPLOAD_BYTES,
   requestBodyCeilingBytes: MAX_REQUEST_BODY_BYTES,
   sessionExpiryMs: envConfig.SESSION_EXPIRY_MS,
+  publicBaseUrl,
+  requireVerifiedEmailForReset: envConfig.REQUIRE_VERIFIED_EMAIL_FOR_RESET,
 });
 
 // Load ALL known plugins before building the app: their migrations run here and
@@ -35,6 +47,36 @@ const loadedPlugins = await loadPlugins({
   storage,
   enabledIds: Object.keys(PLUGIN_REGISTRY),
 });
+
+// Install the mail transport a plugin supplies. Fail fast if two plugins both
+// register one — silent last-wins would route mail out an unintended transport.
+const mailPlugins = loadedPlugins.filter(
+  (p): p is typeof p & { mailProvider: NonNullable<typeof p.mailProvider> } =>
+    p.mailProvider !== undefined,
+);
+if (mailPlugins.length > 1) {
+  throw new Error(
+    `Multiple plugins registered a mail provider: ${mailPlugins.map((p) => p.id).join(", ")}. ` +
+      "Enable only one.",
+  );
+}
+const mailPlugin = mailPlugins[0];
+if (mailPlugin) {
+  core.mailService.setProvider(mailPlugin.mailProvider, mailPlugin.id);
+} else if (!isProduction) {
+  // Dev/testing convenience: a log-only provider so the reset/verify flows are
+  // exercisable end-to-end with zero mail configuration (doc §6).
+  core.mailService.setProvider(createLogMailProvider(logger), "core:log-only");
+}
+
+// A configured mail provider needs an absolute link origin. Enforce it now that
+// we know whether mail is active — a boot-time failure beats a silent one at the
+// first reset email.
+if (core.mailService.isConfigured() && !publicBaseUrl) {
+  throw new Error(
+    "PUBLIC_BASE_URL is required when a mail provider is active (set it to the site's absolute URL).",
+  );
+}
 
 const pluginHost = createPluginHost({
   pluginState: core.pluginStateService,
@@ -113,6 +155,11 @@ const sweepTimers = [
   // expiry), so this runs on a slow cadence.
   startSweep(envConfig.SESSION_GC_INTERVAL_MS, "session_gc", () =>
     core.authService.gcExpiredSessions(new Date()),
+  ),
+  // Expired reset/verify tokens are pure housekeeping (a consume already rejects
+  // expired ones), so this shares the session GC cadence.
+  startSweep(envConfig.SESSION_GC_INTERVAL_MS, "auth_token_gc", () =>
+    core.authService.gcExpiredTokens(new Date()),
   ),
 ].filter((t): t is ReturnType<typeof setInterval> => t !== undefined);
 
