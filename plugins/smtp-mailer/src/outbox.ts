@@ -70,6 +70,10 @@ export function resolveFrom(settings: MailSettings): string | null {
   // can't inject extra SMTP headers via the From line (email header injection).
   const address = settings.fromAddress?.trim().replace(/\p{Cc}/gu, "");
   if (!address) return null;
+  // Basic envelope-sender sanity: a malformed address (e.g. "not-an-email") would
+  // make readiness lie and the send fail on an invalid MAIL FROM. Reject it here
+  // so `isConfigured()` is honest and the worker holds rather than hard-failing.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) return null;
   const name = settings.fromName?.trim().replace(/\p{Cc}/gu, "");
   if (!name) return address;
   // Quote + escape the display name so specials (commas, quotes, angle brackets)
@@ -110,9 +114,10 @@ export async function drainOnce(deps: DrainDeps): Promise<DrainResult> {
 
   const settings = await getMailSettings(db);
   const from = resolveFrom(settings);
-  // Resolve the current transport from settings (rebuilt on change). Null → no
-  // SMTP host configured → hold everything.
-  const transport = await resolver.get();
+  // Resolve the transport from THIS SAME snapshot (rebuilt on change) — not a
+  // second read — so an admin disabling mail mid-drain can't leave a stale
+  // `enabled` here while the transport still resolves. Null → no host → hold.
+  const transport = await resolver.get(settings);
 
   const isDue = and(
     isNull(mailOutbox.sentAt),

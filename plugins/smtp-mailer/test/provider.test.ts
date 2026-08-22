@@ -39,7 +39,7 @@ function dbReturning(rows: unknown[]): DB {
 /** A saved settings row that's fully ready to send (enabled + host + from-address). */
 const READY_ROW = {
   fromName: null,
-  fromAddress: "no-reply@test",
+  fromAddress: "no-reply@example.com",
   replyTo: null,
   enabled: true,
   host: "smtp.test",
@@ -152,6 +152,15 @@ describe("createMailProvider — SMTP mode", () => {
   it("isConfigured() is false when a host is set but no from-address resolves", async () => {
     const provider = createMailProvider({
       db: dbReturning([{ ...READY_ROW, fromAddress: null }]),
+      log: fakeLogger(),
+      resolver: resolverFor(mockTransport()),
+    });
+    expect(await provider.isConfigured?.()).toBe(false);
+  });
+
+  it("isConfigured() is false when the from-address is malformed", async () => {
+    const provider = createMailProvider({
+      db: dbReturning([{ ...READY_ROW, fromAddress: "not-an-email" }]),
       log: fakeLogger(),
       resolver: resolverFor(mockTransport()),
     });

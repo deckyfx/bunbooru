@@ -93,7 +93,10 @@ export async function updateMailSettings(db: DB, update: MailSettingsUpdate): Pr
   if (update.port !== undefined) patch.port = update.port;
   if (update.secure !== undefined) patch.secure = update.secure;
   if (update.username !== undefined) patch.username = update.username;
-  if (update.password !== undefined) patch.password = update.password;
+  // Password is write-only: a non-empty string SETS it, an explicit `null` CLEARS
+  // it, and `""` (or omitted) KEEPS the stored one — so submitting an unchanged
+  // blank field never wipes valid credentials.
+  if (update.password !== undefined && update.password !== "") patch.password = update.password;
 
   const [row] = await db
     .insert(mailSettings)

@@ -7,7 +7,7 @@ import type { DB, OutgoingMail, PluginLogger } from "@bunbooru/plugin-sdk";
 
 import { MAX_SEND_ATTEMPTS } from "../src/backoff";
 import { drainOnce, enqueue, outboxCounts } from "../src/outbox";
-import { mailOutbox } from "../src/schema";
+import { mailOutbox, mailSettings } from "../src/schema";
 import { updateMailSettings } from "../src/settings";
 import type { SmtpTransport, TransportResolver } from "../src/transport";
 
@@ -111,6 +111,19 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
     await db.execute(sql`TRUNCATE TABLE mail_settings`);
     // A valid sender so drainOnce actually attempts (rather than holding).
     await updateMailSettings(db, { fromAddress: "no-reply@example.com", enabled: true });
+  });
+
+  it("updateMailSettings keeps the stored password on an empty-string update", async () => {
+    await updateMailSettings(db, { host: "smtp.test", password: "s3cret" });
+    // An unchanged blank password field submits "" — must NOT wipe the stored one.
+    await updateMailSettings(db, { fromName: "Bunbooru", password: "" });
+    const [row] = await db.select().from(mailSettings);
+    expect(row).toBeDefined();
+    expect(row?.password).toBe("s3cret");
+    // …while an explicit null DOES clear it.
+    await updateMailSettings(db, { password: null });
+    const [cleared] = await db.select().from(mailSettings);
+    expect(cleared?.password).toBeNull();
   });
 
   it("enqueue is idempotent on the idempotency key", async () => {

@@ -6,7 +6,7 @@ import { createTransport } from "nodemailer";
 import type { DB } from "@bunbooru/plugin-sdk";
 
 import { secretsFromSettings, type SmtpSecrets } from "./config";
-import { getMailSettings } from "./settings";
+import { getMailSettings, type MailSettings } from "./settings";
 
 /** One message the transport dials out, with its resolved envelope sender. */
 export interface OutgoingSmtpMessage {
@@ -84,8 +84,12 @@ export function createNodemailerTransport(secrets: SmtpSecrets): SmtpTransport {
  * restart. Returns `null` when no host is configured (log-only mode).
  */
 export interface TransportResolver {
-  /** The current transport, or `null` if no SMTP host is configured. */
-  get(): Promise<SmtpTransport | null>;
+  /**
+   * The current transport, or `null` if no SMTP host is configured. Pass an
+   * already-read `settings` snapshot to resolve against it (so a single drain
+   * uses ONE consistent view of settings); omit it to read fresh.
+   */
+  get(settings?: MailSettings): Promise<SmtpTransport | null>;
   /** Whether an SMTP host is currently configured (drives log-only vs SMTP). */
   isConfigured(): Promise<boolean>;
   /** Close the cached transport, if any (shutdown). */
@@ -114,9 +118,9 @@ export function createTransportResolver(db: DB): TransportResolver {
     JSON.stringify([s.host, s.port, s.secure, s.user ?? null, s.password ?? null]);
 
   return {
-    get() {
+    get(settings?: MailSettings) {
       return serialize(async () => {
-        const secrets = secretsFromSettings(await getMailSettings(db));
+        const secrets = secretsFromSettings(settings ?? (await getMailSettings(db)));
         if (!secrets) {
           if (cached) {
             await cached.transport.close();
