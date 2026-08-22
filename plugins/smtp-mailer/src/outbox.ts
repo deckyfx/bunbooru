@@ -8,6 +8,20 @@ import { mailOutbox } from "./schema";
 import { getMailSettings, type MailSettings } from "./settings";
 import type { SmtpTransport } from "./transport";
 
+/**
+ * Race `promise` against `ms` so one hung dial can't exceed the per-send budget
+ * the lease is sized against. On timeout the send is ABANDONED (nodemailer has no
+ * abort hook here) and rejects, so the caller's catch treats it as a normal send
+ * failure → backoff. The transport's own per-phase timeouts still apply beneath.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 /** How many due rows one drain pass attempts (bounds work per tick). */
 const DRAIN_BATCH = 10;
 
@@ -147,14 +161,20 @@ export async function drainOnce(deps: DrainDeps): Promise<DrainResult> {
   for (const row of due) {
     result.attempted += 1;
     try {
-      await transport.send({
-        from: from as string, // held above when null
-        to: row.to,
-        subject: row.subject,
-        text: row.text,
-        html: row.html ?? undefined,
-        replyTo: settings.replyTo ?? undefined,
-      });
+      // Hard-cap each send at the budget the lease is sized against, so a stalled
+      // dial can't outlast the lease and let another worker re-send the row.
+      await withTimeout(
+        transport.send({
+          from: from as string, // held above when null
+          to: row.to,
+          subject: row.subject,
+          text: row.text,
+          html: row.html ?? undefined,
+          replyTo: settings.replyTo ?? undefined,
+        }),
+        PER_SEND_BUDGET_MS,
+        "smtp send",
+      );
       await db
         .update(mailOutbox)
         .set({ sentAt: now(), lastError: null, attempts: row.attempts + 1 })

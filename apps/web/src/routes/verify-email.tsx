@@ -33,7 +33,9 @@ export function VerifyEmailPage() {
             <MailWarning className="h-4 w-4" aria-hidden="true" />
             This verification link is missing its token.
           </p>
-        ) : confirm.isPending ? (
+        ) : confirm.isPending || confirm.isIdle ? (
+          // isIdle covers the first render before the verify effect fires — show
+          // the spinner rather than briefly flashing nothing.
           <p className="flex items-center gap-1.5 text-[12px] text-muted">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             Verifying…
