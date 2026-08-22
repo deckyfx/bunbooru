@@ -1,7 +1,9 @@
 import type { DB, MailProvider, OutgoingMail, PluginLogger } from "@bunbooru/plugin-sdk";
 
+import { secretsFromSettings } from "./config";
 import { maskEmail } from "./mask";
-import { enqueue } from "./outbox";
+import { enqueue, resolveFrom } from "./outbox";
+import { getMailSettings } from "./settings";
 import type { TransportResolver } from "./transport";
 
 /** What the provider needs, resolved once at registration. */
@@ -56,7 +58,15 @@ export function createMailProvider(deps: ProviderDeps): MailProvider {
     },
 
     async isConfigured(): Promise<boolean> {
-      return resolver.isConfigured();
+      // READINESS, not just "a transport can be built": mail can actually go out
+      // right now only when delivery is enabled, a host is set, AND a valid
+      // envelope sender resolves. This drives Core's reset/verify 503 + the web's
+      // link-gating, so it must be honest. (send() still enqueues on host-present
+      // alone, so pausing/holding never DROPS mail — that's a separate concern.)
+      const settings = await getMailSettings(db);
+      return (
+        settings.enabled && secretsFromSettings(settings) !== null && resolveFrom(settings) !== null
+      );
     },
   };
 }

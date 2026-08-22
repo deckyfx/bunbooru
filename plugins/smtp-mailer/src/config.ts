@@ -18,13 +18,16 @@ export interface SmtpSecrets {
   secure: boolean;
 }
 
-/** Default SMTP port when none is set: STARTTLS submission (587). */
-const DEFAULT_SMTP_PORT = 587;
+/** Default port for STARTTLS submission (secure=false). */
+const STARTTLS_SMTP_PORT = 587;
+/** Default port for implicit TLS (secure=true). */
+const IMPLICIT_TLS_SMTP_PORT = 465;
 
 /**
  * Derive connection secrets from the saved settings, or `null` when no host is
- * configured — the signal to run in log-only mode. An out-of-range port falls
- * back to {@link DEFAULT_SMTP_PORT} (the admin UI validates on input too).
+ * configured — the signal to run in log-only mode. An out-of-range/absent port
+ * falls back to the mode's conventional default: 465 for implicit TLS, else 587
+ * (the admin UI validates on input too).
  */
 export function secretsFromSettings(settings: MailSettings): SmtpSecrets | null {
   const host = settings.host?.trim();
@@ -33,7 +36,9 @@ export function secretsFromSettings(settings: MailSettings): SmtpSecrets | null 
   const port =
     settings.port !== null && Number.isInteger(settings.port) && settings.port >= 1 && settings.port <= 65535
       ? settings.port
-      : DEFAULT_SMTP_PORT;
+      : settings.secure
+        ? IMPLICIT_TLS_SMTP_PORT
+        : STARTTLS_SMTP_PORT;
 
   const user = settings.username?.trim() || undefined;
   // Not trimmed: passwords may hold spaces. Empty/unset counts as absent.

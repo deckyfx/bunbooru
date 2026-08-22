@@ -30,6 +30,25 @@ function mockTransport(): SmtpTransport {
   return { send: mock(async () => {}), verify: mock(async () => {}), close: mock(async () => {}) };
 }
 
+/** A read-only db stub whose SELECT chain resolves to `rows` (for getMailSettings). */
+function dbReturning(rows: unknown[]): DB {
+  const chain = { from: () => chain, where: () => chain, limit: async () => rows };
+  return { select: () => chain } as unknown as DB;
+}
+
+/** A saved settings row that's fully ready to send (enabled + host + from-address). */
+const READY_ROW = {
+  fromName: null,
+  fromAddress: "no-reply@test",
+  replyTo: null,
+  enabled: true,
+  host: "smtp.test",
+  port: null,
+  secure: false,
+  username: null,
+  password: null,
+};
+
 const MAIL: OutgoingMail = {
   to: "alice@example.com",
   subject: "Hello",
@@ -63,7 +82,8 @@ describe("createMailProvider — log-only mode (no host configured)", () => {
   });
 
   it("isConfigured() is false when no host is configured", async () => {
-    const provider = createMailProvider({ db: {} as DB, log: fakeLogger(), resolver: resolverFor(null) });
+    // Empty settings → defaults (no host) → not ready.
+    const provider = createMailProvider({ db: dbReturning([]), log: fakeLogger(), resolver: resolverFor(null) });
     expect(await provider.isConfigured?.()).toBe(false);
   });
 });
@@ -111,8 +131,30 @@ describe("createMailProvider — SMTP mode", () => {
     expect(transport.verify).toHaveBeenCalledTimes(1);
   });
 
-  it("isConfigured() is true when a host is configured", async () => {
-    const provider = createMailProvider({ db: {} as DB, log: fakeLogger(), resolver: resolverFor(mockTransport()) });
+  it("isConfigured() is true when enabled with a host + from-address", async () => {
+    const provider = createMailProvider({
+      db: dbReturning([READY_ROW]),
+      log: fakeLogger(),
+      resolver: resolverFor(mockTransport()),
+    });
     expect(await provider.isConfigured?.()).toBe(true);
+  });
+
+  it("isConfigured() is false when a host is set but delivery is disabled", async () => {
+    const provider = createMailProvider({
+      db: dbReturning([{ ...READY_ROW, enabled: false }]),
+      log: fakeLogger(),
+      resolver: resolverFor(mockTransport()),
+    });
+    expect(await provider.isConfigured?.()).toBe(false);
+  });
+
+  it("isConfigured() is false when a host is set but no from-address resolves", async () => {
+    const provider = createMailProvider({
+      db: dbReturning([{ ...READY_ROW, fromAddress: null }]),
+      log: fakeLogger(),
+      resolver: resolverFor(mockTransport()),
+    });
+    expect(await provider.isConfigured?.()).toBe(false);
   });
 });

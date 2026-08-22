@@ -96,35 +96,53 @@ export interface TransportResolver {
 export function createTransportResolver(db: DB): TransportResolver {
   let cached: { key: string; transport: SmtpTransport } | null = null;
 
+  // Serialize the cache lifecycle: get()/close() run one-at-a-time so two
+  // concurrent callers during a credential change can't each build a transport
+  // (leaking one) or close the same one twice. isConfigured() only reads settings
+  // and never touches the cache, so it stays outside the lock.
+  let lock: Promise<unknown> = Promise.resolve();
+  function serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const run = lock.then(fn, fn);
+    lock = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
+  }
+
   const keyOf = (s: SmtpSecrets): string =>
     JSON.stringify([s.host, s.port, s.secure, s.user ?? null, s.password ?? null]);
 
   return {
-    async get() {
-      const secrets = secretsFromSettings(await getMailSettings(db));
-      if (!secrets) {
-        if (cached) {
-          await cached.transport.close();
-          cached = null;
+    get() {
+      return serialize(async () => {
+        const secrets = secretsFromSettings(await getMailSettings(db));
+        if (!secrets) {
+          if (cached) {
+            await cached.transport.close();
+            cached = null;
+          }
+          return null;
         }
-        return null;
-      }
-      const key = keyOf(secrets);
-      if (cached && cached.key === key) return cached.transport;
-      if (cached) await cached.transport.close();
-      cached = { key, transport: createNodemailerTransport(secrets) };
-      return cached.transport;
+        const key = keyOf(secrets);
+        if (cached && cached.key === key) return cached.transport;
+        if (cached) await cached.transport.close();
+        cached = { key, transport: createNodemailerTransport(secrets) };
+        return cached.transport;
+      });
     },
 
     async isConfigured() {
       return secretsFromSettings(await getMailSettings(db)) !== null;
     },
 
-    async close() {
-      if (cached) {
-        await cached.transport.close();
-        cached = null;
-      }
+    close() {
+      return serialize(async () => {
+        if (cached) {
+          await cached.transport.close();
+          cached = null;
+        }
+      });
     },
   };
 }
