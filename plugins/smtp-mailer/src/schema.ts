@@ -61,6 +61,14 @@ export const mailSettings = pgTable("mail_settings", {
   /**
    * SMTP AUTH password. Stored here (plugin-owned table); the API NEVER returns
    * it to a browser — the admin form is write-only (see the routes in index.ts).
+   *
+   * DECISION (re: CodeRabbit "encrypt at rest"): kept PLAINTEXT for now, on
+   * purpose. This is the standard self-hosted posture (Gitea/WordPress/Nextcloud)
+   * — the database is already the trust boundary, and it's never exposed to a
+   * browser. Encryption-at-rest would reintroduce a managed key (an env
+   * dependency we just removed), key-rotation handling, and a plaintext-migration
+   * step — over-engineering at this early stage that's easy to get wrong. Revisit
+   * if the threat model ever separates DB access from host/key access.
    */
   password: text("password"),
   /**
