@@ -85,6 +85,13 @@
       "when": 1787377078384,
       "tag": "0011_foamy_king_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1787384045313,
+      "tag": "0012_reflective_harrier",
+      "breakpoints": true
     }
   ]
 }

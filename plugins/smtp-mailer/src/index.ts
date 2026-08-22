@@ -70,18 +70,24 @@ export function buildSmtpMailerRoutes(ctx: PluginContext, deps: RouteDeps) {
       "/settings",
       async ({ request, body }) => {
         await requireAdmin(ctx, request);
+        // Pass omitted fields through UNCHANGED (updateMailSettings preserves keys
+        // that are `undefined`); an explicit `null` clears a field. Coercing
+        // omitted → null would wipe fromAddress on an enabled-only toggle and stall
+        // the outbox.
         return updateMailSettings(ctx.db, {
-          fromName: body.fromName ?? null,
-          fromAddress: body.fromAddress ?? null,
-          replyTo: body.replyTo ?? null,
           enabled: body.enabled,
+          ...(body.fromName !== undefined ? { fromName: body.fromName } : {}),
+          ...(body.fromAddress !== undefined ? { fromAddress: body.fromAddress } : {}),
+          ...(body.replyTo !== undefined ? { replyTo: body.replyTo } : {}),
         });
       },
       {
         body: t.Object({
-          fromName: t.Optional(t.String({ maxLength: 200 })),
-          fromAddress: t.Optional(t.String({ format: "email", maxLength: 320 })),
-          replyTo: t.Optional(t.String({ format: "email", maxLength: 320 })),
+          // Nullable so a client can distinguish "leave unchanged" (omit) from
+          // "clear this field" (explicit null).
+          fromName: t.Optional(t.Union([t.String({ maxLength: 200 }), t.Null()])),
+          fromAddress: t.Optional(t.Union([t.String({ format: "email", maxLength: 320 }), t.Null()])),
+          replyTo: t.Optional(t.Union([t.String({ format: "email", maxLength: 320 }), t.Null()])),
           enabled: t.Boolean(),
         }),
       },
@@ -132,6 +138,16 @@ export const plugin = definePlugin({
     // Secrets from env only (never admin-editable / browser-visible). No host
     // configured → log-only mode: send() logs instead of dialing SMTP.
     const secrets = readSmtpSecrets();
+    // Production must have real SMTP: refuse log-only there (it would let a
+    // password-reset request "succeed" without ever sending mail). Throwing makes
+    // the loader skip this plugin, so Core's MailService stays unconfigured and
+    // forgot-password returns an honest 503 instead of a silent 200. Log-only
+    // stays available in development/test for zero-config flows.
+    if (!secrets && Bun.env.NODE_ENV === "production") {
+      throw new Error(
+        "smtp-mailer: SMTP_HOST is required in production — refusing to run in log-only mode.",
+      );
+    }
     const transport = secrets ? createNodemailerTransport(secrets) : null;
     const provider = createMailProvider({ db: ctx.db, log: ctx.log, transport });
 

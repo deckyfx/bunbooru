@@ -363,10 +363,10 @@ export function createAuthService(
 
     async requestPasswordReset({ email, ip }) {
       const normalized = email.trim();
-      // Always generate a token so the crypto cost is paid whether or not the
-      // account exists — best-effort timing parity against enumeration (the DB
-      // write + send only happen for a real, eligible account).
-      generateAuthToken();
+      // Timing parity against enumeration is best-effort: the DB write + mail send
+      // only happen for a real, eligible account, so the response time already
+      // differs. We don't fake a token here — a single discarded generate() is
+      // negligible next to that DB+mail cost and wouldn't actually equalize it.
       if (!normalized) return;
 
       const user = await users.findByEmail(normalized);
@@ -387,9 +387,24 @@ export function createAuthService(
 
     async resetPassword(token, password) {
       assertPasswordLength(password);
+      const tokenHash = sha256hex(token);
+      // Cheap pre-check: reject an unknown / wrong-purpose / consumed / expired
+      // token BEFORE paying for the (deliberately expensive) Argon2 hash, so an
+      // invalid link can't be used to burn CPU. `consumeForPasswordReset` remains
+      // the atomic single-use authority below — it re-checks under the row lock,
+      // closing any race between this read and the consume.
+      const existing = await authTokens.findByHash(tokenHash);
+      if (
+        !existing ||
+        existing.purpose !== "password-reset" ||
+        existing.consumedAt !== null ||
+        existing.expiresAt <= now()
+      ) {
+        throw new AuthenticationError("This reset link is invalid or has expired");
+      }
       const newPasswordHash = await Bun.password.hash(password);
       const userId = await authTokens.consumeForPasswordReset({
-        tokenHash: sha256hex(token),
+        tokenHash,
         now: now(),
         newPasswordHash,
       });
@@ -405,12 +420,14 @@ export function createAuthService(
       if (!(await Bun.password.verify(currentPassword, user.passwordHash))) {
         throw new AuthenticationError("Current password is incorrect");
       }
-      await users.setPasswordHash(user.id, await Bun.password.hash(newPassword));
+      const newPasswordHash = await Bun.password.hash(newPassword);
+      await users.setPasswordHash(user.id, newPasswordHash);
       // Revoke every session (a change is also a compromise remedy), then open a
       // fresh one so the caller's browser stays logged in.
       await sessions.deleteAllForUser(user.id);
       const token = await openSession(user.id);
-      return { token, user };
+      // Return the user with the NEW hash — not the stale row loaded above.
+      return { token, user: { ...user, passwordHash: newPasswordHash } };
     },
 
     async requestEmailVerification({ userId, ip }) {

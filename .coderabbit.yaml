@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit configuration — https://docs.coderabbit.ai/getting-started/configure-coderabbit
+reviews:
+  # Skip the design-plan drafts under docs/ — they're forward-looking design
+  # prose for unbuilt features, not code, and shouldn't consume review budget.
+  path_filters:
+    - "!docs/**"

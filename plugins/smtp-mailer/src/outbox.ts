@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 
 import type { DB, OutgoingMail, PluginLogger } from "@bunbooru/plugin-sdk";
 
@@ -10,6 +10,16 @@ import type { SmtpTransport } from "./transport";
 
 /** How many due rows one drain pass attempts (bounds work per tick). */
 const DRAIN_BATCH = 20;
+
+/**
+ * How long a claimed row is leased before it becomes due again. The claim pushes
+ * `nextAttemptAt` this far out so a concurrent worker (or the next tick) won't
+ * re-select a row mid-send; the send outcome then overwrites it (`sentAt` on
+ * success, the backoff schedule on failure). If the process dies mid-send the
+ * row simply retries after the lease — at-most-once still holds via the unique
+ * idempotency key and the SMTP server's own dedupe.
+ */
+const CLAIM_LEASE_MS = 2 * 60 * 1000;
 
 /**
  * Enqueue a message for delivery — idempotent on `idempotencyKey`. A duplicate
@@ -38,10 +48,15 @@ export async function enqueue(db: DB, mail: OutgoingMail): Promise<boolean> {
  * the admin fixes) rather than burning the retry budget on it.
  */
 export function resolveFrom(settings: MailSettings): string | null {
-  const address = settings.fromAddress?.trim();
+  // Strip control chars (CR/LF included) from BOTH parts so an admin-set value
+  // can't inject extra SMTP headers via the From line (email header injection).
+  const address = settings.fromAddress?.trim().replace(/\p{Cc}/gu, "");
   if (!address) return null;
-  const name = settings.fromName?.trim();
-  return name ? `${name} <${address}>` : address;
+  const name = settings.fromName?.trim().replace(/\p{Cc}/gu, "");
+  if (!name) return address;
+  // Quote + escape the display name so specials (commas, quotes, angle brackets)
+  // can't break out of the phrase.
+  return `"${name.replace(/(["\\])/g, "\\$1")}" <${address}>`;
 }
 
 /** Counts from one drain pass, for logging/tests. */
@@ -77,28 +92,46 @@ export async function drainOnce(deps: DrainDeps): Promise<DrainResult> {
   const settings = await getMailSettings(db);
   const from = resolveFrom(settings);
 
-  const due = await db
-    .select()
-    .from(mailOutbox)
-    .where(
-      and(
-        isNull(mailOutbox.sentAt),
-        lte(mailOutbox.attempts, MAX_SEND_ATTEMPTS - 1),
-        lte(mailOutbox.nextAttemptAt, now()),
-      ),
-    )
-    .orderBy(asc(mailOutbox.nextAttemptAt))
-    .limit(DRAIN_BATCH);
+  const isDue = and(
+    isNull(mailOutbox.sentAt),
+    lte(mailOutbox.attempts, MAX_SEND_ATTEMPTS - 1),
+    lte(mailOutbox.nextAttemptAt, now()),
+  );
 
-  if (due.length > 0 && (!settings.enabled || !from)) {
-    // Hold everything: sending is paused or misconfigured. Log once, don't touch rows.
-    log.warn("mail_outbox_held", {
-      reason: settings.enabled ? "no_from_address" : "disabled",
-      held: due.length,
-    });
-    result.held = due.length;
+  // Sending is paused or misconfigured: HOLD (don't claim) so nothing burns the
+  // retry budget — count the backlog for the log without touching rows.
+  if (!settings.enabled || !from) {
+    const due = await db
+      .select({ id: mailOutbox.id })
+      .from(mailOutbox)
+      .where(isDue)
+      .limit(DRAIN_BATCH);
+    if (due.length > 0) {
+      log.warn("mail_outbox_held", {
+        reason: settings.enabled ? "no_from_address" : "disabled",
+        held: due.length,
+      });
+      result.held = due.length;
+    }
     return result;
   }
+
+  // Atomically CLAIM up to a batch of due rows: an UPDATE that leases them (pushes
+  // `nextAttemptAt` out) gated by a `FOR UPDATE SKIP LOCKED` subquery, so two
+  // workers (or overlapping ticks) can never grab the same row — each claims a
+  // disjoint set and the loser skips locked rows instead of blocking.
+  const claimBatch = db
+    .select({ id: mailOutbox.id })
+    .from(mailOutbox)
+    .where(isDue)
+    .orderBy(asc(mailOutbox.nextAttemptAt))
+    .limit(DRAIN_BATCH)
+    .for("update", { skipLocked: true });
+  const due = await db
+    .update(mailOutbox)
+    .set({ nextAttemptAt: new Date(now().getTime() + CLAIM_LEASE_MS) })
+    .where(inArray(mailOutbox.id, claimBatch))
+    .returning();
 
   for (const row of due) {
     result.attempted += 1;

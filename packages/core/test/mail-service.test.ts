@@ -62,8 +62,8 @@ describe("createLogMailProvider", () => {
     await provider.verify();
 
     expect(logs).toHaveLength(1);
-    // The body is never logged (it can carry a live token).
-    expect(logs[0]?.data).toEqual({ to: "a@example.com", subject: "hi", idempotencyKey: "k:1" });
+    // The body is never logged (it can carry a live token); the recipient is masked.
+    expect(logs[0]?.data).toEqual({ to: "***@example.com", subject: "hi", idempotencyKey: "k:1" });
     expect(JSON.stringify(logs[0])).not.toContain("body");
   });
 });

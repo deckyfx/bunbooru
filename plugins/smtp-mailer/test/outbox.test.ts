@@ -163,4 +163,40 @@ describe.skipIf(!TEST_DATABASE_URL)("mail outbox (integration)", () => {
     expect(result).toMatchObject({ attempted: 0, held: 1 });
     expect(transport.send).not.toHaveBeenCalled();
   });
+
+  it("two concurrent drains send a single row only once (atomic claim)", async () => {
+    // One due row; two workers race to drain it. The atomic FOR UPDATE SKIP LOCKED
+    // claim (or the lease it writes) must let only one worker take the row, so the
+    // message is sent exactly once — the whole point of the claim over a plain read.
+    await db.insert(mailOutbox).values({
+      idempotencyKey: "reset:concurrent",
+      to: MAIL.to,
+      subject: MAIL.subject,
+      text: MAIL.text,
+      nextAttemptAt: new Date("2000-01-01T00:00:00.000Z"),
+    });
+    let sends = 0;
+    // A shared transport counting total sends across both workers; the small delay
+    // widens the window so both claims are genuinely in flight together.
+    const transport: SmtpTransport = {
+      send: mock(async () => {
+        sends += 1;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }),
+      verify: mock(async () => {}),
+    };
+
+    const [a, b] = await Promise.all([
+      drainOnce({ db, transport, log: noopLog }),
+      drainOnce({ db, transport, log: noopLog }),
+    ]);
+
+    expect(sends).toBe(1);
+    expect(a.sent + b.sent).toBe(1);
+    const [row] = await db
+      .select()
+      .from(mailOutbox)
+      .where(eq(mailOutbox.idempotencyKey, "reset:concurrent"));
+    expect(row?.sentAt).not.toBeNull();
+  });
 });

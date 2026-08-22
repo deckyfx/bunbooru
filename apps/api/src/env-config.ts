@@ -235,6 +235,11 @@ class EnvConfig {
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       throw new Error(`PUBLIC_BASE_URL must be an http(s) URL, got "${raw}"`);
     }
+    // Reset/verify links carry bearer tokens — require https in production so they
+    // can't be exposed over the wire. http stays allowed in dev/test for local use.
+    if (this.NODE_ENV === "production" && url.protocol !== "https:") {
+      throw new Error(`PUBLIC_BASE_URL must use https in production, got "${raw}"`);
+    }
     // Normalize to origin + path without a trailing slash so `${base}/reset-…`
     // never produces a double slash.
     return (url.origin + url.pathname).replace(/\/+$/, "");

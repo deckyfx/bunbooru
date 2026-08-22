@@ -47,22 +47,31 @@ export async function getMailSettings(db: DB): Promise<MailSettings> {
 
 /**
  * Upsert the singleton settings row. Only the keys present in `update` change;
- * omitted keys keep their stored value (a fresh row uses {@link DEFAULTS}).
+ * omitted keys keep their stored value (a fresh row uses the schema defaults).
+ *
+ * The write touches ONLY the supplied columns — both in the insert and in the
+ * conflict `set` clause — so it's a single atomic statement with no
+ * read-modify-write. Two concurrent partial updates can't clobber each other's
+ * fields (an omitted column keeps its live DB value, not a stale read), and
+ * `RETURNING` yields the authoritative post-write row.
  */
 export async function updateMailSettings(db: DB, update: MailSettingsUpdate): Promise<MailSettings> {
-  const current = await getMailSettings(db);
-  const next: MailSettings = {
-    fromName: update.fromName !== undefined ? update.fromName : current.fromName,
-    fromAddress: update.fromAddress !== undefined ? update.fromAddress : current.fromAddress,
-    replyTo: update.replyTo !== undefined ? update.replyTo : current.replyTo,
-    enabled: update.enabled !== undefined ? update.enabled : current.enabled,
-  };
-  await db
+  const patch: Partial<typeof mailSettings.$inferInsert> = { updatedAt: new Date() };
+  if (update.fromName !== undefined) patch.fromName = update.fromName;
+  if (update.fromAddress !== undefined) patch.fromAddress = update.fromAddress;
+  if (update.replyTo !== undefined) patch.replyTo = update.replyTo;
+  if (update.enabled !== undefined) patch.enabled = update.enabled;
+
+  const [row] = await db
     .insert(mailSettings)
-    .values({ id: SETTINGS_ROW_ID, ...next, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: mailSettings.id,
-      set: { ...next, updatedAt: new Date() },
-    });
-  return next;
+    .values({ id: SETTINGS_ROW_ID, ...patch })
+    .onConflictDoUpdate({ target: mailSettings.id, set: patch })
+    .returning();
+  if (!row) throw new Error("mail settings upsert returned no row");
+  return {
+    fromName: row.fromName,
+    fromAddress: row.fromAddress,
+    replyTo: row.replyTo,
+    enabled: row.enabled,
+  };
 }

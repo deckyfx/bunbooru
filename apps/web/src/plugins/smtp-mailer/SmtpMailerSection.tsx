@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
@@ -31,8 +31,14 @@ export function SmtpMailerSection() {
   const [enabled, setEnabled] = useState(true);
   const [testTo, setTestTo] = useState("");
 
+  // Seed the form from the loaded settings ONCE, not on every status refetch —
+  // otherwise a test-send (which invalidates the status query) would refetch and
+  // clobber the admin's unsaved sender edits. An explicit save re-arms the seed
+  // so the persisted values re-apply.
+  const seeded = useRef(false);
   useEffect(() => {
-    if (!status.data) return;
+    if (!status.data || seeded.current) return;
+    seeded.current = true;
     setFromName(status.data.settings.fromName ?? "");
     setFromAddress(status.data.settings.fromAddress ?? "");
     setReplyTo(status.data.settings.replyTo ?? "");
@@ -42,14 +48,17 @@ export function SmtpMailerSection() {
   const saveSettings = useMutation({
     mutationFn: async () =>
       unwrap(
+        // An emptied field is sent as `null` (an intentional CLEAR); the server
+        // preserves fields we omit, so we always send all three explicitly here.
         await mailApi.settings.put({
-          fromName: fromName.trim() || undefined,
-          fromAddress: fromAddress.trim() || undefined,
-          replyTo: replyTo.trim() || undefined,
+          fromName: fromName.trim() || null,
+          fromAddress: fromAddress.trim() || null,
+          replyTo: replyTo.trim() || null,
           enabled,
         }),
       ),
     onSuccess: () => {
+      seeded.current = false; // re-seed the form from the saved values on refetch
       void queryClient.invalidateQueries({ queryKey: ["smtp-mailer", "status"] });
     },
   });

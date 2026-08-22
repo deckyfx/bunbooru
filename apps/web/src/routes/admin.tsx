@@ -295,6 +295,7 @@ function UploadLimitsSection() {
   const [maxUpload, setMaxUpload] = useState("");
   const [maxResumable, setMaxResumable] = useState("");
   const [requireVerified, setRequireVerified] = useState(false);
+  const [capError, setCapError] = useState<string | null>(null);
   const seeded = useRef(false);
 
   // Seed the inputs from the server values ONCE — a later background refetch
@@ -311,18 +312,25 @@ function UploadLimitsSection() {
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (update.isPending) return;
-    const patch: {
-      maxUploadBytes?: number;
-      maxResumableUploadBytes?: number;
-      requireVerifiedEmailForReset?: boolean;
-    } = {};
+    // Validate the caps up front and REJECT the whole save on a bad value, rather
+    // than silently dropping it from the patch (which looked like a successful save
+    // while leaving the cap unchanged). Both must be whole numbers of bytes >= 1.
     const mu = Number(maxUpload);
     const mr = Number(maxResumable);
-    if (Number.isSafeInteger(mu) && mu >= 1) patch.maxUploadBytes = mu;
-    if (Number.isSafeInteger(mr) && mr >= 1) patch.maxResumableUploadBytes = mr;
-    // Always send the policy flag (a boolean is always valid) so the toggle saves.
-    patch.requireVerifiedEmailForReset = requireVerified;
-    update.mutate(patch);
+    const invalid: string[] = [];
+    if (!maxUpload.trim() || !Number.isSafeInteger(mu) || mu < 1) invalid.push("One-shot upload cap");
+    if (!maxResumable.trim() || !Number.isSafeInteger(mr) || mr < 1) invalid.push("Resumable upload cap");
+    if (invalid.length > 0) {
+      setCapError(`${invalid.join(" and ")} must be a whole number of bytes ≥ 1.`);
+      return;
+    }
+    setCapError(null);
+    update.mutate({
+      maxUploadBytes: mu,
+      maxResumableUploadBytes: mr,
+      // A boolean is always valid, so the policy toggle always saves.
+      requireVerifiedEmailForReset: requireVerified,
+    });
   }
 
   return (
@@ -364,6 +372,11 @@ function UploadLimitsSection() {
             </span>
           </label>
 
+          {capError ? (
+            <p role="alert" className="text-[12px] text-tag-artist">
+              {capError}
+            </p>
+          ) : null}
           {update.isError ? (
             <p role="alert" className="text-[12px] text-tag-artist">
               {authErrorMessage(update.error, "Couldn’t save. Please check the values.")}

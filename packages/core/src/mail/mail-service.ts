@@ -70,17 +70,33 @@ export interface MailLogger {
 }
 
 /**
+ * Mask a recipient address for logging — keeps a plain user identifier out of
+ * logs by default. `alice@example.com` → `a***e@example.com`; a short local part
+ * → `***@domain`; a value with no `@` is fully masked. Mirrors the smtp-mailer
+ * plugin's masking so both mail log paths behave identically.
+ */
+function maskEmail(address: string): string {
+  const at = address.lastIndexOf("@");
+  // No local part, or no domain (`alice@`) → fully opaque.
+  if (at <= 0 || at === address.length - 1) return "***";
+  const local = address.slice(0, at);
+  const domain = address.slice(at + 1);
+  if (local.length <= 2) return `***@${domain}`;
+  return `${local[0]}***${local[local.length - 1]}@${domain}`;
+}
+
+/**
  * A development/testing {@link MailProvider} that logs each message instead of
  * sending it — so the reset/verify flows are exercisable end-to-end with zero
  * mail configuration. Installed automatically outside production when no real
  * provider is registered. Never logs the message body (it can contain a live
- * token); only recipient, subject, and idempotency key are recorded.
+ * token); only the MASKED recipient, subject, and idempotency key are recorded.
  */
 export function createLogMailProvider(log: MailLogger): MailProvider {
   return {
     async send(mail) {
       log.info("mail_log_provider_send", {
-        to: mail.to,
+        to: maskEmail(mail.to),
         subject: mail.subject,
         idempotencyKey: mail.idempotencyKey,
       });

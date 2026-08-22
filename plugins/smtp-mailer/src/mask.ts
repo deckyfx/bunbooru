@@ -7,7 +7,9 @@
  */
 export function maskEmail(address: string): string {
   const at = address.lastIndexOf("@");
-  if (at <= 0) return "***";
+  // No local part, or no domain (`alice@`) → fully opaque; never reveal chars of
+  // a malformed address.
+  if (at <= 0 || at === address.length - 1) return "***";
   const local = address.slice(0, at);
   const domain = address.slice(at + 1);
   if (local.length <= 2) return `***@${domain}`;

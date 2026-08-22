@@ -122,11 +122,15 @@ export function useForgotPassword() {
 
 /** Redeem a reset token with a new password (204 — check `error`, not `unwrap`). */
 export function useResetPassword() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: { token: string; password: string }) => {
       const res = await api.api.v1.auth["reset-password"].post(input);
       if (res.error) throw res.error;
     },
+    // A reset revokes every session server-side; drop the cached current-user so a
+    // logged-in tab that redeemed a link stops rendering a stale signed-in state.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY }),
   });
 }
 

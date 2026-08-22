@@ -53,7 +53,15 @@ export function readSmtpSecrets(env: Record<string, string | undefined> = Bun.en
   }
 
   const user = env.SMTP_USER?.trim() || undefined;
-  const password = env.SMTP_PASSWORD ?? undefined; // not trimmed: passwords may hold spaces
+  // Not trimmed: passwords may hold spaces. Empty/unset counts as absent.
+  const rawPassword = env.SMTP_PASSWORD;
+  const password = rawPassword !== undefined && rawPassword !== "" ? rawPassword : undefined;
+  // AUTH is all-or-nothing: a lone user is silently ignored by nodemailer, and a
+  // lone password reaches it as `pass: undefined` — both signal a misconfiguration
+  // that could send unauthenticated. Fail loudly instead.
+  if ((user === undefined) !== (password === undefined)) {
+    throw new Error("SMTP_USER and SMTP_PASSWORD must be set together (or both omitted).");
+  }
 
   return { host, port, user, password, secure };
 }

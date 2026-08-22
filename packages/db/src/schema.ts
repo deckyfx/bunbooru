@@ -337,7 +337,12 @@ export const authTokens = pgTable(
     // nullable since it may be unknown behind an untrusted proxy.
     requestedIp: text("requested_ip"),
   },
-  (table) => [index("auth_tokens_user_purpose_idx").on(table.userId, table.purpose)],
+  (table) => [
+    index("auth_tokens_user_purpose_idx").on(table.userId, table.purpose),
+    // Powers the expired-token reaper (deleteExpired scans by expiry), mirroring
+    // the sessions_expires_idx used by session GC.
+    index("auth_tokens_expires_idx").on(table.expiresAt),
+  ],
 );
 
 export type User = typeof users.$inferSelect;

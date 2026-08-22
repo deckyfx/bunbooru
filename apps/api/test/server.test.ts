@@ -1172,3 +1172,152 @@ describe("superadmin, settings, and API keys", () => {
     expect(statuses.slice(10).every((s) => s === 429)).toBe(true);
   });
 });
+
+describe("auth: password reset + email verification", () => {
+  /** A Core whose mail transport reports configured (drives the non-503 paths). */
+  const mailOn = (authOverrides: Partial<AuthService> = {}) =>
+    stubCore({}, {}, {}, {}, authOverrides, {}, { isConfigured: () => true });
+
+  /** A JSON POST request (optionally authenticated via {@link AUTH_HEADER}). */
+  function jsonPost(path: string, body: unknown, headers: Record<string, string> = {}): Request {
+    return new Request(`http://localhost${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("GET /auth/config reports whether mail is configured", async () => {
+    const off = await buildApp(stubCore()).handle(
+      new Request("http://localhost/api/v1/auth/config"),
+    );
+    expect(await off.json()).toEqual({ mailConfigured: false });
+
+    const on = await buildApp(mailOn()).handle(
+      new Request("http://localhost/api/v1/auth/config"),
+    );
+    expect(await on.json()).toEqual({ mailConfigured: true });
+  });
+
+  it("forgot-password → 503 when mail is unconfigured", async () => {
+    const res = await buildApp(stubCore()).handle(
+      jsonPost("/api/v1/auth/forgot-password", { email: "a@example.com" }),
+    );
+    expect(res.status).toBe(503);
+  });
+
+  it("forgot-password → identical 200 for known and unknown addresses (no enumeration)", async () => {
+    // The service never signals existence; the route always returns the same body.
+    const seen: string[] = [];
+    const app = buildApp(
+      mailOn({ requestPasswordReset: async ({ email }) => void seen.push(email) }),
+    );
+    const known = await app.handle(jsonPost("/api/v1/auth/forgot-password", { email: "known@example.com" }));
+    const unknown = await app.handle(jsonPost("/api/v1/auth/forgot-password", { email: "nope@example.com" }));
+    expect(known.status).toBe(200);
+    expect(unknown.status).toBe(200);
+    expect(await known.json()).toEqual({ ok: true });
+    expect(await unknown.json()).toEqual({ ok: true });
+    // Both addresses reached the service (no branch that skips unknown ones).
+    expect(seen).toEqual(["known@example.com", "nope@example.com"]);
+  });
+
+  it("forgot-password → 429 after the per-IP limit", async () => {
+    const app = buildApp(mailOn());
+    // Vary the address so the per-ADDRESS limit isn't what trips; the shared
+    // (test) IP hits FORGOT_PASSWORD_IP_RATE.max (10) on the 11th request.
+    let last: Response | undefined;
+    for (let i = 0; i < 11; i++) {
+      last = await app.handle(jsonPost("/api/v1/auth/forgot-password", { email: `u${i}@example.com` }));
+    }
+    expect(last?.status).toBe(429);
+  });
+
+  it("reset-password → 204 on success", async () => {
+    const res = await buildApp(stubCore()).handle(
+      jsonPost("/api/v1/auth/reset-password", { token: "tok", password: "supersecret" }),
+    );
+    expect(res.status).toBe(204);
+  });
+
+  it("reset-password → 401 for an invalid/expired token", async () => {
+    const res = await buildApp(
+      stubCore({}, {}, {}, {}, {
+        resetPassword: async () => {
+          throw new AuthenticationError("This reset link is invalid or has expired");
+        },
+      }),
+    ).handle(jsonPost("/api/v1/auth/reset-password", { token: "bad", password: "supersecret" }));
+    expect(res.status).toBe(401);
+  });
+
+  it("change-password → 401 without a session", async () => {
+    const res = await buildApp(stubCore()).handle(
+      jsonPost("/api/v1/auth/change-password", { current: "oldsecret", next: "supersecret" }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("change-password → 401 when the current password is wrong", async () => {
+    const res = await buildApp(
+      stubCore({}, {}, {}, {}, {
+        changePassword: async () => {
+          throw new AuthenticationError("Current password is incorrect");
+        },
+      }),
+    ).handle(
+      jsonPost("/api/v1/auth/change-password", { current: "wrong", next: "supersecret" }, AUTH_HEADER),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("change-password → 200 with a fresh token + Set-Cookie, no password hash", async () => {
+    const res = await buildApp(stubCore()).handle(
+      jsonPost("/api/v1/auth/change-password", { current: "oldsecret", next: "supersecret" }, AUTH_HEADER),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie") ?? "").toContain("bunbooru_session=");
+    const body = (await res.json()) as { token: string; user: Record<string, unknown> };
+    expect(body.token).toBe(SESSION_TOKEN);
+    expect(body.user).not.toHaveProperty("passwordHash");
+  });
+
+  it("verify-email/request → 401 anonymous, 503 unconfigured, 204 authed", async () => {
+    const anon = await buildApp(mailOn()).handle(
+      new Request("http://localhost/api/v1/auth/verify-email/request", { method: "POST" }),
+    );
+    expect(anon.status).toBe(401);
+
+    const unconfigured = await buildApp(stubCore()).handle(
+      new Request("http://localhost/api/v1/auth/verify-email/request", {
+        method: "POST",
+        headers: AUTH_HEADER,
+      }),
+    );
+    expect(unconfigured.status).toBe(503);
+
+    const ok = await buildApp(mailOn()).handle(
+      new Request("http://localhost/api/v1/auth/verify-email/request", {
+        method: "POST",
+        headers: AUTH_HEADER,
+      }),
+    );
+    expect(ok.status).toBe(204);
+  });
+
+  it("verify-email/confirm → 204 on success; 401 for a bad token", async () => {
+    const ok = await buildApp(stubCore()).handle(
+      jsonPost("/api/v1/auth/verify-email/confirm", { token: "tok" }),
+    );
+    expect(ok.status).toBe(204);
+
+    const bad = await buildApp(
+      stubCore({}, {}, {}, {}, {
+        confirmEmailVerification: async () => {
+          throw new AuthenticationError("This verification link is invalid or has expired");
+        },
+      }),
+    ).handle(jsonPost("/api/v1/auth/verify-email/confirm", { token: "bad" }));
+    expect(bad.status).toBe(401);
+  });
+});

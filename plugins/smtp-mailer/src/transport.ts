@@ -39,6 +39,16 @@ export function createNodemailerTransport(secrets: SmtpSecrets): SmtpTransport {
     secure: secrets.secure,
     auth: secrets.user ? { user: secrets.user, pass: secrets.password } : undefined,
     pool: true,
+    // In STARTTLS mode (secure=false) nodemailer treats the upgrade as optional
+    // and would send cleartext if the server doesn't advertise STARTTLS — which
+    // would leak reset/verify tokens. Require the upgrade so a non-TLS server
+    // fails the send instead of silently downgrading. (No-op when secure=true.)
+    requireTLS: !secrets.secure,
+    // Bound every phase so an unreachable/slow/hung SMTP server can't stall the
+    // outbox worker's tick indefinitely (a failed send just retries via backoff).
+    connectionTimeout: 10_000, // TCP connect
+    greetingTimeout: 10_000, // wait for the server's SMTP greeting
+    socketTimeout: 30_000, // inactivity mid-conversation
   });
 
   return {

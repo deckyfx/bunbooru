@@ -430,17 +430,23 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
         .post(
           "/auth/change-password",
           async ({ body, currentUser, set }) => {
-            const user = requireUser(currentUser);
-            const { token } = await core.authService.changePassword(
-              user.id,
+            const caller = requireUser(currentUser);
+            // Throttle per user: change-password runs Argon2 verify on every call,
+            // so an authenticated caller could otherwise loop it to burn CPU.
+            if (!resetLimiter.hit(`pwchange:${caller.id}`)) {
+              throw new HttpError(429, "Too many attempts. Please try again later.");
+            }
+            const { token, user } = await core.authService.changePassword(
+              caller.id,
               body.current,
               body.next,
             );
             set.headers["set-cookie"] = buildSessionCookie(token, envConfig.SESSION_EXPIRY_MS, {
               secure: envConfig.COOKIE_SECURE,
             });
-            set.status = 204;
-            return "";
+            // Return the fresh token (for Bearer/API clients) + user, matching the
+            // login/register shape; cookie clients get the new session via set-cookie.
+            return { user: serializeUser(user), token };
           },
           {
             body: t.Object({
