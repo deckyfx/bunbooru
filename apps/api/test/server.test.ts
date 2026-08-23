@@ -154,6 +154,7 @@ function stubCore(
       requestPasswordReset: async () => undefined,
       resetPassword: async () => undefined,
       changePassword: async () => ({ token: SESSION_TOKEN, user: sampleUser }),
+      changeEmail: async () => sampleUser,
       requestEmailVerification: async () => undefined,
       confirmEmailVerification: async () => undefined,
       gcExpiredTokens: async () => 0,

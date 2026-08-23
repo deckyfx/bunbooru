@@ -57,6 +57,17 @@ function fakeUserRepo() {
       const user = rows.find((r) => r.id === id);
       if (user) user.passwordHash = passwordHash;
     },
+    setEmail: async (id, email) => {
+      const user = rows.find((r) => r.id === id);
+      if (user) {
+        // Mirror the real repo: a case-insensitive clash is a unique violation.
+        if (email !== null && rows.some((r) => r.id !== id && r.email?.toLowerCase() === email.toLowerCase())) {
+          throw Object.assign(new Error("duplicate"), { code: "23505" });
+        }
+        user.email = email;
+        user.emailVerifiedAt = null;
+      }
+    },
     setEmailVerifiedAt: async (id, at) => {
       const user = rows.find((r) => r.id === id);
       if (user) user.emailVerifiedAt = at;
@@ -556,6 +567,39 @@ describe("createAuthService.changePassword", () => {
     await expect(service.changePassword(user.id, "supersecret", "short")).rejects.toBeInstanceOf(
       ValidationError,
     );
+  });
+});
+
+describe("createAuthService.changeEmail", () => {
+  it("requires the current password and sets the new (unverified) email", async () => {
+    const { service } = makeService();
+    const { user } = await service.register({ username: "alice", password: "supersecret" });
+
+    await expect(service.changeEmail(user.id, "wrong", "new@example.com")).rejects.toBeInstanceOf(
+      AuthenticationError,
+    );
+
+    const updated = await service.changeEmail(user.id, "supersecret", "new@example.com");
+    expect(updated.email).toBe("new@example.com");
+    expect(updated.emailVerifiedAt).toBeNull();
+    expect(updated).not.toHaveProperty("passwordHash");
+  });
+
+  it("rejects an empty email", async () => {
+    const { service } = makeService();
+    const { user } = await service.register({ username: "alice", password: "supersecret" });
+    await expect(service.changeEmail(user.id, "supersecret", "  ")).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+  });
+
+  it("rejects an email already in use (case-insensitive)", async () => {
+    const { service } = makeService();
+    await service.register({ username: "bob", password: "supersecret", email: "taken@example.com" });
+    const { user } = await service.register({ username: "alice", password: "supersecret" });
+    await expect(
+      service.changeEmail(user.id, "supersecret", "TAKEN@example.com"),
+    ).rejects.toBeInstanceOf(RegistrationConflictError);
   });
 });
 

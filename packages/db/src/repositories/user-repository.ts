@@ -43,6 +43,12 @@ export interface UserRepository {
   findById(id: number): Promise<User | null>;
   /** Overwrite a user's password hash (self-serve reset / change-password). */
   setPasswordHash(id: number, passwordHash: string): Promise<void>;
+  /**
+   * Set (or clear with `null`) a user's email, resetting `emailVerifiedAt` to
+   * NULL — a changed address is unproven until re-verified. Uniqueness is enforced
+   * by the `lower(email)` index; a conflict surfaces as a unique violation.
+   */
+  setEmail(id: number, email: string | null): Promise<void>;
   /** Stamp (or clear) when the account's email was proven controlled. */
   setEmailVerifiedAt(id: number, at: Date | null): Promise<void>;
 }
@@ -116,6 +122,11 @@ export function createUserRepository(db: DB): UserRepository {
 
     async setPasswordHash(id, passwordHash) {
       await db.update(users).set({ passwordHash }).where(eq(users.id, id));
+    },
+
+    async setEmail(id, email) {
+      // A new address is unproven — clear verification in the same write.
+      await db.update(users).set({ email, emailVerifiedAt: null }).where(eq(users.id, id));
     },
 
     async setEmailVerifiedAt(id, at) {

@@ -7,6 +7,7 @@ import { PasswordInput } from "../components/password-input";
 import {
   authErrorMessage,
   useAuthConfig,
+  useChangeEmail,
   useChangePassword,
   useCurrentUser,
   useRequestEmailVerification,
@@ -49,6 +50,7 @@ export function AccountPage() {
     <div className="mx-auto max-w-lg space-y-6">
       <h1 className="border-b border-line pb-1 text-base font-bold">Account · {user.username}</h1>
       <EmailSection user={user} />
+      <ChangeEmailSection />
       <ChangePasswordSection />
       <ApiKeysSection />
     </div>
@@ -119,6 +121,72 @@ function EmailSection({ user }: { user: UserDto }) {
 }
 
 /** Change the account password (requires the current one). */
+/** Change the account's email (requires the current password; re-verifies). */
+function ChangeEmailSection() {
+  const change = useChangeEmail();
+  const [email, setEmail] = useState("");
+  const [current, setCurrent] = useState("");
+
+  function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (change.isPending || !email.trim() || !current) return;
+    change.mutate(
+      { current, email: email.trim() },
+      {
+        onSuccess: () => {
+          setEmail("");
+          setCurrent("");
+        },
+      },
+    );
+  }
+
+  return (
+    <section className="space-y-3">
+      <h2 className="font-bold">Change email</h2>
+      <p className="text-[12px] text-muted">
+        Your email receives password-reset and verification links. A new address must be
+        re-verified before it can be used for reset.
+      </p>
+      <form onSubmit={onSubmit} className="space-y-3">
+        <label className="block">
+          <span className="mb-1 block text-[12px] font-semibold">New email</span>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="off"
+            required
+            className="block w-full rounded border border-line p-1.5 text-[12px] outline-none focus:border-link"
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-[12px] font-semibold">Current password</span>
+          <PasswordInput value={current} onChange={setCurrent} autoComplete="current-password" required />
+        </label>
+
+        {change.isError ? (
+          <p role="alert" className="text-[12px] text-tag-artist">
+            {authErrorMessage(change.error, "Couldn’t change your email (is it already in use?).")}
+          </p>
+        ) : null}
+        {change.isSuccess ? (
+          <p className="text-[12px] text-tag-character">Email updated — re-verify it above.</p>
+        ) : null}
+
+        <button
+          type="submit"
+          disabled={change.isPending || !email.trim() || !current}
+          className="flex items-center gap-1 rounded bg-link px-4 py-2 text-[12px] text-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {change.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+          Update email
+        </button>
+      </form>
+    </section>
+  );
+}
+
 function ChangePasswordSection() {
   const change = useChangePassword();
   const [current, setCurrent] = useState("");
