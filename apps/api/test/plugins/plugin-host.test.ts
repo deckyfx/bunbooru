@@ -147,6 +147,75 @@ describe("createPluginHost", () => {
     expect(events).toEqual(["+beta", "-beta"]);
   });
 
+  it("serializes concurrent activate calls — the capability installs exactly once", async () => {
+    const events: string[] = [];
+    const binding = {
+      onActivate: (p: LoadedPlugin) => events.push(`+${p.id}`),
+      onDeactivate: (p: LoadedPlugin) => events.push(`-${p.id}`),
+    };
+    const host = createPluginHost({
+      pluginState: fakeState(),
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+
+    // Three racing activations must not triple-install (the idempotency check is
+    // re-evaluated inside the per-plugin queue, not just before the first await).
+    await Promise.all([host.activate("beta"), host.activate("beta"), host.activate("beta")]);
+    expect(events).toEqual(["+beta"]);
+    expect(host.isActive("beta")).toBe(true);
+  });
+
+  it("serializes concurrent deactivate calls — the capability removes exactly once", async () => {
+    const events: string[] = [];
+    const binding = {
+      onActivate: (p: LoadedPlugin) => events.push(`+${p.id}`),
+      onDeactivate: (p: LoadedPlugin) => events.push(`-${p.id}`),
+    };
+    const host = createPluginHost({
+      pluginState: fakeState({ beta: true }),
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init(); // installs +beta
+    events.length = 0;
+
+    await Promise.all([host.deactivate("beta"), host.deactivate("beta")]);
+    expect(events).toEqual(["-beta"]);
+    expect(host.isActive("beta")).toBe(false);
+  });
+
+  it("a throwing onDeactivate leaves the plugin active with its capability intact", async () => {
+    let installs = 0;
+    const binding = {
+      onActivate: () => {
+        installs += 1;
+      },
+      onDeactivate: () => {
+        throw new Error("cleanup boom");
+      },
+    };
+    const state = fakeState({ beta: true });
+    const host = createPluginHost({
+      pluginState: state,
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init(); // installs === 1
+
+    // Removal fails BEFORE persist, so nothing is half-applied: DB + memory still
+    // report active and the capability is still installed (no compensating re-install
+    // for a single binding that never came off).
+    await expect(host.deactivate("beta")).rejects.toThrow("cleanup boom");
+    expect(host.isActive("beta")).toBe(true);
+    expect(state.rows.get("beta")).toBe(true);
+    expect(installs).toBe(1);
+  });
+
   it("throws UnknownPluginError for an id that isn't a known plugin", async () => {
     const host = createPluginHost({ pluginState: fakeState(), loaded, seedActiveIds: [] });
     await host.init();

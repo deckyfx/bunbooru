@@ -107,6 +107,57 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
   /** In-memory mirror of the persisted active set (hot-path lookups + gating). */
   const active = new Set<string>();
 
+  /**
+   * Per-plugin transition queue. `activate`/`deactivate` for a given id run one at
+   * a time, so two concurrent calls can't both clear the idempotency check and
+   * double-apply (double install / double cleanup). Chaining after the previous
+   * transition SETTLES (success or failure) means a failed transition never wedges
+   * the queue; the stored tail never rejects so the next enqueue can await it.
+   */
+  const transitions = new Map<string, Promise<unknown>>();
+  function serialize<T>(id: string, op: () => Promise<T>): Promise<T> {
+    const prev = transitions.get(id) ?? Promise.resolve();
+    const run = prev.then(op, op);
+    transitions.set(
+      id,
+      run.then(
+        () => {},
+        () => {},
+      ),
+    );
+    return run;
+  }
+
+  /** Install every binding's capability for `p`; on any throw, remove the ones
+   *  already installed (reverse order) before rethrowing — never a partial install. */
+  function installCapabilities(p: LoadedPlugin): void {
+    const done: PluginCapabilityBinding[] = [];
+    try {
+      for (const binding of capabilityBindings) {
+        binding.onActivate(p);
+        done.push(binding);
+      }
+    } catch (error) {
+      for (const binding of done.reverse()) binding.onDeactivate(p);
+      throw error;
+    }
+  }
+
+  /** Remove every binding's capability for `p`; on any throw, re-install the ones
+   *  already removed (reverse order) before rethrowing — never a partial removal. */
+  function removeCapabilities(p: LoadedPlugin): void {
+    const done: PluginCapabilityBinding[] = [];
+    try {
+      for (const binding of capabilityBindings) {
+        binding.onDeactivate(p);
+        done.push(binding);
+      }
+    } catch (error) {
+      for (const binding of done.reverse()) binding.onActivate(p);
+      throw error;
+    }
+  }
+
   function describe(p: LoadedPlugin): ExtensionInfo {
     return {
       id: p.id,
@@ -131,10 +182,12 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
         else logger.warn("plugin_state_unmounted_id", { id });
       }
       // Install the capabilities of every already-active plugin (e.g. its mail
-      // provider), so boot reflects the persisted active set.
+      // provider), so boot reflects the persisted active set. A binding throwing
+      // here fails the boot (fail-fast), with its own plugin's partial install
+      // rolled back first.
       for (const id of active) {
         const p = byId.get(id);
-        if (p) for (const binding of capabilityBindings) binding.onActivate(p);
+        if (p) installCapabilities(p);
       }
     },
 
@@ -159,49 +212,52 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
     async activate(id) {
       const p = byId.get(id);
       if (!p) throw new UnknownPluginError(id);
-      // Idempotent (the admin route documents it so): a redundant activate must NOT
-      // re-run capability installs — otherwise a persist failure on the already-active
-      // path would roll back (clear) a live capability while DB+memory still say active.
-      if (active.has(id)) return describe(p);
-      // Install the plugin's capabilities FIRST, so a failure here (e.g. a mail
-      // provider conflict) aborts with NO persisted or in-memory change — the
-      // plugin stays exactly as it was. Roll back the ones already installed if a
-      // later binding throws mid-list.
-      const installed: PluginCapabilityBinding[] = [];
-      try {
-        for (const binding of capabilityBindings) {
-          binding.onActivate(p);
-          installed.push(binding);
+      // Serialize per-plugin so concurrent calls can't both pass the idempotency
+      // check and double-apply; the check is re-evaluated INSIDE the queued op.
+      return serialize(id, async () => {
+        // Idempotent (the admin route documents it so): a redundant activate is a
+        // no-op — never re-runs installs (which a later persist failure would then
+        // wrongly roll back on an already-active plugin).
+        if (active.has(id)) return describe(p);
+        // Install capabilities FIRST, so a failure (e.g. a mail provider conflict)
+        // aborts with NO persisted or in-memory change — the plugin stays as it was.
+        installCapabilities(p);
+        // Persist, THEN mirror into memory. If the write fails, undo the installs so
+        // DB, memory, and capability state can never disagree (route 500s; the plugin
+        // stays exactly as the next boot would restore it).
+        try {
+          await pluginState.setActive(id, true);
+        } catch (error) {
+          removeCapabilities(p);
+          throw error;
         }
-      } catch (error) {
-        for (const binding of installed.reverse()) binding.onDeactivate(p);
-        throw error;
-      }
-      // Persist, THEN mirror into the in-memory set. If the write fails, undo the
-      // capability installs too, so DB, memory, and capability state can never
-      // disagree (the route 500s and the plugin stays as the next boot would find it).
-      try {
-        await pluginState.setActive(id, true);
-      } catch (error) {
-        for (const binding of capabilityBindings) binding.onDeactivate(p);
-        throw error;
-      }
-      active.add(id);
-      logger.info("plugin_activated", { id });
-      return describe(p);
+        active.add(id);
+        logger.info("plugin_activated", { id });
+        return describe(p);
+      });
     },
 
     async deactivate(id) {
       const p = byId.get(id);
       if (!p) throw new UnknownPluginError(id);
-      // Idempotent, symmetric with activate(): a redundant deactivate is a no-op
-      // (never re-runs onDeactivate on an already-inactive plugin).
-      if (!active.has(id)) return describe(p);
-      await pluginState.setActive(id, false);
-      active.delete(id);
-      for (const binding of capabilityBindings) binding.onDeactivate(p);
-      logger.info("plugin_deactivated", { id });
-      return describe(p);
+      return serialize(id, async () => {
+        // Idempotent, symmetric with activate(): a redundant deactivate is a no-op.
+        if (!active.has(id)) return describe(p);
+        // Remove capabilities FIRST (with rollback), so a throwing onDeactivate
+        // leaves the plugin FULLY active rather than persisted-inactive-but-still-
+        // installed. Only after a clean removal do we persist + drop the memory bit.
+        removeCapabilities(p);
+        try {
+          await pluginState.setActive(id, false);
+        } catch (error) {
+          // Persist failed: re-install so the still-active plugin keeps its capability.
+          installCapabilities(p);
+          throw error;
+        }
+        active.delete(id);
+        logger.info("plugin_deactivated", { id });
+        return describe(p);
+      });
     },
   };
 }
