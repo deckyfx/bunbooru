@@ -461,6 +461,14 @@ export function createAuthService(
       if (!(await Bun.password.verify(currentPassword, user.passwordHash))) {
         throw new AuthenticationError("Current password is incorrect");
       }
+      // Invalidate outstanding verify-email tokens BEFORE swapping the address.
+      // They were minted for the OLD address; consumeForEmailVerification is a
+      // single transaction that consumes the token AND sets emailVerifiedAt while
+      // contending on the same token row, so invalidating first leaves NO window
+      // where a stale token could verify the new (unproven) address. (If the unique
+      // index rejects the address below, the only effect is clearing this user's
+      // own pending tokens — safe; they simply re-request verification.)
+      await authTokens.invalidateOutstanding(user.id, "verify-email", new Date());
       try {
         await users.setEmail(user.id, email);
       } catch (error) {
@@ -468,10 +476,6 @@ export function createAuthService(
         if (isUniqueViolation(error)) throw new RegistrationConflictError();
         throw error;
       }
-      // Invalidate any outstanding verify-email tokens: they were minted for the
-      // OLD address, so redeeming one now must not mark this NEW (unproven)
-      // address verified. The user re-requests verification for the new address.
-      await authTokens.invalidateOutstanding(user.id, "verify-email", new Date());
       // Public projection with the new (unverified) address — never the hash.
       return {
         id: user.id,

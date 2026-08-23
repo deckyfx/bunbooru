@@ -102,11 +102,12 @@ async function main(): Promise<void> {
   const passwordHash = await Bun.password.hash(password);
   await usersRepo.setPasswordHash(user.id, passwordHash);
   if (newEmail) {
-    // setEmail clears emailVerifiedAt (the new address is unproven). Invalidate any
-    // outstanding verify-email tokens too, so one minted for the OLD address can't
-    // later verify this new one — mirroring AuthService.changeEmail.
-    await usersRepo.setEmail(user.id, newEmail);
+    // Invalidate outstanding verify-email tokens BEFORE swapping the address, so a
+    // token minted for the OLD address can't verify the new one (verification is a
+    // single transaction on the same token row — invalidate-first leaves no window),
+    // mirroring AuthService.changeEmail. setEmail then clears emailVerifiedAt.
     await authTokens.invalidateOutstanding(user.id, "verify-email", new Date());
+    await usersRepo.setEmail(user.id, newEmail);
   }
   spinner.stop(newEmail ? "Password and email updated." : "Password updated.");
 
