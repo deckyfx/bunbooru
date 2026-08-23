@@ -14,6 +14,7 @@
     "dev": "bun --watch apps/api/src/index.ts",
     "dev:web": "bun run --cwd apps/web dev",
     "db:generate": "bun run --cwd packages/db db:generate",
+    "gen:migrations": "bun run scripts/embed-migrations.ts",
     "db:studio": "bun run --cwd packages/db db:studio",
     "migrate": "bun run --cwd packages/db migrate",
     "seed": "bun run scripts/seed.ts",

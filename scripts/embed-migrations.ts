@@ -1,0 +1,178 @@
+#!/usr/bin/env bun
+/**
+ * Generate the embedded-migration manifests so a COMPILED BINARY carries its SQL
+ * (a compiled binary has no `drizzle/` folder beside it — see BUN_DATABASE.md
+ * "Shipping Migrations Inside a Compiled Binary").
+ *
+ * For each package with a `drizzle/` folder, emits `src/migrations.embedded.ts`:
+ * an import manifest that pulls each `*.sql` in with `type: "text"` and the
+ * journal with `type: "json"` — both resolved at build time and compiled into the
+ * binary. The SQL stays in `drizzle/` as the single source; a new migration adds
+ * one import line, never a copy of its body.
+ *
+ * Fails (exit 1) when the journal and the `.sql` files disagree in EITHER
+ * direction, or the journal is empty — a manifest that lies about what it can run
+ * is worse than no manifest. Run automatically after `drizzle-kit generate`.
+ *
+ * Usage: `bun run scripts/embed-migrations.ts`
+ */
+import { readdirSync, existsSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+
+/** Repo root, resolved from this script's location (cwd-independent). */
+const ROOT = join(import.meta.dir, "..");
+
+/** Every package whose `drizzle/` migrations must be embedded. */
+const PACKAGES = [
+  "packages/db",
+  "plugins/example",
+  "plugins/thumbnailer",
+  "plugins/smtp-mailer",
+  "plugins/shimmie-import",
+] as const;
+
+export interface JournalEntry {
+  idx: number;
+  when: number;
+  tag: string;
+  breakpoints: boolean;
+}
+
+/** A valid JS identifier for a migration tag's text import. */
+export function importName(tag: string): string {
+  return `m_${tag.replace(/[^a-zA-Z0-9]/g, "_")}`;
+}
+
+/**
+ * Validate a package's journal against its on-disk `.sql` files and return the
+ * entries in apply order. Throws (a generation-time fault) on: an empty journal;
+ * a journal tag with no `.sql`, or a `.sql` not in the journal; a duplicate tag;
+ * or two DISTINCT tags that would collide on the same text-import binding (which
+ * would silently drop one migration from the manifest). Pure — no filesystem — so
+ * it is directly unit-testable.
+ */
+export function resolveMigrationEntries(
+  journalEntries: JournalEntry[],
+  sqlFilenames: string[],
+  label = "migrations",
+): JournalEntry[] {
+  const entries = [...journalEntries].sort((a, b) => a.idx - b.idx);
+  if (entries.length === 0) {
+    throw new Error(`${label}: journal lists no migrations — run drizzle-kit generate`);
+  }
+
+  const seenTags = new Set<string>();
+  const bindings = new Map<string, string>();
+  for (const e of entries) {
+    if (seenTags.has(e.tag)) throw new Error(`${label}: duplicate journal tag "${e.tag}"`);
+    seenTags.add(e.tag);
+    const binding = importName(e.tag);
+    const prior = bindings.get(binding);
+    if (prior !== undefined && prior !== e.tag) {
+      throw new Error(
+        `${label}: tags "${prior}" and "${e.tag}" collide on import binding "${binding}"`,
+      );
+    }
+    bindings.set(binding, e.tag);
+  }
+
+  // Cross-check journal ↔ folder both ways: a lie in either direction means the
+  // binary would ship a manifest that can't do what it claims.
+  const sqlOnDisk = new Set(sqlFilenames);
+  const inJournal = new Set(entries.map((e) => `${e.tag}.sql`));
+  for (const e of entries) {
+    if (!sqlOnDisk.has(`${e.tag}.sql`)) {
+      throw new Error(`${label}: journal names "${e.tag}" but ${e.tag}.sql is missing on disk`);
+    }
+  }
+  for (const f of sqlFilenames) {
+    if (!inJournal.has(f)) {
+      throw new Error(`${label}: ${f} exists on disk but is not listed in the journal`);
+    }
+  }
+  return entries;
+}
+
+async function generateOne(pkgDir: string): Promise<void> {
+  const drizzleDir = join(ROOT, pkgDir, "drizzle");
+  const journalPath = join(drizzleDir, "meta", "_journal.json");
+  const outFile = join(ROOT, pkgDir, "src", "migrations.embedded.ts");
+
+  if (!existsSync(journalPath)) {
+    throw new Error(`${pkgDir}: missing ${relative(ROOT, journalPath)} — run drizzle-kit generate`);
+  }
+
+  const journal = (await Bun.file(journalPath).json()) as { entries: JournalEntry[] };
+  const sqlOnDisk = readdirSync(drizzleDir).filter((f) => f.endsWith(".sql"));
+  const entries = resolveMigrationEntries(journal.entries, sqlOnDisk, pkgDir);
+
+  // Relative import specifiers from the generated file (in src/) to drizzle/.
+  const relTo = (p: string): string => {
+    const r = relative(dirname(outFile), p).replaceAll("\\", "/");
+    return r.startsWith(".") ? r : `./${r}`;
+  };
+
+  const importLines = [
+    `import journalJson from ${JSON.stringify(relTo(journalPath))} with { type: "json" };`,
+    ...entries.map(
+      (e) =>
+        `import ${importName(e.tag)} from ${JSON.stringify(
+          relTo(join(drizzleDir, `${e.tag}.sql`)),
+        )} with { type: "text" };`,
+    ),
+  ].join("\n");
+
+  const fileEntries = entries
+    .map((e) => `  ${JSON.stringify(`${e.tag}.sql`)}: ${importName(e.tag)},`)
+    .join("\n");
+
+  const body = `// @ts-nocheck GENERATED by scripts/embed-migrations.ts — DO NOT EDIT.
+// Embeds this package's Drizzle migrations into the compiled binary. Each *.sql is
+// pulled in with \`type: "text"\` and the journal with \`type: "json"\` — Bun resolves
+// both at BUILD time and compiles the contents in, so the binary carries its SQL
+// with no drizzle/ folder on disk (see BUN_DATABASE.md). The SQL stays in
+// drizzle/*.sql as the single source; regenerate with \`bun run gen:migrations\`.
+//
+// @ts-nocheck is required: these are RELATIVE arbitrary-extension imports, which
+// tsc cannot resolve under \`moduleResolution: "bundler"\` — an ambient
+// \`declare module "*.sql"\` only applies to BARE specifiers, not relative ones
+// (verified: without it, every *.sql import errors TS2307). Bun's bundler resolves
+// them; the exports below are still type-checked (as EmbeddedMigrations) at every
+// call site, so the public surface stays safe.
+
+${importLines}
+
+/** tag+".sql" → raw SQL text (compiled into the binary). */
+const files: Record<string, string> = {
+${fileEntries}
+};
+
+/** The embedded journal + SQL for this package, for \`applyEmbeddedMigrations\`. */
+export const embeddedMigrations = {
+  journal: JSON.stringify(journalJson),
+  files,
+};
+
+/** How many migrations were compiled in (0 ⇒ a packaging fault; boot must fail). */
+export const embeddedMigrationCount: number = Object.keys(files).length;
+`;
+
+  await Bun.write(outFile, body);
+  console.log(`✔ ${pkgDir}: embedded ${entries.length} migration(s) → ${relative(ROOT, outFile)}`);
+}
+
+async function main(): Promise<void> {
+  for (const pkg of PACKAGES) {
+    await generateOne(pkg);
+  }
+  console.log("✔ All migration manifests generated.");
+}
+
+// Only run when invoked directly (`bun run …`), so tests can import the pure
+// helpers (importName / resolveMigrationEntries) without regenerating manifests.
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(`✖ embed-migrations failed: ${error instanceof Error ? error.message : error}`);
+    process.exit(1);
+  });
+}

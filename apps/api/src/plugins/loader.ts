@@ -1,5 +1,5 @@
 import {
-  applyMigrations,
+  applyEmbeddedMigrations,
   type Core,
   type DB,
   type MailProvider,
@@ -174,7 +174,11 @@ export async function loadPlugins({
     if (plugin.migrations) {
       try {
         await withTimeout(
-          applyMigrations(db, plugin.migrations),
+          applyEmbeddedMigrations(db, {
+            embedded: plugin.migrations.embedded,
+            migrationsTable: plugin.migrations.migrationsTable,
+            label: id,
+          }),
           `plugin ${id} migration`,
           stepTimeoutMs,
         );

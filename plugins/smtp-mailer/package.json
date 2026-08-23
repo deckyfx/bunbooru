@@ -8,7 +8,7 @@
   },
   "types": "./src/index.ts",
   "scripts": {
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate && bun ../../scripts/embed-migrations.ts"
   },
   "dependencies": {
     "@bunbooru/plugin-sdk": "workspace:*",

@@ -12,6 +12,7 @@ import type {
   AuthService,
   CoreEvents,
   DB,
+  EmbeddedMigrations,
   MailProvider,
   OutgoingMail,
   SettingsService,
@@ -35,7 +36,7 @@ import type {
  * mounts the returned {@link PluginRegistration.routes} under
  * `/api/v1/plugins/<id>`.
  */
-export const PLUGIN_SDK_VERSION = "0.4.0" as const;
+export const PLUGIN_SDK_VERSION = "0.5.0" as const;
 
 /** Storage contract re-exported for plugins that register storage providers. */
 export type { StorageProvider };
@@ -153,8 +154,13 @@ export interface AdminPage {
  * run.
  */
 export interface PluginMigrations {
-  /** Absolute path to the plugin's Drizzle output folder (its `drizzle/`). */
-  migrationsFolder: string;
+  /**
+   * The plugin's migrations EMBEDDED into the binary — its generated
+   * `migrations.embedded.ts` (`with { type: "text"/"json" }` imports), so a
+   * compiled binary carries the SQL with no `drizzle/` folder on disk. Regenerate
+   * with `bun run gen:migrations` after `drizzle-kit generate`.
+   */
+  embedded: EmbeddedMigrations;
   /**
    * Dedicated tracking table so plugin migrations never collide with Core's
    * `__drizzle_migrations`. Convention: `__drizzle_migrations_<pluginId>`.
@@ -299,6 +305,7 @@ export type {
   AuthService,
   CoreEvents,
   DB,
+  EmbeddedMigrations,
   SettingsService,
   StatsService,
   TagService,
