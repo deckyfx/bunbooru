@@ -461,6 +461,13 @@ export function createAuthService(
       if (!(await Bun.password.verify(currentPassword, user.passwordHash))) {
         throw new AuthenticationError("Current password is incorrect");
       }
+      // Re-submitting the SAME address (case-insensitive) is a no-op: don't clear a
+      // proven verification (which would also block reset when a verified email is
+      // required) or drop tokens for an unchanged address. Return the user as-is.
+      if (user.email && user.email.toLowerCase() === email.toLowerCase()) {
+        const { passwordHash: _passwordHash, ...publicUser } = user;
+        return publicUser;
+      }
       // Invalidate outstanding verify-email tokens BEFORE swapping the address.
       // They were minted for the OLD address; consumeForEmailVerification is a
       // single transaction that consumes the token AND sets emailVerifiedAt while

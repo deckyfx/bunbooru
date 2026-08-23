@@ -70,6 +70,39 @@ describe.skipIf(!TEST_DATABASE_URL)("user + session repositories (integration)",
       expect((await users.findById(created.id))?.email).toBeNull();
     });
 
+    it("resetCredentials writes password + optional email atomically", async () => {
+      const created = await seedUser("dave", "dave@old.example.com");
+      await users.setEmailVerifiedAt(created.id, new Date());
+
+      // Password-only: the email + its verification are left untouched.
+      await users.resetCredentials(created.id, { passwordHash: "hash:new" });
+      let after = await users.findById(created.id);
+      expect(after?.passwordHash).toBe("hash:new");
+      expect(after?.email).toBe("dave@old.example.com");
+      expect(after?.emailVerifiedAt).not.toBeNull();
+
+      // Password + email: both change and verification clears in ONE write.
+      await users.resetCredentials(created.id, {
+        passwordHash: "hash:newer",
+        email: "dave@new.example.com",
+      });
+      after = await users.findById(created.id);
+      expect(after?.passwordHash).toBe("hash:newer");
+      expect(after?.email).toBe("dave@new.example.com");
+      expect(after?.emailVerifiedAt).toBeNull();
+
+      // Atomicity: a taken address rejects the whole row — the password does NOT
+      // commit on its own (this is the partial-update the CLI must avoid).
+      await seedUser("erin", "taken@example.com");
+      const conflict = await users
+        .resetCredentials(created.id, { passwordHash: "hash:rejected", email: "TAKEN@example.com" })
+        .catch((e: unknown) => e);
+      expect((conflict as { cause?: { errno?: string } }).cause?.errno).toBe("23505");
+      after = await users.findById(created.id);
+      expect(after?.passwordHash).toBe("hash:newer"); // unchanged, not "hash:rejected"
+      expect(after?.email).toBe("dave@new.example.com");
+    });
+
     it("allows multiple null emails but rejects duplicate usernames case-insensitively", async () => {
       await seedUser("alice", null);
       await seedUser("bob", null); // two NULL emails coexist under the unique index

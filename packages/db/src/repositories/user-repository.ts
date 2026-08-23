@@ -51,6 +51,15 @@ export interface UserRepository {
   setEmail(id: number, email: string | null): Promise<void>;
   /** Stamp (or clear) when the account's email was proven controlled. */
   setEmailVerifiedAt(id: number, at: Date | null): Promise<void>;
+  /**
+   * Out-of-band admin recovery: overwrite the password hash and, when `email` is
+   * given, replace the address (clearing `emailVerifiedAt` — the new one is
+   * unproven). Both columns are written in ONE update, so the operation is atomic:
+   * an email unique-violation rejects the whole row and the password is left
+   * unchanged (no half-applied "password changed but email didn't"). Omit `email`
+   * to reset the password only.
+   */
+  resetCredentials(id: number, changes: { passwordHash: string; email?: string }): Promise<void>;
 }
 
 /** Build a {@link UserRepository} over a {@link DB} handle. */
@@ -131,6 +140,18 @@ export function createUserRepository(db: DB): UserRepository {
 
     async setEmailVerifiedAt(id, at) {
       await db.update(users).set({ emailVerifiedAt: at }).where(eq(users.id, id));
+    },
+
+    async resetCredentials(id, { passwordHash, email }) {
+      // One UPDATE writes both columns atomically — if the email unique index
+      // rejects the row, the password change is rolled into the same failed
+      // statement rather than committing on its own. A new address is unproven, so
+      // emailVerifiedAt is cleared in the same write.
+      const changes =
+        email === undefined
+          ? { passwordHash }
+          : { passwordHash, email, emailVerifiedAt: null };
+      await db.update(users).set(changes).where(eq(users.id, id));
     },
   };
 }

@@ -85,7 +85,12 @@ async function main(): Promise<void> {
     },
   });
   if (p.isCancel(emailAnswer)) return void p.cancel("Aborted.");
-  const newEmail = emailAnswer.trim() || null;
+  let newEmail = emailAnswer.trim() || null;
+  // Submitting the current address (any case) means "keep": never re-write it, which
+  // would needlessly clear verification and drop this user's verify tokens.
+  if (newEmail && user.email && newEmail.toLowerCase() === user.email.toLowerCase()) {
+    newEmail = null;
+  }
 
   // Uniqueness is enforced case-insensitively (lower(email) index) — pre-check via
   // the repository for a clear message instead of a raw constraint error.
@@ -100,15 +105,19 @@ async function main(): Promise<void> {
   const spinner = p.spinner();
   spinner.start("Hashing and updating…");
   const passwordHash = await Bun.password.hash(password);
-  await usersRepo.setPasswordHash(user.id, passwordHash);
   if (newEmail) {
     // Invalidate outstanding verify-email tokens BEFORE swapping the address, so a
     // token minted for the OLD address can't verify the new one (verification is a
     // single transaction on the same token row — invalidate-first leaves no window),
-    // mirroring AuthService.changeEmail. setEmail then clears emailVerifiedAt.
+    // mirroring AuthService.changeEmail.
     await authTokens.invalidateOutstanding(user.id, "verify-email", new Date());
-    await usersRepo.setEmail(user.id, newEmail);
   }
+  // Password + optional email land in ONE atomic update (resetCredentials), so a
+  // late email unique-violation can't leave the password changed on its own.
+  await usersRepo.resetCredentials(
+    user.id,
+    newEmail ? { passwordHash, email: newEmail } : { passwordHash },
+  );
   spinner.stop(newEmail ? "Password and email updated." : "Password updated.");
 
   p.outro(
