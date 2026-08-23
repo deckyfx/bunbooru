@@ -51,6 +51,22 @@ describe("createMailService", () => {
     // Different id: fail fast rather than silently reroute mail.
     expect(() => mail.setProvider(b.provider, "ses-mailer")).toThrow(MailProviderConflictError);
   });
+
+  it("clearProvider removes the provider only for the matching plugin id", async () => {
+    const mail = createMailService();
+    const { provider } = recordingProvider();
+    mail.setProvider(provider, "smtp-mailer");
+
+    // A different plugin's clear is a no-op.
+    mail.clearProvider("other-plugin");
+    expect(mail.activeProviderId()).toBe("smtp-mailer");
+    expect(await mail.isConfigured()).toBe(true);
+
+    // The owner's clear removes it → mail becomes unconfigured (reset/verify 503).
+    mail.clearProvider("smtp-mailer");
+    expect(mail.activeProviderId()).toBeNull();
+    expect(await mail.isConfigured()).toBe(false);
+  });
 });
 
 describe("createLogMailProvider", () => {

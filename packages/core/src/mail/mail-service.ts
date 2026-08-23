@@ -25,6 +25,13 @@ export interface MailService {
    */
   setProvider(provider: MailProvider, pluginId: string): void;
   /**
+   * Remove the active provider IF it was installed by `pluginId` — called when that
+   * plugin is DEACTIVATED at runtime, so `isConfigured()` immediately returns false
+   * and the reset/verify flows 503 (the web then hides their affordances). A no-op
+   * when a different plugin owns the provider, or none is installed.
+   */
+  clearProvider(pluginId: string): void;
+  /**
    * Hand a message to the active provider. Throws {@link MailNotConfiguredError}
    * when none is installed. Resolving means *accepted*, not *delivered*.
    */
@@ -57,6 +64,10 @@ export function createMailService(): MailService {
         throw new MailProviderConflictError(active.pluginId, pluginId);
       }
       active = { provider, pluginId };
+    },
+
+    clearProvider(pluginId) {
+      if (active?.pluginId === pluginId) active = null;
     },
 
     async send(mail) {

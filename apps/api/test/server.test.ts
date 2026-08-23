@@ -177,6 +177,7 @@ function stubCore(
       isConfigured: async () => false,
       activeProviderId: () => null,
       setProvider: () => {},
+      clearProvider: () => {},
       send: async () => undefined,
       verify: async () => undefined,
       ...mailOverrides,

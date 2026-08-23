@@ -105,6 +105,27 @@ describe("createPluginHost", () => {
     expect(host.manifest()).toEqual([]);
   });
 
+  it("drives capability bindings on init, activate, and deactivate", async () => {
+    const events: string[] = [];
+    const binding = {
+      onActivate: (p: LoadedPlugin) => events.push(`+${p.id}`),
+      onDeactivate: (p: LoadedPlugin) => events.push(`-${p.id}`),
+    };
+    const host = createPluginHost({
+      pluginState: fakeState({ alpha: true }), // alpha active at boot
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+
+    await host.init();
+    expect(events).toEqual(["+alpha"]); // installed for the already-active plugin
+
+    await host.activate("beta");
+    await host.deactivate("alpha");
+    expect(events).toEqual(["+alpha", "+beta", "-alpha"]);
+  });
+
   it("throws UnknownPluginError for an id that isn't a known plugin", async () => {
     const host = createPluginHost({ pluginState: fakeState(), loaded, seedActiveIds: [] });
     await host.init();

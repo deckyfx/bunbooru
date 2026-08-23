@@ -38,6 +38,25 @@ export class UnknownPluginError extends Error {
   }
 }
 
+/**
+ * A plugin-provided capability that must be installed/removed as the plugin is
+ * activated/deactivated at runtime — the general seam for anything that "comes and
+ * goes" with a plugin: its mail provider today; nav items, UI slots, search/storage
+ * providers, etc. later. The host applies these on {@link PluginHost.init} for
+ * already-active plugins, and on every {@link PluginHost.activate}/
+ * {@link PluginHost.deactivate}. Implementations MUST be idempotent.
+ *
+ * (Plugin ROUTES and admin pages already come-and-go via the active-set gate + the
+ * manifest, so they don't need a binding — this is for capabilities Core or the app
+ * holds a live reference to.)
+ */
+export interface PluginCapabilityBinding {
+  /** Install the capability the now-active `plugin` provides (no-op if it has none). */
+  onActivate(plugin: LoadedPlugin): void;
+  /** Remove the capability the now-inactive `plugin` provided (no-op if it has none). */
+  onDeactivate(plugin: LoadedPlugin): void;
+}
+
 /** Inputs for {@link createPluginHost}. */
 export interface PluginHostOptions {
   /** Just the persistence slice of Core the host needs. */
@@ -46,6 +65,12 @@ export interface PluginHostOptions {
   loaded: readonly LoadedPlugin[];
   /** Env `ENABLED_PLUGINS` — seeds the DB active set on first boot only. */
   seedActiveIds: readonly string[];
+  /**
+   * Capabilities that follow a plugin's active state (see
+   * {@link PluginCapabilityBinding}). Applied to already-active plugins on init()
+   * and on every activate()/deactivate(). Defaults to none.
+   */
+  capabilityBindings?: readonly PluginCapabilityBinding[];
 }
 
 /**
@@ -76,7 +101,7 @@ export interface PluginHost {
 
 /** Build the runtime {@link PluginHost}. */
 export function createPluginHost(options: PluginHostOptions): PluginHost {
-  const { pluginState, loaded, seedActiveIds } = options;
+  const { pluginState, loaded, seedActiveIds, capabilityBindings = [] } = options;
 
   const byId = new Map<string, LoadedPlugin>(loaded.map((p) => [p.id, p]));
   /** In-memory mirror of the persisted active set (hot-path lookups + gating). */
@@ -104,6 +129,12 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
         // A persisted id whose plugin failed to load (or was removed) is ignored
         // — the loader already logged the load failure.
         else logger.warn("plugin_state_unmounted_id", { id });
+      }
+      // Install the capabilities of every already-active plugin (e.g. its mail
+      // provider), so boot reflects the persisted active set.
+      for (const id of active) {
+        const p = byId.get(id);
+        if (p) for (const binding of capabilityBindings) binding.onActivate(p);
       }
     },
 
@@ -133,6 +164,7 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
       // the plugin stays as it was, matching what the next boot would restore).
       await pluginState.setActive(id, true);
       active.add(id);
+      for (const binding of capabilityBindings) binding.onActivate(p);
       logger.info("plugin_activated", { id });
       return describe(p);
     },
@@ -142,6 +174,7 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
       if (!p) throw new UnknownPluginError(id);
       await pluginState.setActive(id, false);
       active.delete(id);
+      for (const binding of capabilityBindings) binding.onDeactivate(p);
       logger.info("plugin_deactivated", { id });
       return describe(p);
     },
