@@ -159,12 +159,30 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
     async activate(id) {
       const p = byId.get(id);
       if (!p) throw new UnknownPluginError(id);
-      // Persist FIRST; only mirror into the in-memory set once the write lands, so
-      // a failed persist can't leave memory and DB disagreeing (the route 500s and
-      // the plugin stays as it was, matching what the next boot would restore).
-      await pluginState.setActive(id, true);
+      // Install the plugin's capabilities FIRST, so a failure here (e.g. a mail
+      // provider conflict) aborts with NO persisted or in-memory change — the
+      // plugin stays exactly as it was. Roll back the ones already installed if a
+      // later binding throws mid-list.
+      const installed: PluginCapabilityBinding[] = [];
+      try {
+        for (const binding of capabilityBindings) {
+          binding.onActivate(p);
+          installed.push(binding);
+        }
+      } catch (error) {
+        for (const binding of installed.reverse()) binding.onDeactivate(p);
+        throw error;
+      }
+      // Persist, THEN mirror into the in-memory set. If the write fails, undo the
+      // capability installs too, so DB, memory, and capability state can never
+      // disagree (the route 500s and the plugin stays as the next boot would find it).
+      try {
+        await pluginState.setActive(id, true);
+      } catch (error) {
+        for (const binding of capabilityBindings) binding.onDeactivate(p);
+        throw error;
+      }
       active.add(id);
-      for (const binding of capabilityBindings) binding.onActivate(p);
       logger.info("plugin_activated", { id });
       return describe(p);
     },

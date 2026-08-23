@@ -14,8 +14,7 @@
  */
 import * as p from "@clack/prompts";
 import { MIN_PASSWORD_LENGTH } from "@bunbooru/core";
-import { createDb, users } from "@bunbooru/db";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { createAuthTokenRepository, createDb, createUserRepository } from "@bunbooru/db";
 
 /** Minimum password length — the single shared rule from Core (reset/register/CLI). */
 const MIN_PASSWORD = MIN_PASSWORD_LENGTH;
@@ -37,6 +36,11 @@ async function main(): Promise<void> {
   p.intro("bunbooru · reset password");
 
   const db = createDb(DATABASE_URL);
+  // Go through repositories (never raw SQL in a script): they own the canonical
+  // lookup/update semantics — case-insensitive matching, clearing emailVerifiedAt,
+  // token invalidation — so this tool can't drift from the app's behaviour.
+  const usersRepo = createUserRepository(db);
+  const authTokens = createAuthTokenRepository(db);
 
   // Username from the first CLI arg, or prompt for it.
   let username = Bun.argv[2]?.trim();
@@ -49,14 +53,8 @@ async function main(): Promise<void> {
     username = answer.trim();
   }
 
-  // Usernames are stored canonicalized (lowercase); match on that.
-  const canonical = username.toLowerCase();
-  const found = await db
-    .select({ id: users.id, username: users.username, role: users.role, email: users.email })
-    .from(users)
-    .where(eq(users.username, canonical))
-    .limit(1);
-  const user = found[0];
+  // findByUsername matches case-insensitively (lower(username) index).
+  const user = await usersRepo.findByUsername(username);
   if (!user) {
     p.cancel(`No bunbooru user named "${username}".`);
     process.exit(1);
@@ -89,15 +87,11 @@ async function main(): Promise<void> {
   if (p.isCancel(emailAnswer)) return void p.cancel("Aborted.");
   const newEmail = emailAnswer.trim() || null;
 
-  // Uniqueness is enforced case-insensitively (lower(email) index) — pre-check for
-  // a clear message instead of a raw constraint error.
+  // Uniqueness is enforced case-insensitively (lower(email) index) — pre-check via
+  // the repository for a clear message instead of a raw constraint error.
   if (newEmail) {
-    const clash = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(and(eq(sql`lower(${users.email})`, newEmail.toLowerCase()), ne(users.id, user.id)))
-      .limit(1);
-    if (clash[0]) {
+    const clash = await usersRepo.findByEmail(newEmail);
+    if (clash && clash.id !== user.id) {
       p.cancel(`Email "${newEmail}" is already in use by another account.`);
       process.exit(1);
     }
@@ -106,14 +100,14 @@ async function main(): Promise<void> {
   const spinner = p.spinner();
   spinner.start("Hashing and updating…");
   const passwordHash = await Bun.password.hash(password);
-  const changes: { passwordHash: string; email?: string; emailVerifiedAt?: Date | null } = {
-    passwordHash,
-  };
+  await usersRepo.setPasswordHash(user.id, passwordHash);
   if (newEmail) {
-    changes.email = newEmail;
-    changes.emailVerifiedAt = null; // new address is unproven
+    // setEmail clears emailVerifiedAt (the new address is unproven). Invalidate any
+    // outstanding verify-email tokens too, so one minted for the OLD address can't
+    // later verify this new one — mirroring AuthService.changeEmail.
+    await usersRepo.setEmail(user.id, newEmail);
+    await authTokens.invalidateOutstanding(user.id, "verify-email", new Date());
   }
-  await db.update(users).set(changes).where(eq(users.id, user.id));
   spinner.stop(newEmail ? "Password and email updated." : "Password updated.");
 
   p.outro(

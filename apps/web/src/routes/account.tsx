@@ -49,7 +49,10 @@ export function AccountPage() {
   return (
     <div className="mx-auto max-w-lg space-y-6">
       <h1 className="border-b border-line pb-1 text-base font-bold">Account · {user.username}</h1>
-      <EmailSection user={user} />
+      {/* Keyed by email so a change-email remounts it: the verify-request
+          mutation state resets, and the new unverified address shows its own
+          "Verify email" button instead of a stale "sent" message. */}
+      <EmailSection key={user.email ?? "no-email"} user={user} />
       <ChangeEmailSection />
       <ChangePasswordSection />
       <ApiKeysSection />

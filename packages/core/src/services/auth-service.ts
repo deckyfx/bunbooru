@@ -169,6 +169,21 @@ function normalizeUsername(username: string): string {
   return username.trim().toLowerCase();
 }
 
+/**
+ * Trim + validate an email at the service boundary so a non-HTTP caller (CLI,
+ * job, test) can't persist a malformed address that the API's `format: "email"`
+ * schema would have rejected. Returns the trimmed address. Throws
+ * {@link ValidationError} when empty or not a plausible `local@domain.tld`. The
+ * DB's `lower(email)` unique index remains the authority on uniqueness.
+ */
+function assertValidEmail(email: string): string {
+  const trimmed = email.trim();
+  if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    throw new ValidationError("A valid email address is required");
+  }
+  return trimmed;
+}
+
 /** sha256 hex of a value — how session tokens are stored/looked up. */
 function sha256hex(value: string): string {
   return new Bun.CryptoHasher("sha256").update(value).digest("hex");
@@ -440,8 +455,7 @@ export function createAuthService(
     },
 
     async changeEmail(userId, currentPassword, newEmail) {
-      const email = newEmail.trim();
-      if (!email) throw new ValidationError("Email is required");
+      const email = assertValidEmail(newEmail);
       const user = await users.findById(userId);
       if (!user) throw new AuthenticationError();
       if (!(await Bun.password.verify(currentPassword, user.passwordHash))) {
@@ -454,6 +468,10 @@ export function createAuthService(
         if (isUniqueViolation(error)) throw new RegistrationConflictError();
         throw error;
       }
+      // Invalidate any outstanding verify-email tokens: they were minted for the
+      // OLD address, so redeeming one now must not mark this NEW (unproven)
+      // address verified. The user re-requests verification for the new address.
+      await authTokens.invalidateOutstanding(user.id, "verify-email", new Date());
       // Public projection with the new (unverified) address — never the hash.
       return {
         id: user.id,
