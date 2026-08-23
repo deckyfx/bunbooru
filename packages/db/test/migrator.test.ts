@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { planMigrations } from "../src/index";
+import { buildSequence, planMigrations } from "../src/index";
 
 /** A build sequence A(1) → B(2) → C(3). */
 const BUILD = [
@@ -57,5 +57,31 @@ describe("planMigrations", () => {
       { hash: "hc", when: 3 },
     ];
     expect(() => planMigrations(applied, BUILD)).toThrow(/schema gap/);
+  });
+});
+
+describe("buildSequence", () => {
+  const JOURNAL = JSON.stringify({
+    entries: [
+      { idx: 1, when: 20, tag: "0001_b", breakpoints: true },
+      { idx: 0, when: 10, tag: "0000_a", breakpoints: true },
+    ],
+  });
+
+  it("parses the embedded journal into hashed entries in idx order", () => {
+    const seq = buildSequence({ journal: JOURNAL, files: { "0000_a.sql": "A", "0001_b.sql": "B" } });
+    expect(seq.map((s) => s.tag)).toEqual(["0000_a", "0001_b"]);
+    expect(seq[0]?.when).toBe(10);
+    expect(seq[0]?.hash).toMatch(/^[0-9a-f]{64}$/); // sha256 of the raw SQL
+  });
+
+  it("throws when a journal tag has no embedded .sql (packaging fault)", () => {
+    expect(() => buildSequence({ journal: JOURNAL, files: { "0000_a.sql": "A" } })).toThrow(
+      /no 0001_b\.sql was compiled in/,
+    );
+  });
+
+  it("throws on malformed journal JSON", () => {
+    expect(() => buildSequence({ journal: "{ not json", files: {} })).toThrow();
   });
 });

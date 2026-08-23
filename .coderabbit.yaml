@@ -1,7 +1,34 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 # CodeRabbit configuration — https://docs.coderabbit.ai/getting-started/configure-coderabbit
 reviews:
-  # Skip the design-plan drafts under docs/ — they're forward-looking design
-  # prose for unbuilt features, not code, and shouldn't consume review budget.
   path_filters:
+    # Skip the design-plan drafts under docs/ — forward-looking prose, not code.
     - "!docs/**"
+    # Generated migration manifests — machine-written; not for review. Their
+    # `@ts-nocheck` is intentional (see path_instructions below).
+    - "!**/migrations.embedded.ts"
+  path_instructions:
+    - path: "**/migrations.embedded.ts"
+      instructions: >-
+        GENERATED, do not edit. The `@ts-nocheck` is intentional and REQUIRED:
+        these carry RELATIVE `.sql` (type:text) and `.json` (type:json) imports,
+        which tsc cannot resolve under `moduleResolution: "bundler"` — an ambient
+        `declare module "*.sql"` only applies to bare specifiers, not relative ones
+        (verified: without @ts-nocheck every import errors TS2307). Bun's bundler
+        resolves them at build time, and the exports are type-checked at every call
+        site. Do NOT suggest removing `@ts-nocheck` or adding a `declare module`.
+    - path: "packages/db/src/migrator.ts"
+      instructions: >-
+        The migrator MATERIALISES embedded SQL to a local temp dir (mkdtemp) so
+        Drizzle-ORM's own file-based `migrate()` can run against it (per
+        BUN_DATABASE.md "Shipping Migrations Inside a Compiled Binary"). This local
+        filesystem use is intentional and required — do NOT suggest routing it
+        through `StorageProvider` (that abstraction is for user ASSET storage such
+        as uploads / S3 / R2, never migration files). `Bun.write` creates parent
+        directories automatically, so an explicit `mkdir` of `meta/` is unnecessary.
+    - path: "scripts/embed-migrations.ts"
+      instructions: >-
+        A BUILD-TIME dev codegen script that reads each package's `drizzle/` folder
+        and writes the generated manifests. Its direct `node:fs` use is intentional
+        — do NOT suggest routing it through `StorageProvider`, nor removing
+        `@ts-nocheck` from the files it generates.

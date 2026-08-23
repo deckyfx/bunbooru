@@ -14,6 +14,7 @@ export type { DB } from "./client";
 export {
   applyCoreMigrations,
   applyEmbeddedMigrations,
+  buildSequence,
   planMigrations,
   type EmbeddedMigrationConfig,
   type EmbeddedMigrations,

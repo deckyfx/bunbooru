@@ -56,8 +56,12 @@ function hashSql(rawSql: string): string {
   return createHash("sha256").update(rawSql).digest("hex");
 }
 
-/** The build's migration sequence (order + timestamp + hash), from the journal. */
-function buildSequence(embedded: EmbeddedMigrations): { when: number; tag: string; hash: string }[] {
+/**
+ * The build's migration sequence (order + timestamp + hash), parsed from the
+ * embedded journal. Throws on malformed journal JSON, or a journal tag whose
+ * `.sql` wasn't compiled in (a packaging fault). Exported for unit testing.
+ */
+export function buildSequence(embedded: EmbeddedMigrations): { when: number; tag: string; hash: string }[] {
   const journal = JSON.parse(embedded.journal) as { entries: JournalEntry[] };
   return [...journal.entries]
     .sort((a, b) => a.idx - b.idx)
