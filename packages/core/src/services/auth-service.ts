@@ -481,7 +481,7 @@ export function createAuthService(
       // where a stale token could verify the new (unproven) address. (If the unique
       // index rejects the address below, the only effect is clearing this user's
       // own pending tokens — safe; they simply re-request verification.)
-      await authTokens.invalidateOutstanding(user.id, "verify-email", new Date());
+      await authTokens.invalidateOutstanding(user.id, "verify-email", now());
       try {
         await users.setEmail(user.id, email);
       } catch (error) {
