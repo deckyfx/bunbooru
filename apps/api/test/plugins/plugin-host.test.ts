@@ -254,6 +254,69 @@ describe("createPluginHost", () => {
     expect(host.isActive("beta")).toBe(false);
   });
 
+  it("bundles the persist error with a failed rollback on activate", async () => {
+    const binding = {
+      onActivate: () => {},
+      onDeactivate: () => {
+        throw new Error("rollback boom"); // the recovery from the persist failure fails
+      },
+    };
+    const state = fakeState();
+    state.setActive = async () => {
+      throw new Error("persist boom");
+    };
+    const host = createPluginHost({
+      pluginState: state,
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+
+    const err = await host.activate("beta").catch((e: unknown) => e);
+    // Without bundling, removeCapabilities' throw would REPLACE the persist error and
+    // the real cause (the DB write) would be lost. Both must survive.
+    expect(err).toBeInstanceOf(AggregateError);
+    expect((err as AggregateError).errors.map((e: Error) => e.message)).toEqual([
+      "persist boom",
+      "rollback boom",
+    ]);
+    expect(host.isActive("beta")).toBe(false);
+  });
+
+  it("bundles the persist error with a failed restore on deactivate", async () => {
+    // Only fail the RESTORE — init() installs capabilities for already-active
+    // plugins, so an unconditionally throwing onActivate would break setup instead.
+    let armed = false;
+    const binding = {
+      onActivate: () => {
+        if (armed) throw new Error("restore boom");
+      },
+      onDeactivate: () => {},
+    };
+    const state = fakeState({ beta: true });
+    state.setActive = async () => {
+      throw new Error("persist boom");
+    };
+    const host = createPluginHost({
+      pluginState: state,
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+    armed = true;
+
+    const err = await host.deactivate("beta").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AggregateError);
+    expect((err as AggregateError).errors.map((e: Error) => e.message)).toEqual([
+      "persist boom",
+      "restore boom",
+    ]);
+    // The persist failed, so the plugin stays active in memory.
+    expect(host.isActive("beta")).toBe(true);
+  });
+
   it("compensates a hook that mutated state before throwing, on activation", async () => {
     const installed = new Set<string>();
     const binding = {

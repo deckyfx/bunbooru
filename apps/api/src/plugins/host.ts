@@ -262,12 +262,21 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
         // aborts with NO persisted or in-memory change — the plugin stays as it was.
         installCapabilities(p);
         // Persist, THEN mirror into memory. If the write fails, undo the installs so
-        // DB, memory, and capability state can never disagree (route 500s; the plugin
-        // stays exactly as the next boot would restore it).
+        // DB, memory, and capability state agree (route 500s; the plugin stays exactly
+        // as the next boot would restore it). If that undo ALSO fails, the two can no
+        // longer be reconciled here — surface both errors together rather than letting
+        // the recovery's throw silently replace the persistence failure.
         try {
           await pluginState.setActive(id, true);
         } catch (error) {
-          removeCapabilities(p);
+          try {
+            removeCapabilities(p);
+          } catch (recoveryError) {
+            throw new AggregateError(
+              [error, recoveryError],
+              `plugin "${id}" failed to persist activation AND its capability rollback failed — capability state may be inconsistent`,
+            );
+          }
           throw error;
         }
         active.add(id);
@@ -290,7 +299,15 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
           await pluginState.setActive(id, false);
         } catch (error) {
           // Persist failed: re-install so the still-active plugin keeps its capability.
-          installCapabilities(p);
+          // If the re-install ALSO fails, both errors travel together — see activate().
+          try {
+            installCapabilities(p);
+          } catch (recoveryError) {
+            throw new AggregateError(
+              [error, recoveryError],
+              `plugin "${id}" failed to persist deactivation AND its capability restore failed — capability state may be inconsistent`,
+            );
+          }
           throw error;
         }
         active.delete(id);
