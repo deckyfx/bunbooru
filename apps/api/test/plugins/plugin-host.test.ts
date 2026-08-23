@@ -208,12 +208,14 @@ describe("createPluginHost", () => {
     await host.init(); // installs === 1
 
     // Removal fails BEFORE persist, so nothing is half-applied: DB + memory still
-    // report active and the capability is still installed (no compensating re-install
-    // for a single binding that never came off).
+    // report active and the capability is still installed. The failing binding IS
+    // compensated (onActivate re-runs, installs === 2) because a hook can throw
+    // *after* partially tearing its capability down — and `onActivate` is
+    // contractually idempotent, so re-running one that never came off is a no-op.
     await expect(host.deactivate("beta")).rejects.toThrow("cleanup boom");
     expect(host.isActive("beta")).toBe(true);
     expect(state.rows.get("beta")).toBe(true);
-    expect(installs).toBe(1);
+    expect(installs).toBe(2);
   });
 
   it("runs every rollback compensation even when one throws, and aggregates the errors", async () => {
@@ -241,13 +243,63 @@ describe("createPluginHost", () => {
     await host.init();
 
     const err = await host.activate("beta").catch((e: unknown) => e);
-    // A installed, B failed → A's onDeactivate is still ATTEMPTED (not skipped) even
-    // though it throws; the primary + rollback errors are bundled, not lost.
-    expect(calls).toEqual(["A.on", "B.on", "A.off"]);
+    // B is compensated too: it ran (and may have mutated state) before throwing, so
+    // skipping its onDeactivate would strand a half-installed capability. Then A's
+    // onDeactivate is still ATTEMPTED even though it throws; the primary + rollback
+    // errors are bundled, not lost.
+    expect(calls).toEqual(["A.on", "B.on", "B.off", "A.off"]);
     expect(err).toBeInstanceOf(AggregateError);
     expect((err as AggregateError).errors).toHaveLength(2);
     // Nothing was persisted → the plugin is not active.
     expect(host.isActive("beta")).toBe(false);
+  });
+
+  it("compensates a hook that mutated state before throwing, on activation", async () => {
+    const installed = new Set<string>();
+    const binding = {
+      onActivate: () => {
+        installed.add("half"); // mutate…
+        throw new Error("install boom"); // …then fail
+      },
+      onDeactivate: () => void installed.delete("half"),
+    };
+    const host = createPluginHost({
+      pluginState: fakeState(),
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+
+    await expect(host.activate("beta")).rejects.toThrow("install boom");
+    // The failing hook's own onDeactivate ran, so its partial mutation is gone —
+    // no capability residue from a half-completed activation.
+    expect(installed.size).toBe(0);
+    expect(host.isActive("beta")).toBe(false);
+  });
+
+  it("compensates a hook that mutated state before throwing, on deactivation", async () => {
+    const installed = new Set<string>(["cap"]);
+    const binding = {
+      onActivate: () => void installed.add("cap"),
+      onDeactivate: () => {
+        installed.delete("cap"); // half-remove…
+        throw new Error("remove boom"); // …then fail
+      },
+    };
+    const host = createPluginHost({
+      pluginState: fakeState(),
+      loaded,
+      seedActiveIds: ["beta"],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+
+    await expect(host.deactivate("beta")).rejects.toThrow("remove boom");
+    // The failing hook's own onActivate re-ran, restoring what it had already torn
+    // down — the plugin stays active WITH its capability, not half-removed.
+    expect(installed.has("cap")).toBe(true);
+    expect(host.isActive("beta")).toBe(true);
   });
 
   it("throws UnknownPluginError for an id that isn't a known plugin", async () => {

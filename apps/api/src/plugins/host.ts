@@ -58,8 +58,10 @@ export interface PluginCapabilityBinding {
 }
 
 /**
- * Best-effort, reverse-order rollback after a partial capability transition. Runs
- * `undo` for EVERY binding in `done` even if some throw (a failing compensation
+ * Best-effort, reverse-order rollback after a partial capability transition. `done`
+ * holds every binding whose hook was ATTEMPTED (the failing one included, since it
+ * may have mutated state before throwing). Runs `undo` for EVERY binding in `done`
+ * even if some throw (a failing compensation
  * must not strand the rest), then returns the primary error alone when rollback
  * was clean, or an {@link AggregateError} bundling the primary + every rollback
  * failure when it wasn't — a genuine inconsistent-state alarm the caller surfaces
@@ -157,13 +159,19 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
   }
 
   /** Install every binding's capability for `p`; on any throw, best-effort remove
-   *  the ones already installed before rethrowing — never a partial install. */
+   *  every binding ATTEMPTED — including the one that threw — before rethrowing, so a
+   *  hook that mutates state and only then fails can't strand it. Never a partial
+   *  install. */
   function installCapabilities(p: LoadedPlugin): void {
     const done: PluginCapabilityBinding[] = [];
     try {
       for (const binding of capabilityBindings) {
-        binding.onActivate(p);
+        // Record BEFORE invoking: a hook may mutate state and THEN throw, and that
+        // half-installed capability still needs compensating. `onDeactivate` is
+        // contractually idempotent and a no-op when nothing was installed, so
+        // compensating a hook that failed before touching anything is harmless.
         done.push(binding);
+        binding.onActivate(p);
       }
     } catch (error) {
       throw compensate(error, done, (binding) => binding.onDeactivate(p));
@@ -171,13 +179,18 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
   }
 
   /** Remove every binding's capability for `p`; on any throw, best-effort re-install
-   *  the ones already removed before rethrowing — never a partial removal. */
+   *  every binding ATTEMPTED — including the one that threw — before rethrowing, so a
+   *  hook that half-removes its capability and only then fails can't strand it. Never
+   *  a partial removal. */
   function removeCapabilities(p: LoadedPlugin): void {
     const done: PluginCapabilityBinding[] = [];
     try {
       for (const binding of capabilityBindings) {
-        binding.onDeactivate(p);
+        // Record BEFORE invoking — see the note in installCapabilities. `onActivate`
+        // is likewise idempotent, so re-installing a hook that never got as far as
+        // removing anything is a no-op.
         done.push(binding);
+        binding.onDeactivate(p);
       }
     } catch (error) {
       throw compensate(error, done, (binding) => binding.onActivate(p));
