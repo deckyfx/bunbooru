@@ -216,6 +216,40 @@ describe("createPluginHost", () => {
     expect(installs).toBe(1);
   });
 
+  it("runs every rollback compensation even when one throws, and aggregates the errors", async () => {
+    const calls: string[] = [];
+    const bindingA = {
+      onActivate: () => void calls.push("A.on"),
+      onDeactivate: () => {
+        calls.push("A.off");
+        throw new Error("A rollback boom"); // the compensation itself fails
+      },
+    };
+    const bindingB = {
+      onActivate: () => {
+        calls.push("B.on");
+        throw new Error("B install boom"); // triggers rollback of A
+      },
+      onDeactivate: () => void calls.push("B.off"),
+    };
+    const host = createPluginHost({
+      pluginState: fakeState(),
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [bindingA, bindingB],
+    });
+    await host.init();
+
+    const err = await host.activate("beta").catch((e: unknown) => e);
+    // A installed, B failed → A's onDeactivate is still ATTEMPTED (not skipped) even
+    // though it throws; the primary + rollback errors are bundled, not lost.
+    expect(calls).toEqual(["A.on", "B.on", "A.off"]);
+    expect(err).toBeInstanceOf(AggregateError);
+    expect((err as AggregateError).errors).toHaveLength(2);
+    // Nothing was persisted → the plugin is not active.
+    expect(host.isActive("beta")).toBe(false);
+  });
+
   it("throws UnknownPluginError for an id that isn't a known plugin", async () => {
     const host = createPluginHost({ pluginState: fakeState(), loaded, seedActiveIds: [] });
     await host.init();

@@ -57,6 +57,34 @@ export interface PluginCapabilityBinding {
   onDeactivate(plugin: LoadedPlugin): void;
 }
 
+/**
+ * Best-effort, reverse-order rollback after a partial capability transition. Runs
+ * `undo` for EVERY binding in `done` even if some throw (a failing compensation
+ * must not strand the rest), then returns the primary error alone when rollback
+ * was clean, or an {@link AggregateError} bundling the primary + every rollback
+ * failure when it wasn't — a genuine inconsistent-state alarm the caller surfaces
+ * (a 500) rather than swallowing. `done` is consumed (reversed) in place.
+ */
+function compensate(
+  primary: unknown,
+  done: PluginCapabilityBinding[],
+  undo: (binding: PluginCapabilityBinding) => void,
+): unknown {
+  const rollbackErrors: unknown[] = [];
+  for (const binding of done.reverse()) {
+    try {
+      undo(binding);
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
+  }
+  if (rollbackErrors.length === 0) return primary;
+  return new AggregateError(
+    [primary, ...rollbackErrors],
+    "plugin capability transition failed AND its rollback failed — capability state may be inconsistent",
+  );
+}
+
 /** Inputs for {@link createPluginHost}. */
 export interface PluginHostOptions {
   /** Just the persistence slice of Core the host needs. */
@@ -128,8 +156,8 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
     return run;
   }
 
-  /** Install every binding's capability for `p`; on any throw, remove the ones
-   *  already installed (reverse order) before rethrowing — never a partial install. */
+  /** Install every binding's capability for `p`; on any throw, best-effort remove
+   *  the ones already installed before rethrowing — never a partial install. */
   function installCapabilities(p: LoadedPlugin): void {
     const done: PluginCapabilityBinding[] = [];
     try {
@@ -138,13 +166,12 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
         done.push(binding);
       }
     } catch (error) {
-      for (const binding of done.reverse()) binding.onDeactivate(p);
-      throw error;
+      throw compensate(error, done, (binding) => binding.onDeactivate(p));
     }
   }
 
-  /** Remove every binding's capability for `p`; on any throw, re-install the ones
-   *  already removed (reverse order) before rethrowing — never a partial removal. */
+  /** Remove every binding's capability for `p`; on any throw, best-effort re-install
+   *  the ones already removed before rethrowing — never a partial removal. */
   function removeCapabilities(p: LoadedPlugin): void {
     const done: PluginCapabilityBinding[] = [];
     try {
@@ -153,8 +180,7 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
         done.push(binding);
       }
     } catch (error) {
-      for (const binding of done.reverse()) binding.onActivate(p);
-      throw error;
+      throw compensate(error, done, (binding) => binding.onActivate(p));
     }
   }
 
