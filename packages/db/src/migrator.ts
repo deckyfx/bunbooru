@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -155,27 +155,15 @@ export function planMigrations(
 }
 
 /**
- * Materialise the embedded SQL to a writable temp dir so Drizzle's own migrator
- * can run against it (we don't re-implement Drizzle's tracking — see the guide).
- * Stale `.sql` from a different build are pruned first, so an older binary can't
- * "see" a newer build's leftover files.
+ * Materialise the embedded SQL to a FRESH, unique temp dir so Drizzle's own
+ * migrator can run against it (we don't re-implement Drizzle's tracking — see the
+ * guide). A unique dir per call means concurrent invocations (e.g. plugins
+ * starting together) can never overwrite each other's journal or prune each
+ * other's SQL mid-migrate. The caller removes it when done.
  */
 async function materialise(embedded: EmbeddedMigrations, label: string): Promise<string> {
-  const dir = join(tmpdir(), "bunbooru-migrations", label.replace(/[^a-zA-Z0-9._-]/g, "_"));
-  const expected = new Set(Object.keys(embedded.files));
-
-  let existing: string[] = [];
-  try {
-    existing = await readdir(dir);
-  } catch {
-    /* first run — dir doesn't exist yet */
-  }
-  await Promise.all(
-    existing
-      .filter((f) => f.endsWith(".sql") && !expected.has(f))
-      .map((f) => rm(join(dir, f), { force: true })),
-  );
-
+  const safe = label.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const dir = await mkdtemp(join(tmpdir(), `bunbooru-mig-${safe}-`));
   await Bun.write(join(dir, "meta", "_journal.json"), embedded.journal);
   for (const [name, contents] of Object.entries(embedded.files)) {
     await Bun.write(join(dir, name), contents);
@@ -201,7 +189,11 @@ export async function applyEmbeddedMigrations(db: DB, config: EmbeddedMigrationC
 
   await preflight(db, buildSeq, schema, table);
   const migrationsFolder = await materialise(config.embedded, config.label);
-  await migrate(db, { migrationsFolder, migrationsTable: table, migrationsSchema: schema });
+  try {
+    await migrate(db, { migrationsFolder, migrationsTable: table, migrationsSchema: schema });
+  } finally {
+    await rm(migrationsFolder, { recursive: true, force: true });
+  }
 }
 
 /**
