@@ -1,20 +1,20 @@
 #!/usr/bin/env bun
 /**
- * Reset a user's password — admin recovery, since bunbooru has no self-serve
- * password reset yet.
+ * Reset a user's password (and optionally their email) — out-of-band admin
+ * recovery: the last resort when someone is locked out, has no email set, or an
+ * email typo blocks self-serve reset.
  *
  * Usage:
- *   bun run reset-password              # prompts for username + password
- *   bun run reset-password <username>   # prompts for the new password only
+ *   bun run reset-password              # prompts for username, then password + optional email
+ *   bun run reset-password <username>   # prompts for the new password + optional email
  *
- * Reads `DATABASE_URL` from the environment (Bun auto-loads `.env`); falls back
- * to the local compose default. Passwords are hashed with `Bun.password` (Argon2id),
- * identical to registration, so the account logs in normally afterward.
+ * Requires `DATABASE_URL` (Bun auto-loads `.env`). Passwords are hashed with
+ * `Bun.password` (Argon2id), identical to registration. A changed email is stored
+ * unverified and uniqueness is enforced case-insensitively.
  */
 import * as p from "@clack/prompts";
 import { MIN_PASSWORD_LENGTH } from "@bunbooru/core";
-import { createDb, users } from "@bunbooru/db";
-import { eq } from "drizzle-orm";
+import { createAuthTokenRepository, createDb, createUserRepository } from "@bunbooru/db";
 
 /** Minimum password length — the single shared rule from Core (reset/register/CLI). */
 const MIN_PASSWORD = MIN_PASSWORD_LENGTH;
@@ -36,6 +36,11 @@ async function main(): Promise<void> {
   p.intro("bunbooru · reset password");
 
   const db = createDb(DATABASE_URL);
+  // Go through repositories (never raw SQL in a script): they own the canonical
+  // lookup/update semantics — case-insensitive matching, clearing emailVerifiedAt,
+  // token invalidation — so this tool can't drift from the app's behaviour.
+  const usersRepo = createUserRepository(db);
+  const authTokens = createAuthTokenRepository(db);
 
   // Username from the first CLI arg, or prompt for it.
   let username = Bun.argv[2]?.trim();
@@ -48,14 +53,8 @@ async function main(): Promise<void> {
     username = answer.trim();
   }
 
-  // Usernames are stored canonicalized (lowercase); match on that.
-  const canonical = username.toLowerCase();
-  const found = await db
-    .select({ id: users.id, username: users.username, role: users.role })
-    .from(users)
-    .where(eq(users.username, canonical))
-    .limit(1);
-  const user = found[0];
+  // findByUsername matches case-insensitively (lower(username) index).
+  const user = await usersRepo.findByUsername(username);
   if (!user) {
     p.cancel(`No bunbooru user named "${username}".`);
     process.exit(1);
@@ -75,13 +74,70 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Optionally set a new email (blank keeps the current one). A changed address is
+  // marked unverified, mirroring the app's change-email flow.
+  const emailAnswer = await p.text({
+    message: `New email (blank to keep ${user.email ? `"${user.email}"` : "none"})`,
+    validate: (value) => {
+      const v = (value ?? "").trim();
+      if (!v) return undefined; // blank → keep
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? undefined : "Enter a valid email (or leave blank)";
+    },
+  });
+  if (p.isCancel(emailAnswer)) return void p.cancel("Aborted.");
+  let newEmail = emailAnswer.trim() || null;
+  // Submitting the current address (any case) means "keep": never re-write it, which
+  // would needlessly clear verification and drop this user's verify tokens.
+  if (newEmail && user.email && newEmail.toLowerCase() === user.email.toLowerCase()) {
+    newEmail = null;
+  }
+
+  // Uniqueness is enforced case-insensitively (lower(email) index) — pre-check via
+  // the repository for a clear message instead of a raw constraint error.
+  if (newEmail) {
+    const clash = await usersRepo.findByEmail(newEmail);
+    if (clash && clash.id !== user.id) {
+      p.cancel(`Email "${newEmail}" is already in use by another account.`);
+      process.exit(1);
+    }
+  }
+
   const spinner = p.spinner();
   spinner.start("Hashing and updating…");
   const passwordHash = await Bun.password.hash(password);
-  await db.update(users).set({ passwordHash }).where(eq(users.id, user.id));
-  spinner.stop("Password updated.");
+  if (newEmail) {
+    // Invalidate outstanding verify-email tokens BEFORE swapping the address, so a
+    // token minted for the OLD address can't verify the new one (verification is a
+    // single transaction on the same token row — invalidate-first leaves no window),
+    // mirroring AuthService.changeEmail.
+    await authTokens.invalidateOutstanding(user.id, "verify-email", new Date());
+  }
+  // Password + optional email land in ONE atomic update (resetCredentials), so a
+  // late email unique-violation can't leave the password changed on its own.
+  try {
+    await usersRepo.resetCredentials(
+      user.id,
+      newEmail ? { passwordHash, email: newEmail } : { passwordHash },
+    );
+  } catch (error) {
+    // If another account claimed the address after the pre-check (check→write
+    // race), the lower(email) index rejects the whole update — nothing committed.
+    // Surface the same clear message instead of a raw driver error.
+    const cause = (error as { cause?: { errno?: string; code?: string } }).cause;
+    if (cause?.errno === "23505" || cause?.code === "23505") {
+      spinner.stop("Nothing changed.");
+      p.cancel(`Email "${newEmail}" was just taken by another account. Try again.`);
+      process.exit(1);
+    }
+    throw error;
+  }
+  spinner.stop(newEmail ? "Password and email updated." : "Password updated.");
 
-  p.outro(`Done — "${user.username}" can now sign in with the new password.`);
+  p.outro(
+    newEmail
+      ? `Done — "${user.username}" can sign in with the new password; email set to ${newEmail} (unverified).`
+      : `Done — "${user.username}" can now sign in with the new password.`,
+  );
 }
 
 main()

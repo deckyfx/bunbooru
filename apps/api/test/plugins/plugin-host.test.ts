@@ -105,6 +105,266 @@ describe("createPluginHost", () => {
     expect(host.manifest()).toEqual([]);
   });
 
+  it("drives capability bindings on init, activate, and deactivate", async () => {
+    const events: string[] = [];
+    const binding = {
+      onActivate: (p: LoadedPlugin) => events.push(`+${p.id}`),
+      onDeactivate: (p: LoadedPlugin) => events.push(`-${p.id}`),
+    };
+    const host = createPluginHost({
+      pluginState: fakeState({ alpha: true }), // alpha active at boot
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+
+    await host.init();
+    expect(events).toEqual(["+alpha"]); // installed for the already-active plugin
+
+    await host.activate("beta");
+    await host.deactivate("alpha");
+    expect(events).toEqual(["+alpha", "+beta", "-alpha"]);
+  });
+
+  it("activate/deactivate are idempotent — bindings never re-fire on a redundant call", async () => {
+    const events: string[] = [];
+    const binding = {
+      onActivate: (p: LoadedPlugin) => events.push(`+${p.id}`),
+      onDeactivate: (p: LoadedPlugin) => events.push(`-${p.id}`),
+    };
+    const host = createPluginHost({
+      pluginState: fakeState(),
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+
+    await host.activate("beta");
+    await host.activate("beta"); // already active → no-op, must not re-install
+    await host.deactivate("beta");
+    await host.deactivate("beta"); // already inactive → no-op, must not re-remove
+    expect(events).toEqual(["+beta", "-beta"]);
+  });
+
+  it("serializes concurrent activate calls — the capability installs exactly once", async () => {
+    const events: string[] = [];
+    const binding = {
+      onActivate: (p: LoadedPlugin) => events.push(`+${p.id}`),
+      onDeactivate: (p: LoadedPlugin) => events.push(`-${p.id}`),
+    };
+    const host = createPluginHost({
+      pluginState: fakeState(),
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+
+    // Three racing activations must not triple-install (the idempotency check is
+    // re-evaluated inside the per-plugin queue, not just before the first await).
+    await Promise.all([host.activate("beta"), host.activate("beta"), host.activate("beta")]);
+    expect(events).toEqual(["+beta"]);
+    expect(host.isActive("beta")).toBe(true);
+  });
+
+  it("serializes concurrent deactivate calls — the capability removes exactly once", async () => {
+    const events: string[] = [];
+    const binding = {
+      onActivate: (p: LoadedPlugin) => events.push(`+${p.id}`),
+      onDeactivate: (p: LoadedPlugin) => events.push(`-${p.id}`),
+    };
+    const host = createPluginHost({
+      pluginState: fakeState({ beta: true }),
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init(); // installs +beta
+    events.length = 0;
+
+    await Promise.all([host.deactivate("beta"), host.deactivate("beta")]);
+    expect(events).toEqual(["-beta"]);
+    expect(host.isActive("beta")).toBe(false);
+  });
+
+  it("a throwing onDeactivate leaves the plugin active with its capability intact", async () => {
+    let installs = 0;
+    const binding = {
+      onActivate: () => {
+        installs += 1;
+      },
+      onDeactivate: () => {
+        throw new Error("cleanup boom");
+      },
+    };
+    const state = fakeState({ beta: true });
+    const host = createPluginHost({
+      pluginState: state,
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init(); // installs === 1
+
+    // Removal fails BEFORE persist, so nothing is half-applied: DB + memory still
+    // report active and the capability is still installed. The failing binding IS
+    // compensated (onActivate re-runs, installs === 2) because a hook can throw
+    // *after* partially tearing its capability down — and `onActivate` is
+    // contractually idempotent, so re-running one that never came off is a no-op.
+    await expect(host.deactivate("beta")).rejects.toThrow("cleanup boom");
+    expect(host.isActive("beta")).toBe(true);
+    expect(state.rows.get("beta")).toBe(true);
+    expect(installs).toBe(2);
+  });
+
+  it("runs every rollback compensation even when one throws, and aggregates the errors", async () => {
+    const calls: string[] = [];
+    const bindingA = {
+      onActivate: () => void calls.push("A.on"),
+      onDeactivate: () => {
+        calls.push("A.off");
+        throw new Error("A rollback boom"); // the compensation itself fails
+      },
+    };
+    const bindingB = {
+      onActivate: () => {
+        calls.push("B.on");
+        throw new Error("B install boom"); // triggers rollback of A
+      },
+      onDeactivate: () => void calls.push("B.off"),
+    };
+    const host = createPluginHost({
+      pluginState: fakeState(),
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [bindingA, bindingB],
+    });
+    await host.init();
+
+    const err = await host.activate("beta").catch((e: unknown) => e);
+    // B is compensated too: it ran (and may have mutated state) before throwing, so
+    // skipping its onDeactivate would strand a half-installed capability. Then A's
+    // onDeactivate is still ATTEMPTED even though it throws; the primary + rollback
+    // errors are bundled, not lost.
+    expect(calls).toEqual(["A.on", "B.on", "B.off", "A.off"]);
+    expect(err).toBeInstanceOf(AggregateError);
+    expect((err as AggregateError).errors).toHaveLength(2);
+    // Nothing was persisted → the plugin is not active.
+    expect(host.isActive("beta")).toBe(false);
+  });
+
+  it("bundles the persist error with a failed rollback on activate", async () => {
+    const binding = {
+      onActivate: () => {},
+      onDeactivate: () => {
+        throw new Error("rollback boom"); // the recovery from the persist failure fails
+      },
+    };
+    const state = fakeState();
+    state.setActive = async () => {
+      throw new Error("persist boom");
+    };
+    const host = createPluginHost({
+      pluginState: state,
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+
+    const err = await host.activate("beta").catch((e: unknown) => e);
+    // Without bundling, removeCapabilities' throw would REPLACE the persist error and
+    // the real cause (the DB write) would be lost. Both must survive.
+    expect(err).toBeInstanceOf(AggregateError);
+    expect((err as AggregateError).errors.map((e: Error) => e.message)).toEqual([
+      "persist boom",
+      "rollback boom",
+    ]);
+    expect(host.isActive("beta")).toBe(false);
+  });
+
+  it("bundles the persist error with a failed restore on deactivate", async () => {
+    // Only fail the RESTORE — init() installs capabilities for already-active
+    // plugins, so an unconditionally throwing onActivate would break setup instead.
+    let armed = false;
+    const binding = {
+      onActivate: () => {
+        if (armed) throw new Error("restore boom");
+      },
+      onDeactivate: () => {},
+    };
+    const state = fakeState({ beta: true });
+    state.setActive = async () => {
+      throw new Error("persist boom");
+    };
+    const host = createPluginHost({
+      pluginState: state,
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+    armed = true;
+
+    const err = await host.deactivate("beta").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AggregateError);
+    expect((err as AggregateError).errors.map((e: Error) => e.message)).toEqual([
+      "persist boom",
+      "restore boom",
+    ]);
+    // The persist failed, so the plugin stays active in memory.
+    expect(host.isActive("beta")).toBe(true);
+  });
+
+  it("compensates a hook that mutated state before throwing, on activation", async () => {
+    const installed = new Set<string>();
+    const binding = {
+      onActivate: () => {
+        installed.add("half"); // mutate…
+        throw new Error("install boom"); // …then fail
+      },
+      onDeactivate: () => void installed.delete("half"),
+    };
+    const host = createPluginHost({
+      pluginState: fakeState(),
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+
+    await expect(host.activate("beta")).rejects.toThrow("install boom");
+    // The failing hook's own onDeactivate ran, so its partial mutation is gone —
+    // no capability residue from a half-completed activation.
+    expect(installed.size).toBe(0);
+    expect(host.isActive("beta")).toBe(false);
+  });
+
+  it("compensates a hook that mutated state before throwing, on deactivation", async () => {
+    const installed = new Set<string>(["cap"]);
+    const binding = {
+      onActivate: () => void installed.add("cap"),
+      onDeactivate: () => {
+        installed.delete("cap"); // half-remove…
+        throw new Error("remove boom"); // …then fail
+      },
+    };
+    const host = createPluginHost({
+      pluginState: fakeState(),
+      loaded,
+      seedActiveIds: ["beta"],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+
+    await expect(host.deactivate("beta")).rejects.toThrow("remove boom");
+    // The failing hook's own onActivate re-ran, restoring what it had already torn
+    // down — the plugin stays active WITH its capability, not half-removed.
+    expect(installed.has("cap")).toBe(true);
+    expect(host.isActive("beta")).toBe(true);
+  });
+
   it("throws UnknownPluginError for an id that isn't a known plugin", async () => {
     const host = createPluginHost({ pluginState: fakeState(), loaded, seedActiveIds: [] });
     await host.init();

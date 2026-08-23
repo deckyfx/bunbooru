@@ -118,6 +118,14 @@ export interface AuthService {
    */
   changePassword(userId: number, currentPassword: string, newPassword: string): Promise<LoginResult>;
   /**
+   * Change the logged-in user's email — requires the current password, since the
+   * address is the password-reset target and a hijacked session alone must not be
+   * able to repoint it. The new address lands UNVERIFIED. Throws
+   * {@link AuthenticationError} on a wrong password, {@link ValidationError} for an
+   * empty email, and {@link RegistrationConflictError} when it's already in use.
+   */
+  changeEmail(userId: number, currentPassword: string, newEmail: string): Promise<PublicUser>;
+  /**
    * Email the logged-in user a verification link for the address on their
    * account. Throws {@link ValidationError} if the account has no email; a no-op
    * if it's already verified. Requires a configured mail provider.
@@ -159,6 +167,21 @@ export interface AuthServiceConfig {
 /** Normalize a username for storage + lookup (usernames are case-insensitive). */
 function normalizeUsername(username: string): string {
   return username.trim().toLowerCase();
+}
+
+/**
+ * Trim + validate an email at the service boundary so a non-HTTP caller (CLI,
+ * job, test) can't persist a malformed address that the API's `format: "email"`
+ * schema would have rejected. Returns the trimmed address. Throws
+ * {@link ValidationError} when empty or not a plausible `local@domain.tld`. The
+ * DB's `lower(email)` unique index remains the authority on uniqueness.
+ */
+function assertValidEmail(email: string): string {
+  const trimmed = email.trim();
+  if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    throw new ValidationError("A valid email address is required");
+  }
+  return trimmed;
 }
 
 /** sha256 hex of a value — how session tokens are stored/looked up. */
@@ -429,6 +452,52 @@ export function createAuthService(
       const token = await openSession(user.id);
       // Return the user with the NEW hash — not the stale row loaded above.
       return { token, user: { ...user, passwordHash: newPasswordHash } };
+    },
+
+    async changeEmail(userId, currentPassword, newEmail) {
+      const email = assertValidEmail(newEmail);
+      const user = await users.findById(userId);
+      if (!user) throw new AuthenticationError();
+      if (!(await Bun.password.verify(currentPassword, user.passwordHash))) {
+        throw new AuthenticationError("Current password is incorrect");
+      }
+      // Re-submitting the SAME address (case-insensitive) is a no-op: don't clear a
+      // proven verification (which would also block reset when a verified email is
+      // required) or drop tokens for an unchanged address. Return the user as-is.
+      if (user.email && user.email.toLowerCase() === email.toLowerCase()) {
+        const { passwordHash: _passwordHash, ...publicUser } = user;
+        return publicUser;
+      }
+      // Reject a taken address BEFORE any side effect, so a conflict doesn't
+      // needlessly drop this user's pending verify token for their (unchanged)
+      // current address. The unique-index catch below still backstops the rare
+      // check→write race.
+      const clash = await users.findByEmail(email);
+      if (clash && clash.id !== user.id) throw new RegistrationConflictError();
+      // Invalidate outstanding verify-email tokens BEFORE swapping the address.
+      // They were minted for the OLD address; consumeForEmailVerification is a
+      // single transaction that consumes the token AND sets emailVerifiedAt while
+      // contending on the same token row, so invalidating first leaves NO window
+      // where a stale token could verify the new (unproven) address. (If the unique
+      // index rejects the address below, the only effect is clearing this user's
+      // own pending tokens — safe; they simply re-request verification.)
+      await authTokens.invalidateOutstanding(user.id, "verify-email", now());
+      try {
+        await users.setEmail(user.id, email);
+      } catch (error) {
+        // The lower(email) unique index rejects an address already in use.
+        if (isUniqueViolation(error)) throw new RegistrationConflictError();
+        throw error;
+      }
+      // Public projection with the new (unverified) address — never the hash.
+      return {
+        id: user.id,
+        username: user.username,
+        email,
+        role: user.role,
+        emailVerifiedAt: null,
+        createdAt: user.createdAt,
+      };
     },
 
     async requestEmailVerification({ userId, ip }) {

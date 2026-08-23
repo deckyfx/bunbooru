@@ -149,6 +149,22 @@ export function useChangePassword() {
   });
 }
 
+/**
+ * Change the logged-in user's email (requires the current password). The new
+ * address lands unverified; refresh the cached user so the account page reflects
+ * the new address + its (re)verification state.
+ */
+export function useChangeEmail() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { current: string; email: string }) => {
+      const res = await api.api.v1.auth["change-email"].post(input);
+      if (res.error) throw res.error;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: CURRENT_USER_KEY }),
+  });
+}
+
 /** Ask the server to email a verification link for the account's address. */
 export function useRequestEmailVerification() {
   return useMutation({

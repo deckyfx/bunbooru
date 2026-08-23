@@ -43,8 +43,23 @@ export interface UserRepository {
   findById(id: number): Promise<User | null>;
   /** Overwrite a user's password hash (self-serve reset / change-password). */
   setPasswordHash(id: number, passwordHash: string): Promise<void>;
+  /**
+   * Set (or clear with `null`) a user's email, resetting `emailVerifiedAt` to
+   * NULL — a changed address is unproven until re-verified. Uniqueness is enforced
+   * by the `lower(email)` index; a conflict surfaces as a unique violation.
+   */
+  setEmail(id: number, email: string | null): Promise<void>;
   /** Stamp (or clear) when the account's email was proven controlled. */
   setEmailVerifiedAt(id: number, at: Date | null): Promise<void>;
+  /**
+   * Out-of-band admin recovery: overwrite the password hash and, when `email` is
+   * given, replace the address (clearing `emailVerifiedAt` — the new one is
+   * unproven). Both columns are written in ONE update, so the operation is atomic:
+   * an email unique-violation rejects the whole row and the password is left
+   * unchanged (no half-applied "password changed but email didn't"). Omit `email`
+   * to reset the password only.
+   */
+  resetCredentials(id: number, changes: { passwordHash: string; email?: string }): Promise<void>;
 }
 
 /** Build a {@link UserRepository} over a {@link DB} handle. */
@@ -118,8 +133,25 @@ export function createUserRepository(db: DB): UserRepository {
       await db.update(users).set({ passwordHash }).where(eq(users.id, id));
     },
 
+    async setEmail(id, email) {
+      // A new address is unproven — clear verification in the same write.
+      await db.update(users).set({ email, emailVerifiedAt: null }).where(eq(users.id, id));
+    },
+
     async setEmailVerifiedAt(id, at) {
       await db.update(users).set({ emailVerifiedAt: at }).where(eq(users.id, id));
+    },
+
+    async resetCredentials(id, { passwordHash, email }) {
+      // One UPDATE writes both columns atomically — if the email unique index
+      // rejects the row, the password change is rolled into the same failed
+      // statement rather than committing on its own. A new address is unproven, so
+      // emailVerifiedAt is cleared in the same write.
+      const changes =
+        email === undefined
+          ? { passwordHash }
+          : { passwordHash, email, emailVerifiedAt: null };
+      await db.update(users).set(changes).where(eq(users.id, id));
     },
   };
 }

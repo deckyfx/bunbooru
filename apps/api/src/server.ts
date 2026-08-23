@@ -139,7 +139,7 @@ export type UserDto = Omit<PublicUser, "createdAt" | "emailVerifiedAt"> & {
  * explicitly (rather than spreading `user`) so the `passwordHash` can never leak
  * through, even if the row type gains fields later.
  */
-function serializeUser(user: User): UserDto {
+function serializeUser(user: PublicUser): UserDto {
   return {
     id: user.id,
     username: user.username,
@@ -452,6 +452,25 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
             body: t.Object({
               current: t.String({ minLength: 1, maxLength: 200 }),
               next: t.String({ minLength: MIN_PASSWORD_LENGTH, maxLength: 200 }),
+            }),
+          },
+        )
+        // Change the logged-in user's email (requires the current password). The
+        // new address lands unverified; 409 if it's already in use.
+        .post(
+          "/auth/change-email",
+          async ({ body, currentUser }) => {
+            const caller = requireUser(currentUser);
+            if (!resetLimiter.hit(`emailchange:${caller.id}`)) {
+              throw new HttpError(429, "Too many attempts. Please try again later.");
+            }
+            const user = await core.authService.changeEmail(caller.id, body.current, body.email);
+            return { user: serializeUser(user) };
+          },
+          {
+            body: t.Object({
+              current: t.String({ minLength: 1, maxLength: 200 }),
+              email: t.String({ format: "email", maxLength: 320 }),
             }),
           },
         )

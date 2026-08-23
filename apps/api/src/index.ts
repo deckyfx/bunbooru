@@ -2,7 +2,7 @@ import { applyCoreMigrations, createCoreRuntime, createLogMailProvider } from "@
 
 import { envConfig, MAX_REQUEST_BODY_BYTES } from "./env-config";
 import { logger } from "./lib/logger";
-import { createPluginHost } from "./plugins/host";
+import { createPluginHost, type PluginCapabilityBinding } from "./plugins/host";
 import { loadPlugins } from "./plugins/loader";
 import { PLUGIN_REGISTRY } from "./plugins/registry";
 import { createApp } from "./server";
@@ -54,8 +54,10 @@ const loadedPlugins = await loadPlugins({
   enabledIds: Object.keys(PLUGIN_REGISTRY),
 });
 
-// Install the mail transport a plugin supplies. Fail fast if two plugins both
-// register one — silent last-wins would route mail out an unintended transport.
+// A plugin's mail transport is a CAPABILITY that follows its active state — the
+// plugin host installs it on activate and removes it on deactivate (see the
+// binding below), so deactivating mail immediately 503s the reset/verify flows
+// instead of lingering until a restart. Fail fast if two plugins provide one.
 const mailPlugins = loadedPlugins.filter(
   (p): p is typeof p & { mailProvider: NonNullable<typeof p.mailProvider> } =>
     p.mailProvider !== undefined,
@@ -66,24 +68,31 @@ if (mailPlugins.length > 1) {
       "Enable only one.",
   );
 }
-const mailPlugin = mailPlugins[0];
-if (mailPlugin) {
-  core.mailService.setProvider(mailPlugin.mailProvider, mailPlugin.id);
-} else if (!isProduction) {
-  // Dev/testing convenience: a log-only provider so the reset/verify flows are
-  // exercisable end-to-end with zero mail configuration (doc §6).
+// Dev/testing convenience: with NO mail plugin installed at all, a log-only
+// provider keeps the reset/verify flows exercisable with zero configuration.
+if (mailPlugins.length === 0 && !isProduction) {
   core.mailService.setProvider(createLogMailProvider(logger), "core:log-only");
 }
-
-// A mail provider needs an absolute link origin for its messages. Base this on
-// whether a provider is REGISTERED (sync) — not on isConfigured() — because an
-// admin may configure the SMTP host at runtime later; we still want the link
-// origin guaranteed up front. A boot-time failure beats a silent one at first send.
-if (core.mailService.activeProviderId() !== null && !publicBaseUrl) {
+// A mail provider needs an absolute link origin. Require PUBLIC_BASE_URL up front
+// whenever a mail plugin is INSTALLED (an admin may activate it at runtime), not
+// only when active — a boot-time failure beats a silent one at first send.
+if (mailPlugins.length > 0 && !publicBaseUrl) {
   throw new Error(
-    "PUBLIC_BASE_URL is required when a mail provider is active (set it to the site's absolute URL).",
+    "PUBLIC_BASE_URL is required when a mail-provider plugin is installed (set it to the site's absolute URL).",
   );
 }
+
+// The one capability binding today — the mail provider, installed/removed with the
+// plugin's active state. Future per-plugin capabilities (nav items, UI slots,
+// search/storage providers) add a binding here, not new logic in the host.
+const mailCapabilityBinding: PluginCapabilityBinding = {
+  onActivate(plugin) {
+    if (plugin.mailProvider) core.mailService.setProvider(plugin.mailProvider, plugin.id);
+  },
+  onDeactivate(plugin) {
+    if (plugin.mailProvider) core.mailService.clearProvider(plugin.id);
+  },
+};
 
 // Record every loaded plugin's owned tables in the catalog in ONE atomic write
 // (so a partial failure can't leave it half-written) — this is how the admin
@@ -96,7 +105,10 @@ const pluginHost = createPluginHost({
   pluginState: core.pluginStateService,
   loaded: loadedPlugins,
   seedActiveIds: envConfig.ENABLED_PLUGINS,
+  capabilityBindings: [mailCapabilityBinding],
 });
+// init() installs the capabilities of every already-active plugin (e.g. the mail
+// provider) — so the mail flows reflect the persisted active set from boot.
 await pluginHost.init();
 
 const app = createApp({ core, host: pluginHost });

@@ -57,9 +57,34 @@ function fakeUserRepo() {
       const user = rows.find((r) => r.id === id);
       if (user) user.passwordHash = passwordHash;
     },
+    setEmail: async (id, email) => {
+      const user = rows.find((r) => r.id === id);
+      if (user) {
+        // Mirror the real repo: a case-insensitive clash is a unique violation.
+        if (email !== null && rows.some((r) => r.id !== id && r.email?.toLowerCase() === email.toLowerCase())) {
+          throw Object.assign(new Error("duplicate"), { code: "23505" });
+        }
+        user.email = email;
+        user.emailVerifiedAt = null;
+      }
+    },
     setEmailVerifiedAt: async (id, at) => {
       const user = rows.find((r) => r.id === id);
       if (user) user.emailVerifiedAt = at;
+    },
+    resetCredentials: async (id, { passwordHash, email }) => {
+      const user = rows.find((r) => r.id === id);
+      if (!user) return;
+      // Atomic mirror: a case-insensitive email clash rejects the WHOLE update, so
+      // the password stays unchanged (validate before mutating either column).
+      if (email !== undefined && rows.some((r) => r.id !== id && r.email?.toLowerCase() === email.toLowerCase())) {
+        throw Object.assign(new Error("duplicate"), { code: "23505" });
+      }
+      user.passwordHash = passwordHash;
+      if (email !== undefined) {
+        user.email = email;
+        user.emailVerifiedAt = null;
+      }
     },
   };
   return { repo, rows };
@@ -556,6 +581,56 @@ describe("createAuthService.changePassword", () => {
     await expect(service.changePassword(user.id, "supersecret", "short")).rejects.toBeInstanceOf(
       ValidationError,
     );
+  });
+});
+
+describe("createAuthService.changeEmail", () => {
+  it("requires the current password and sets the new (unverified) email", async () => {
+    const { service } = makeService();
+    const { user } = await service.register({ username: "alice", password: "supersecret" });
+
+    await expect(service.changeEmail(user.id, "wrong", "new@example.com")).rejects.toBeInstanceOf(
+      AuthenticationError,
+    );
+
+    const updated = await service.changeEmail(user.id, "supersecret", "new@example.com");
+    expect(updated.email).toBe("new@example.com");
+    expect(updated.emailVerifiedAt).toBeNull();
+    expect(updated).not.toHaveProperty("passwordHash");
+  });
+
+  it("rejects an empty email", async () => {
+    const { service } = makeService();
+    const { user } = await service.register({ username: "alice", password: "supersecret" });
+    await expect(service.changeEmail(user.id, "supersecret", "  ")).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+  });
+
+  it("rejects an email already in use (case-insensitive)", async () => {
+    const { service } = makeService();
+    await service.register({ username: "bob", password: "supersecret", email: "taken@example.com" });
+    const { user } = await service.register({ username: "alice", password: "supersecret" });
+    await expect(
+      service.changeEmail(user.id, "supersecret", "TAKEN@example.com"),
+    ).rejects.toBeInstanceOf(RegistrationConflictError);
+  });
+
+  it("preserves verification when the submitted address is unchanged (case-insensitive)", async () => {
+    const { service, users } = makeService();
+    const { user } = await service.register({
+      username: "alice",
+      password: "supersecret",
+      email: "alice@example.com",
+    });
+    // Prove the address, then re-submit it in a different case — a no-op that must
+    // NOT clear the verified stamp (which would also block a verified-email reset).
+    users.rows[0]!.emailVerifiedAt = new Date();
+
+    const result = await service.changeEmail(user.id, "supersecret", "ALICE@example.com");
+    expect(result.email).toBe("alice@example.com");
+    expect(result.emailVerifiedAt).not.toBeNull();
+    expect(users.rows[0]?.emailVerifiedAt).not.toBeNull();
   });
 });
 
