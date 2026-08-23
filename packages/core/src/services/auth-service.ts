@@ -468,6 +468,12 @@ export function createAuthService(
         const { passwordHash: _passwordHash, ...publicUser } = user;
         return publicUser;
       }
+      // Reject a taken address BEFORE any side effect, so a conflict doesn't
+      // needlessly drop this user's pending verify token for their (unchanged)
+      // current address. The unique-index catch below still backstops the rare
+      // check→write race.
+      const clash = await users.findByEmail(email);
+      if (clash && clash.id !== user.id) throw new RegistrationConflictError();
       // Invalidate outstanding verify-email tokens BEFORE swapping the address.
       // They were minted for the OLD address; consumeForEmailVerification is a
       // single transaction that consumes the token AND sets emailVerifiedAt while

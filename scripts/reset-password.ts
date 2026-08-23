@@ -114,10 +114,23 @@ async function main(): Promise<void> {
   }
   // Password + optional email land in ONE atomic update (resetCredentials), so a
   // late email unique-violation can't leave the password changed on its own.
-  await usersRepo.resetCredentials(
-    user.id,
-    newEmail ? { passwordHash, email: newEmail } : { passwordHash },
-  );
+  try {
+    await usersRepo.resetCredentials(
+      user.id,
+      newEmail ? { passwordHash, email: newEmail } : { passwordHash },
+    );
+  } catch (error) {
+    // If another account claimed the address after the pre-check (check→write
+    // race), the lower(email) index rejects the whole update — nothing committed.
+    // Surface the same clear message instead of a raw driver error.
+    const cause = (error as { cause?: { errno?: string; code?: string } }).cause;
+    if (cause?.errno === "23505" || cause?.code === "23505") {
+      spinner.stop("Nothing changed.");
+      p.cancel(`Email "${newEmail}" was just taken by another account. Try again.`);
+      process.exit(1);
+    }
+    throw error;
+  }
   spinner.stop(newEmail ? "Password and email updated." : "Password updated.");
 
   p.outro(

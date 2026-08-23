@@ -159,6 +159,10 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
     async activate(id) {
       const p = byId.get(id);
       if (!p) throw new UnknownPluginError(id);
+      // Idempotent (the admin route documents it so): a redundant activate must NOT
+      // re-run capability installs — otherwise a persist failure on the already-active
+      // path would roll back (clear) a live capability while DB+memory still say active.
+      if (active.has(id)) return describe(p);
       // Install the plugin's capabilities FIRST, so a failure here (e.g. a mail
       // provider conflict) aborts with NO persisted or in-memory change — the
       // plugin stays exactly as it was. Roll back the ones already installed if a
@@ -190,6 +194,9 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
     async deactivate(id) {
       const p = byId.get(id);
       if (!p) throw new UnknownPluginError(id);
+      // Idempotent, symmetric with activate(): a redundant deactivate is a no-op
+      // (never re-runs onDeactivate on an already-inactive plugin).
+      if (!active.has(id)) return describe(p);
       await pluginState.setActive(id, false);
       active.delete(id);
       for (const binding of capabilityBindings) binding.onDeactivate(p);

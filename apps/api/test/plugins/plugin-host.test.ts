@@ -126,6 +126,27 @@ describe("createPluginHost", () => {
     expect(events).toEqual(["+alpha", "+beta", "-alpha"]);
   });
 
+  it("activate/deactivate are idempotent — bindings never re-fire on a redundant call", async () => {
+    const events: string[] = [];
+    const binding = {
+      onActivate: (p: LoadedPlugin) => events.push(`+${p.id}`),
+      onDeactivate: (p: LoadedPlugin) => events.push(`-${p.id}`),
+    };
+    const host = createPluginHost({
+      pluginState: fakeState(),
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+
+    await host.activate("beta");
+    await host.activate("beta"); // already active → no-op, must not re-install
+    await host.deactivate("beta");
+    await host.deactivate("beta"); // already inactive → no-op, must not re-remove
+    expect(events).toEqual(["+beta", "-beta"]);
+  });
+
   it("throws UnknownPluginError for an id that isn't a known plugin", async () => {
     const host = createPluginHost({ pluginState: fakeState(), loaded, seedActiveIds: [] });
     await host.init();

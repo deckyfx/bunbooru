@@ -123,7 +123,6 @@ function EmailSection({ user }: { user: UserDto }) {
   );
 }
 
-/** Change the account password (requires the current one). */
 /** Change the account's email (requires the current password; re-verifies). */
 function ChangeEmailSection() {
   const change = useChangeEmail();
@@ -190,6 +189,7 @@ function ChangeEmailSection() {
   );
 }
 
+/** Change the account password (requires the current one). */
 function ChangePasswordSection() {
   const change = useChangePassword();
   const [current, setCurrent] = useState("");
