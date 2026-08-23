@@ -62,9 +62,11 @@ describe("smtp-mailer plugin manifest", () => {
     expect(plugin.capabilities).toContain("mail-providers");
   });
 
-  it("uses a plugin-scoped migrations table", () => {
+  it("uses a plugin-scoped migrations table and embeds its SQL", () => {
     expect(plugin.migrations?.migrationsTable).toBe("__drizzle_migrations_smtp-mailer");
-    expect(plugin.migrations?.migrationsFolder).toContain("drizzle");
+    // Migrations are embedded (compiled into the binary), not read from disk.
+    expect(typeof plugin.migrations?.embedded.journal).toBe("string");
+    expect(Object.keys(plugin.migrations?.embedded.files ?? {}).length).toBeGreaterThan(0);
   });
 });
 

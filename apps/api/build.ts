@@ -7,8 +7,16 @@
  *
  * Paths are anchored to this file so the script works regardless of CWD.
  */
+import { $ } from "bun";
+
 const entrypoint = `${import.meta.dir}/src/index.ts`;
 const outfile = `${import.meta.dir}/dist/bunbooru`;
+
+// Regenerate the embedded-migration manifests FIRST, so the binary always carries
+// SQL that matches the current drizzle/ folders (a compiled binary has no drizzle/
+// on disk — see BUN_DATABASE.md). Fails the build on journal/folder drift.
+console.log("📝 Embedding migrations...");
+await $`bun ${import.meta.dir}/../../scripts/embed-migrations.ts`;
 
 console.log("📦 Building Bunbooru backend engine...");
 

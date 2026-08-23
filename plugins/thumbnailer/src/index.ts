@@ -1,4 +1,4 @@
-import { fileURLToPath } from "node:url";
+import { embeddedMigrations } from "./migrations.embedded";
 
 import { eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
@@ -271,7 +271,8 @@ export const plugin = definePlugin({
   capabilities: ["routes", "tables", "events", "jobs", "admin-pages"],
   tables: ["thumbnails"],
   migrations: {
-    migrationsFolder: fileURLToPath(new URL("../drizzle", import.meta.url)),
+    // Migrations embedded into the binary (regenerate: `bun run gen:migrations`).
+    embedded: embeddedMigrations,
     migrationsTable: "__drizzle_migrations_thumbnailer",
   },
   register(ctx) {

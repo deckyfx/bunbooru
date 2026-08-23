@@ -1,4 +1,4 @@
-import { fileURLToPath } from "node:url";
+import { embeddedMigrations } from "./migrations.embedded";
 
 import { desc, eq } from "drizzle-orm";
 import { Elysia, t } from "elysia";
@@ -269,7 +269,8 @@ export const plugin = definePlugin({
   capabilities: ["routes", "tables", "admin-pages"],
   tables: ["shimmie_import_runs", "shimmie_import_items"],
   migrations: {
-    migrationsFolder: fileURLToPath(new URL("../drizzle", import.meta.url)),
+    // Migrations embedded into the binary (regenerate: `bun run gen:migrations`).
+    embedded: embeddedMigrations,
     migrationsTable: "__drizzle_migrations_shimmie_import",
   },
   register(ctx) {

@@ -1,10 +1,12 @@
 /**
- * CLI migration runner: applies every pending Drizzle migration in `./drizzle`
- * to the database named by `DATABASE_URL`, then exits.
+ * CLI migration runner: applies every pending CORE migration to the database
+ * named by `DATABASE_URL`, then exits. Migrations are read from the SQL EMBEDDED
+ * in the build (not the `drizzle/` folder), the same code path the API uses on
+ * boot — so a compiled binary migrates without any files on disk.
  *
  * Invoked by `bun run migrate` (locally and in CI before the test suite). Schema
- * changes flow: edit `schema.ts` → `bun run db:generate` → review SQL → `bun run
- * migrate`.
+ * changes flow: edit `schema.ts` → `bun run db:generate` (regenerates the embedded
+ * manifest) → review SQL → `bun run migrate`. (Plugin tables migrate at API boot.)
  */
 import { applyCoreMigrations } from "./migrator";
 

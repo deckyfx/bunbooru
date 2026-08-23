@@ -31,7 +31,12 @@ export type { ApiKey, Asset, AssetUpdate, Rating, Tag, TagCategory, User, UserRo
 // The Drizzle handle type + migration runner, re-exported so the plugin loader
 // (and the SDK) reach them through Core rather than importing `@bunbooru/db`.
 export type { DB } from "@bunbooru/db";
-export { applyCoreMigrations, applyMigrations, type MigrationSet } from "@bunbooru/db";
+export {
+  applyCoreMigrations,
+  applyEmbeddedMigrations,
+  type EmbeddedMigrationConfig,
+  type EmbeddedMigrations,
+} from "@bunbooru/db";
 
 // Core assembly — the single wiring entry point for the API composition root.
 export {
