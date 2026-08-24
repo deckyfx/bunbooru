@@ -74,6 +74,9 @@ function duration(ms: number): string {
   const hours = ms / 3_600_000;
   if (hours >= 24) return `${Math.round((hours / 24) * 10) / 10} days`;
   if (hours >= 1) return `${Math.round(hours * 10) / 10} hours`;
+  // Sub-minute values must not round to "0 minutes" — that reads identically to
+  // the disabled state above while the interval is actually running.
+  if (ms < 60_000) return `${Math.round(ms / 1000)} seconds`;
   return `${Math.round(ms / 60_000)} minutes`;
 }
 

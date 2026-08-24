@@ -27,9 +27,33 @@ export type DB = ReturnType<typeof createDb>;
  *   low; {@link DB_POOL_MAX_ENV} lets the test preload cap them all at once.
  */
 export function createDb(url: string, options: { max?: number } = {}) {
-  const configured = Number(Bun.env[DB_POOL_MAX_ENV]);
-  const max = options.max ?? (Number.isFinite(configured) && configured > 0 ? configured : undefined);
+  const max = resolvePoolMax(options.max, Bun.env[DB_POOL_MAX_ENV]);
   return drizzle({ client: new SQL(url, max === undefined ? {} : { max }), schema });
+}
+
+/**
+ * Decide the pool size from an explicit option and the environment.
+ *
+ * Pure and exported so the parsing is testable without opening a handle. An
+ * explicit `max` always wins, including over the environment. Anything that is
+ * not a positive finite number — `0`, a negative, `NaN` from a non-numeric or
+ * empty string — yields `undefined`, meaning "no cap, use Bun's default": a
+ * malformed value must not silently become a pool of zero connections, which
+ * would deadlock every query.
+ *
+ * @param explicit - `options.max` from the caller, if any.
+ * @param fromEnv - Raw `DB_POOL_MAX` value, if set.
+ */
+export function resolvePoolMax(
+  explicit: number | undefined,
+  fromEnv: string | undefined,
+): number | undefined {
+  const usable = (n: number): boolean => Number.isFinite(n) && n > 0;
+  if (explicit !== undefined) return usable(explicit) ? explicit : undefined;
+  const raw = fromEnv?.trim();
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  return usable(parsed) ? parsed : undefined;
 }
 
 /**

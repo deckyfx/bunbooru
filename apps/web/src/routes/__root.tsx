@@ -59,6 +59,11 @@ export function RootLayout() {
   // after would flash an empty gallery at an operator who hasn't set up yet.
   if (setup.isPending) return null;
 
+  // A redirect is scheduled but `navigate` has not applied yet. Rendering the
+  // current route on this pass would paint the wrong page for a frame — and worse,
+  // its queries would fire against a server that isn't set up.
+  if (needsSetup !== undefined && needsSetup !== isSetup) return null;
+
   // While setup is pending the chrome is suppressed entirely — its links (search,
   // account, admin) all lead somewhere that redirects straight back here.
   if (needsSetup) {

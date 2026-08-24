@@ -77,7 +77,11 @@ export function SetupPage() {
 
   const passwordTooShort = password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
   const mismatch = confirm.length > 0 && confirm !== password;
-  const blocked = checks.data ? !checks.data.canProceed : false;
+  // Fail closed: block while the checks are still loading, when they errored, and
+  // when they came back blocking. Defaulting to "not blocked" would let an admin
+  // be created on an instance whose storage is unusable — or whose state we never
+  // managed to read.
+  const blocked = checks.isError || !checks.data?.canProceed;
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -227,7 +231,15 @@ export function SetupPage() {
               ) : null}
             </label>
 
-            {blocked ? (
+            {checks.isError ? (
+              <p
+                role="alert"
+                className="rounded-md border border-tag-artist/30 bg-tag-artist/10 px-3 py-2 text-[12px] text-tag-artist"
+              >
+                The system check couldn’t be reached, so setup can’t continue. Confirm the
+                server is running, then reload this page.
+              </p>
+            ) : blocked && checks.data ? (
               <p
                 role="alert"
                 className="rounded-md border border-tag-artist/30 bg-tag-artist/10 px-3 py-2 text-[12px] text-tag-artist"
