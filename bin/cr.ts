@@ -277,7 +277,9 @@ async function cmdReview(base: string, baseCommit?: string): Promise<void> {
   const scope = baseCommit ? ["--base-commit", baseCommit] : ["--base", base];
   console.log(`running: coderabbit review ${scope.join(" ")} --committed (→ ${out})`);
   // Capture both streams directly: Bun's $ doesn't parse `> file 2>&1` redirects,
-  // and .nothrow() keeps a non-zero exit (findings present) from throwing.
+  // and .nothrow() lets us classify the outcome instead of throwing a shell error.
+  // NOTE: findings do NOT make the CLI exit non-zero — a run reporting 5 findings
+  // exits 0 — so a non-zero exit means the review genuinely did not happen.
   const result = await $`coderabbit review ${scope} --committed`.nothrow().quiet();
   const text = `${result.stdout.toString()}${result.stderr.toString()}`;
   await Bun.write(out, text);
@@ -285,11 +287,25 @@ async function cmdReview(base: string, baseCommit?: string): Promise<void> {
   // The failure mode this wrapper exists to prevent: the CLI rejected a flag,
   // printed usage, and exited 0. Without this the caller sees "success" and an
   // empty review.
+  // Rate limiting is a distinct outcome, not a failure to fix: the documented
+  // workflow is "review if you can, otherwise push", so it gets its own exit code
+  // a script can branch on rather than being lumped in with real errors.
+  if (/rate limit|review limit reached/i.test(text)) {
+    console.error(`\ncoderabbit is rate limited — no review ran.\n\nfull output: ${out}`);
+    process.exit(2);
+  }
+
   if (/unknown option|^Usage: coderabbit review/im.test(text)) {
     console.error(
       `\ncoderabbit rejected the arguments — no review ran. Its flags have changed before;\n` +
         `check \`coderabbit review --help\` against the invocation above.\n\nfull output: ${out}`,
     );
+    process.exit(1);
+  }
+
+  // Anything else non-zero: the review did not complete (auth, network, ...).
+  if (result.exitCode !== 0) {
+    console.error(`\ncoderabbit exited ${result.exitCode} — no review ran.\n\nfull output: ${out}`);
     process.exit(1);
   }
 
@@ -320,24 +336,46 @@ export interface ReviewArgs {
  * @param argv - Argument list, e.g. `["--base-commit", "abc123"]`.
  */
 export function parseReviewArgs(argv: readonly string[]): ReviewArgs {
-  const valueAfter = (flag: string): string | undefined => {
-    const at = argv.indexOf(flag);
-    if (at === -1) return undefined;
-    const value = argv[at + 1];
-    // A following token that is itself a flag means the value was omitted.
-    if (value === undefined || value.startsWith("--")) {
-      throw new Error(`${flag} requires a value`);
+  const known = new Set(["--base", "--base-commit"]);
+  const out: ReviewArgs = { base: "main" };
+  let sawBase = false;
+
+  // Sequential scan rather than indexOf: indexOf silently ignores a MISSPELLED
+  // flag, a stray positional, and any repeat of a flag — each of which would then
+  // fall through to a full `--base main` review. Getting a review that isn't the
+  // one you asked for is the exact failure this wrapper exists to prevent, so
+  // anything unrecognised is an error, not a shrug.
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i] as string;
+    if (!known.has(token)) {
+      throw new Error(
+        token.startsWith("--")
+          ? `unknown option ${token} (expected --base or --base-commit)`
+          : `unexpected argument "${token}"`,
+      );
     }
-    return value;
-  };
-  return { base: valueAfter("--base") ?? "main", baseCommit: valueAfter("--base-commit") };
+    const value = argv[i + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`${token} requires a value`);
+    }
+    if (token === "--base") {
+      if (sawBase) throw new Error("--base given more than once");
+      out.base = value;
+      sawBase = true;
+    } else {
+      if (out.baseCommit !== undefined) throw new Error("--base-commit given more than once");
+      out.baseCommit = value;
+    }
+    i += 1; // consume the value
+  }
+  return out;
 }
+
+const [cmd, arg] = Bun.argv.slice(2);
 
 // Only dispatch when RUN as a script. Importing this module (the arg-parser
 // tests do) must not execute a command as a side effect.
 if (import.meta.main) {
-  const [cmd, arg] = Bun.argv.slice(2);
-
   switch (cmd) {
     case "review": {
       // Fully local — deliberately does NOT resolve the repo slug, so it works

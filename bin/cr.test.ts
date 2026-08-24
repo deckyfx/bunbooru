@@ -48,4 +48,30 @@ describe("parseReviewArgs", () => {
       /--base-commit requires a value/,
     );
   });
+
+  it("rejects a misspelled flag instead of ignoring it", () => {
+    // The whole point: an ignored `--base-comit` would fall through to a full
+    // `--base main` review and look like it worked.
+    expect(() => parseReviewArgs(["--base-comit", "abc123"])).toThrow(/unknown option/);
+  });
+
+  it("rejects a stray positional argument", () => {
+    expect(() => parseReviewArgs(["main"])).toThrow(/unexpected argument "main"/);
+    expect(() => parseReviewArgs(["--base", "develop", "extra"])).toThrow(/unexpected argument/);
+  });
+
+  it("rejects a repeated flag rather than silently taking the first", () => {
+    expect(() => parseReviewArgs(["--base", "a", "--base", "b"])).toThrow(/more than once/);
+    expect(() => parseReviewArgs(["--base-commit", "a", "--base-commit", "b"])).toThrow(
+      /more than once/,
+    );
+  });
+
+  it("rejects a repeated flag that is missing its value", () => {
+    // indexOf-based parsing found the FIRST occurrence and never looked at the
+    // trailing bare flag at all.
+    expect(() => parseReviewArgs(["--base", "a", "--base-commit"])).toThrow(
+      /--base-commit requires a value/,
+    );
+  });
 });
