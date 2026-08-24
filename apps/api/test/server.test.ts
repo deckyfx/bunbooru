@@ -27,6 +27,7 @@ import {
   ValidationError,
 } from "@bunbooru/core";
 
+import { maskConnectionUrl } from "../src/lib/runtime-config";
 import { createApp } from "../src/server";
 
 /** A fixed asset row for asserting wire serialization. */
@@ -1401,5 +1402,33 @@ describe("first-run setup", () => {
     expect(body.canProceed).toBe(true);
     // The probe cleans up after itself — no leftover objects in the store.
     expect(written.size).toBe(0);
+  });
+});
+
+describe("admin runtime configuration", () => {
+  it("redacts the password from DATABASE_URL but keeps it diagnosable", async () => {
+    // The whole point of the panel is diagnosing a wrong value, so host/port/db/user
+    // must survive; only the secret goes.
+    const masked = maskConnectionUrl("postgres://bunbooru:hunter2@db.internal:5433/bunbooru");
+    expect(masked).toBe("postgres://bunbooru:***@db.internal:5433/bunbooru");
+    expect(masked).not.toContain("hunter2");
+  });
+
+  it("leaves a credential-free URL untouched", async () => {
+    const url = "postgres://localhost:5432/bunbooru";
+    expect(maskConnectionUrl(url)).toBe(url);
+  });
+
+  it("redacts entirely rather than echoing an unparseable value", async () => {
+    // Fail closed: a malformed string might still contain a secret.
+    expect(maskConnectionUrl("not a url but hunter2 is in it")).toBe("***");
+    expect(maskConnectionUrl("not a url but hunter2 is in it")).not.toContain("hunter2");
+  });
+
+  it("is admin-only", async () => {
+    const anon = await createApp({ core: stubCore() }).handle(
+      new Request("http://localhost/api/v1/admin/runtime"),
+    );
+    expect(anon.status).toBe(401);
   });
 });

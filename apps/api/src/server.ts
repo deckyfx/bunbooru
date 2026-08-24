@@ -19,6 +19,7 @@ import {
 import { PLUGIN_SDK_VERSION } from "@bunbooru/plugin-sdk";
 
 import { envConfig } from "./env-config";
+import { describeRuntimeConfig, type RuntimeSection } from "./lib/runtime-config";
 import { buildClearCookie, buildSessionCookie, readSessionToken, requireUser } from "./lib/auth";
 import { HttpError } from "./lib/errors";
 import {
@@ -55,6 +56,14 @@ export interface AppDependencies {
    * check reports as skipped.
    */
   storage?: StorageProvider;
+  /**
+   * The link origin the mail templates will actually use — `PUBLIC_BASE_URL` when
+   * set, otherwise the composition root's development fallback. Passed in rather
+   * than re-read from env so the setup check reports the EFFECTIVE value: reading
+   * the raw variable would report "unset" while links were being built from the
+   * fallback.
+   */
+  publicBaseUrl?: string | null;
 }
 
 /** One first-run diagnostic. `fail` blocks setup; `warn` is advisory. */
@@ -261,7 +270,13 @@ async function probeStorage(storage: StorageProvider | undefined): Promise<Setup
   }
 }
 
-export function createApp({ core, host, plugins = [], storage }: AppDependencies) {
+export function createApp({
+  core,
+  host,
+  plugins = [],
+  storage,
+  publicBaseUrl = envConfig.PUBLIC_BASE_URL,
+}: AppDependencies) {
   // Per-app limiter instances (fresh per createApp, so tests don't share state;
   // one instance in production since the composition root builds the app once).
   const loginLimiter = createRateLimiter(LOGIN_RATE);
@@ -407,19 +422,26 @@ export function createApp({ core, host, plugins = [], storage }: AppDependencies
 
           checks.push(await probeStorage(storage));
 
-          const publicBaseUrl = envConfig.PUBLIC_BASE_URL;
+          // Report the EFFECTIVE origin, and whether it came from configuration or
+          // the development fallback — an unset variable still produces links, so
+          // "is the variable set?" is the wrong question to answer here.
+          const configured = envConfig.PUBLIC_BASE_URL;
           checks.push({
             id: "public_base_url",
-            label: "Public base URL configured",
-            status: publicBaseUrl ? "pass" : "warn",
-            detail: publicBaseUrl
-              ? `Links in outgoing email will point at ${publicBaseUrl}.`
-              : "Unset — password-reset and verification emails cannot build a link.",
+            label: "Public base URL",
+            status: publicBaseUrl ? (configured ? "pass" : "warn") : "warn",
+            detail: !publicBaseUrl
+              ? "Unset — password-reset and verification emails cannot build a link."
+              : configured
+                ? `Links in outgoing email will point at ${publicBaseUrl}.`
+                : `Unset; falling back to ${publicBaseUrl} for development only.`,
             // Deliberately never derived from the request Host header: that is the
-            // classic reset-link poisoning vector.
-            remedy: publicBaseUrl
+            // classic reset-link poisoning vector. It must address the WEB origin —
+            // the API does not serve the SPA in development, so a link at the API
+            // port answers with a JSON 404.
+            remedy: configured
               ? null
-              : "Set PUBLIC_BASE_URL in .env to the address users reach this site at, then restart.",
+              : "Set PUBLIC_BASE_URL in .env to the address users reach the SITE at (the web origin, not the API port), then restart.",
           });
 
           const mailReady = await core.mailService.isConfigured();
@@ -1059,6 +1081,34 @@ export function createApp({ core, host, plugins = [], storage }: AppDependencies
             }),
           },
         )
+        // --- Runtime configuration (admin, read-only) ----------------------
+        // What this server is ACTUALLY running with — so diagnosing a wrong value
+        // doesn't require shelling in to read `.env`. Read-only because nearly all
+        // of it is environment, fixed before boot.
+        //
+        // CORE settings only. A plugin's own configuration (SMTP credentials, and
+        // so on) belongs to that plugin's admin section, which the console renders
+        // only while the plugin is ACTIVE — surfacing it here would both break the
+        // Core/plugin boundary and show settings for plugins that are switched off.
+        // The one mail entry below is Core's MailService state (which plugin, if
+        // any, supplies a transport), never a plugin's settings.
+        .get("/admin/runtime", async ({ currentUser }): Promise<RuntimeSection[]> => {
+          const user = requireUser(currentUser);
+          if (!canModerate(user)) throw new AuthorizationError();
+          const installed = pluginHost.describeAll();
+          return describeRuntimeConfig({
+            publicBaseUrl,
+            uploadLimits: await core.settingsService.getUploadLimits(),
+            requireVerifiedEmailForReset:
+              await core.settingsService.getRequireVerifiedEmailForReset(),
+            mailProviderId: core.mailService.activeProviderId(),
+            mailConfigured: await core.mailService.isConfigured(),
+            plugins: {
+              installed: installed.length,
+              active: installed.filter((p) => p.active).length,
+            },
+          });
+        })
         // --- Extensions / plugin management (admin) ------------------------
         // Every known first-party plugin with metadata + current on/off state.
         .get("/admin/extensions", ({ currentUser }): ExtensionInfo[] => {

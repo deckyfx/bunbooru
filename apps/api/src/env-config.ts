@@ -234,6 +234,12 @@ class EnvConfig {
    * Absolute public base URL the site is reached at (e.g. `https://booru.example`),
    * used to build the links in reset/verify emails. Returns null when unset.
    *
+   * This must address the **web** origin, never this API's port. In production
+   * they are the same (the API serves the built SPA), but in development the web
+   * server runs separately and proxies `/api/*` here — so a link built against
+   * the API port hits a server that has no such route and answers with a JSON
+   * 404. Mailed links must always land on the web app.
+   *
    * Validated as an absolute `http(s)` URL at boot so a misconfiguration fails
    * fast rather than at the first email. The trailing slash is trimmed so callers
    * can append paths without doubling it. This is the ONLY source of the link

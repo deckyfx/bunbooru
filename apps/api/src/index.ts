@@ -21,8 +21,15 @@ const isProduction = envConfig.NODE_ENV === "production";
 // explicitly whenever a mail provider is active (enforced after plugins load).
 // Never derived from the request `Host` header (host-header injection is the
 // classic password-reset vulnerability).
+// The dev fallback targets the WEB dev server, not this API. In production the
+// API serves the built SPA on its own origin, so SERVER_PORT would be right —
+// but the fallback only ever applies in development, where the two run on
+// separate ports (web 3001 proxies /api/* to api 3000). Pointing it at
+// SERVER_PORT produced reset links to :3000/reset-password, which the API has no
+// route for and answers with a JSON 404.
 const publicBaseUrl =
-  envConfig.PUBLIC_BASE_URL ?? (isProduction ? null : `http://localhost:${envConfig.SERVER_PORT}`);
+  envConfig.PUBLIC_BASE_URL ??
+  (isProduction ? null : `http://localhost:${Number(Bun.env.WEB_PORT ?? "3001") || 3001}`);
 
 const { core, db, storage } = createCoreRuntime({
   databaseUrl: envConfig.DATABASE_URL,
@@ -111,7 +118,7 @@ const pluginHost = createPluginHost({
 // provider) — so the mail flows reflect the persisted active set from boot.
 await pluginHost.init();
 
-const app = createApp({ core, host: pluginHost, storage });
+const app = createApp({ core, host: pluginHost, storage, publicBaseUrl });
 
 // Mount each plugin's routes under its `/api/v1/plugins/<id>` prefix. Done here
 // (not inside `createApp`) so the exported `App` type stays Core-only — plugin
