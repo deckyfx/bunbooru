@@ -276,7 +276,17 @@ export function classifyReviewOutcome(text: string, exitCode: number): ReviewOut
   // own tests contain both "Rate limit exceeded" and "error: unknown option". A
   // completed review always prints this banner and a rate-limited one never does,
   // so trusting it first makes echoed text harmless by construction.
-  if (/^[ \t]*Review complete[ \t]*$/m.test(text)) return "reviewed";
+  if (/^[ \t]*Review complete[ \t]*$/m.test(text)) {
+    // The banner says the review ran; a non-zero exit alongside it contradicts that
+    // (findings alone exit 0), so treat the disagreement as a failure rather than
+    // guessing which half to believe.
+    return exitCode === 0 ? "reviewed" : "failed";
+  }
+
+  // A run with nothing in range is a COMPLETE invocation, not a failure — it just
+  // has no banner. Recognising it explicitly is what lets the fallback below be
+  // strict.
+  if (/^[ \t]*Nothing to review\.?[ \t]*$/m.test(text)) return "reviewed";
 
   // `[ \t]` rather than `\s`: `\s` matches newlines, so `^\s*` could start at one
   // line and match content on a later one — defeating the whole-line intent.
@@ -287,7 +297,11 @@ export function classifyReviewOutcome(text: string, exitCode: number): ReviewOut
   if (/^[ \t]*error: unknown option\b/m.test(text)) return "rejected-args";
   if (/^[ \t]*Usage: coderabbit review\b/m.test(text)) return "rejected-args";
 
-  return exitCode === 0 ? "reviewed" : "failed";
+  // Deliberately NOT `exitCode === 0 ? "reviewed" : "failed"`. Unrecognised output
+  // means the wrapper cannot tell what happened, and "assume it worked" is the
+  // failure mode this whole classifier exists to remove — an empty stream with a
+  // zero exit would otherwise be reported as a successful review.
+  return "failed";
 }
 
 /**
@@ -318,7 +332,12 @@ async function cmdReview(base: string, baseCommit?: string): Promise<void> {
   // NOTE: findings do NOT make the CLI exit non-zero — a run reporting 5 findings
   // exits 0 — so a non-zero exit means the review genuinely did not happen.
   const result = await $`coderabbit review ${scope} --committed`.nothrow().quiet();
-  const text = `${result.stdout.toString()}${result.stderr.toString()}`;
+  // Join with a newline: without one, stderr's first line is glued onto stdout's
+  // last, and every whole-line marker in classifyReviewOutcome stops matching —
+  // the CLI writes its status to stderr and its progress to stdout.
+  const stdout = result.stdout.toString();
+  const stderr = result.stderr.toString();
+  const text = stdout && !stdout.endsWith("\n") ? `${stdout}\n${stderr}` : `${stdout}${stderr}`;
   await Bun.write(out, text);
 
   // The failure mode this wrapper exists to prevent: the CLI rejected a flag,

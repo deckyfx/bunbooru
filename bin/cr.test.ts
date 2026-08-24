@@ -149,4 +149,25 @@ describe("classifyReviewOutcome", () => {
       "failed",
     );
   });
+
+  it("does not call an unrecognised zero-exit run a success", () => {
+    // "Assume it worked" is precisely the failure this classifier exists to remove.
+    expect(classifyReviewOutcome("", 0)).toBe("failed");
+    expect(classifyReviewOutcome("Connecting to CodeRabbit... 1s elapsed\n", 0)).toBe("failed");
+  });
+
+  it("distrusts a completion banner contradicted by a non-zero exit", () => {
+    // Findings alone exit 0, so a banner plus a failure code is a disagreement
+    // rather than a normal outcome — don't guess which half to believe.
+    expect(classifyReviewOutcome("Review complete\n1 finding ✔\n", 1)).toBe("failed");
+  });
+
+  it("treats an empty range as a completed run, not a failure", () => {
+    const nothing = [
+      "Diff      : committed changes only",
+      "No committed changes detected 🔎",
+      "Nothing to review.",
+    ].join("\n");
+    expect(classifyReviewOutcome(nothing, 0)).toBe("reviewed");
+  });
 });
