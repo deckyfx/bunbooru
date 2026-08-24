@@ -1,10 +1,13 @@
-import { Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { useEffect } from "react";
+
+import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 
 import pkg from "../../package.json";
 import { AccountLinks } from "../components/account-links";
 import { SearchBox } from "../components/popover/search-box";
 import { ThemeSwitcher } from "../components/theme-switcher";
 import { VisitorCounter } from "../components/visitor-counter";
+import { useSetupStatus } from "../lib/setup";
 import { useRecordVisit } from "../lib/stats";
 import { useApplyTheme } from "../stores/theme";
 
@@ -34,7 +37,44 @@ const MENU = [
 export function RootLayout() {
   useApplyTheme();
   useRecordVisit(); // count this visitor once per app load (server dedupes per day)
-  const isHome = useRouterState({ select: (s) => s.location.pathname === "/" });
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isHome = pathname === "/";
+  const isSetup = pathname === "/setup";
+  const setup = useSetupStatus();
+
+  // First-run gate. With zero accounts there is nothing to log into and no way to
+  // make an admin from the UI, so EVERY route goes to /setup; once an account
+  // exists, /setup itself is meaningless and goes home. Kept in an effect (rather
+  // than a route `beforeLoad`) because the router has no query-client context to
+  // resolve the status from.
+  const needsSetup = setup.data;
+  useEffect(() => {
+    if (needsSetup === undefined) return; // still loading — don't bounce yet
+    if (needsSetup && !isSetup) void navigate({ to: "/setup", replace: true });
+    else if (!needsSetup && isSetup) void navigate({ to: "/", replace: true });
+  }, [needsSetup, isSetup, navigate]);
+
+  // Render nothing until the gate resolves: showing the site first and redirecting
+  // after would flash an empty gallery at an operator who hasn't set up yet.
+  if (setup.isPending) return null;
+
+  // A redirect is scheduled but `navigate` has not applied yet. Rendering the
+  // current route on this pass would paint the wrong page for a frame — and worse,
+  // its queries would fire against a server that isn't set up.
+  if (needsSetup !== undefined && needsSetup !== isSetup) return null;
+
+  // While setup is pending the chrome is suppressed entirely — its links (search,
+  // account, admin) all lead somewhere that redirects straight back here.
+  if (needsSetup) {
+    return (
+      <div className="flex min-h-screen flex-col">
+        <main className="flex-1 px-4 py-4">
+          <Outlet />
+        </main>
+      </div>
+    );
+  }
 
   return (
     // Flex column so the footer can be pushed to the bottom of the viewport even

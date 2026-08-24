@@ -81,6 +81,12 @@ export interface AuthService {
   currentUser(token: string | null | undefined): Promise<User | null>;
   /** Revoke a session by its raw token (logout). */
   logout(token: string): Promise<void>;
+  /**
+   * Total number of accounts. Zero means the instance has never been set up —
+   * the first-run setup flow gates on this, and `createBootstrapping` makes that
+   * first account `admin` atomically.
+   */
+  countUsers(): Promise<number>;
   /** Reclaim expired sessions; returns how many were removed. */
   gcExpiredSessions(at?: Date): Promise<number>;
   /** Mint a named API key for a user; the raw key is returned only here. */
@@ -357,6 +363,10 @@ export function createAuthService(
 
     async logout(token) {
       await sessions.deleteByTokenHash(sha256hex(token));
+    },
+
+    countUsers() {
+      return users.countAll();
     },
 
     gcExpiredSessions(at = now()) {

@@ -12,12 +12,14 @@ import {
   type AssetUpdate,
   type Core,
   type PublicUser,
+  type StorageProvider,
   type Tag,
   type User,
 } from "@bunbooru/core";
 import { PLUGIN_SDK_VERSION } from "@bunbooru/plugin-sdk";
 
 import { envConfig } from "./env-config";
+import { describeRuntimeConfig, type RuntimeSection } from "./lib/runtime-config";
 import { buildClearCookie, buildSessionCookie, readSessionToken, requireUser } from "./lib/auth";
 import { HttpError } from "./lib/errors";
 import {
@@ -47,9 +49,42 @@ export interface AppDependencies {
    * Ignored when `host` is provided. Defaults to none.
    */
   plugins?: PluginManifestEntry[];
+  /**
+   * Asset storage, used ONLY by the first-run setup probe (write → stat → delete
+   * a throwaway key) so a misconfigured `STORAGE_ROOT` surfaces during setup
+   * rather than on a user's first upload. Optional: omit it and the storage
+   * check reports as skipped.
+   */
+  storage?: StorageProvider;
+  /**
+   * The link origin the mail templates will actually use — `PUBLIC_BASE_URL` when
+   * set, otherwise the composition root's development fallback. Passed in rather
+   * than re-read from env so the setup check reports the EFFECTIVE value: reading
+   * the raw variable would report "unset" while links were being built from the
+   * fallback.
+   */
+  publicBaseUrl?: string | null;
+}
+
+/** One first-run diagnostic. `fail` blocks setup; `warn` is advisory. */
+export interface SetupCheck {
+  id: string;
+  label: string;
+  status: "pass" | "warn" | "fail" | "skipped";
+  /** What was observed, in one line. */
+  detail: string;
+  /** How to fix it (usually an env var), or null when nothing is wrong. */
+  remedy: string | null;
 }
 
 /** Per-IP throttles on the credential endpoints (in-memory, single-instance). */
+/**
+ * Throttle for the pre-setup diagnostics. Unauthenticated by necessity (there are
+ * no accounts yet) and it performs real work per call — a storage write/stat/delete
+ * — so an open loop against it is both an I/O amplifier and a way to fish for the
+ * env detail it reports.
+ */
+const SETUP_CHECKS_RATE = { windowMs: 5 * 60 * 1000, max: 20 } as const;
 const LOGIN_RATE = { windowMs: 15 * 60 * 1000, max: 10 } as const;
 const REGISTER_RATE = { windowMs: 60 * 60 * 1000, max: 5 } as const;
 /** Forgot-password throttles: per-IP (flood) AND per-address (targeted spam). */
@@ -191,9 +226,67 @@ function serializeAsset(asset: Asset): AssetDto {
  * global error handler that never leaks stack traces. API routes are versioned
  * under `/api/v1`.
  */
-export function createApp({ core, host, plugins = [] }: AppDependencies) {
+/**
+ * Probe the storage backend the way an upload would: write a throwaway object,
+ * confirm it lands, delete it. Catches a `STORAGE_ROOT` that is missing, read-only,
+ * or owned by another user (the Docker root-owned `./data` case) at setup time
+ * instead of on someone's first upload.
+ */
+async function probeStorage(storage: StorageProvider | undefined): Promise<SetupCheck> {
+  const base = {
+    id: "storage",
+    label: "Asset storage is writable",
+  } as const;
+  if (!storage) {
+    return {
+      ...base,
+      status: "skipped",
+      detail: "No storage provider wired into this app instance.",
+      remedy: null,
+    };
+  }
+  const key = `.setup-probe/${crypto.randomUUID()}`;
+  try {
+    await storage.store(key, new TextEncoder().encode("ok"));
+    const exists = await storage.exists(key);
+    if (!exists) {
+      return {
+        ...base,
+        status: "fail",
+        detail: "A probe object was written but could not be read back.",
+        remedy: `Check that STORAGE_ROOT (${envConfig.STORAGE_ROOT}) is a real, persistent directory.`,
+      };
+    }
+    return {
+      ...base,
+      status: "pass",
+      detail: `Wrote and removed a probe object under ${envConfig.STORAGE_ROOT}.`,
+      remedy: null,
+    };
+  } catch (error) {
+    return {
+      ...base,
+      status: "fail",
+      detail: error instanceof Error ? error.message : String(error),
+      remedy: `Ensure STORAGE_ROOT (${envConfig.STORAGE_ROOT}) exists and is writable by the server process. Docker creates ./data as root — a one-time chown fixes it.`,
+    };
+  } finally {
+    // Best-effort: a leftover probe object is harmless, and a delete failure must
+    // not turn a passing check into a failing one.
+    await storage.delete(key).catch(() => {});
+  }
+}
+
+export function createApp({
+  core,
+  host,
+  plugins = [],
+  storage,
+  publicBaseUrl = envConfig.PUBLIC_BASE_URL,
+}: AppDependencies) {
   // Per-app limiter instances (fresh per createApp, so tests don't share state;
   // one instance in production since the composition root builds the app once).
+  const setupChecksLimiter = createRateLimiter(SETUP_CHECKS_RATE);
   const loginLimiter = createRateLimiter(LOGIN_RATE);
   const registerLimiter = createRateLimiter(REGISTER_RATE);
   const forgotPasswordIpLimiter = createRateLimiter(FORGOT_PASSWORD_IP_RATE);
@@ -306,6 +399,108 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
         // are mounted by the composition root under `/api/v1/plugins/<id>`;
         // inactive ones are gated in `onRequest` above.
         .get("/plugins", (): PluginManifestEntry[] => pluginHost.manifest())
+        // --- First-run setup ------------------------------------------------
+        // Whether the instance has never been set up (zero accounts). Public and
+        // deliberately tiny: the web app calls it on every load to decide between
+        // the setup page and the site, so it must stay a single COUNT.
+        .get("/setup/status", async () => ({
+          needsSetup: (await core.authService.countUsers()) === 0,
+        }))
+        // First-run diagnostics. Gated on there being NO accounts: these lines
+        // name filesystem paths, env vars, and installed plugins, so once the
+        // instance is set up this becomes admin-only territory and 404s here.
+        // Creating the first admin goes through the normal POST /auth/register —
+        // `createBootstrapping` already assigns `admin` to the first account under
+        // an advisory lock, so there is no second privileged account-creation path.
+        .get("/setup/checks", async ({ request, server }) => {
+          if ((await core.authService.countUsers()) > 0) {
+            throw new HttpError(404, "Setup has already been completed");
+          }
+          // Throttled before any probing: the storage check writes and deletes a
+          // real object, so this must not be a free I/O amplifier.
+          if (!setupChecksLimiter.hit(clientIp(request, server, envConfig.TRUST_PROXY))) {
+            throw new HttpError(429, "Too many setup checks. Please try again shortly.");
+          }
+          const checks: SetupCheck[] = [];
+
+          // Reaching this handler at all means the pool answered and the schema is
+          // migrated (the composition root applies migrations before serving).
+          checks.push({
+            id: "database",
+            label: "Database reachable and migrated",
+            status: "pass",
+            detail: "Core migrations are applied and the users table is queryable.",
+            remedy: null,
+          });
+
+          checks.push(await probeStorage(storage));
+
+          // Report the EFFECTIVE origin, and whether it came from configuration or
+          // the development fallback — an unset variable still produces links, so
+          // "is the variable set?" is the wrong question to answer here.
+          const configured = envConfig.PUBLIC_BASE_URL;
+          checks.push({
+            id: "public_base_url",
+            label: "Public base URL",
+            status: publicBaseUrl ? (configured ? "pass" : "warn") : "warn",
+            detail: !publicBaseUrl
+              ? "Unset — password-reset and verification emails cannot build a link."
+              : configured
+                ? `Links in outgoing email will point at ${publicBaseUrl}.`
+                : `Unset; falling back to ${publicBaseUrl} for development only.`,
+            // Deliberately never derived from the request Host header: that is the
+            // classic reset-link poisoning vector. It must address the WEB origin —
+            // the API does not serve the SPA in development, so a link at the API
+            // port answers with a JSON 404.
+            remedy: configured
+              ? null
+              : "Set PUBLIC_BASE_URL in .env to the address users reach the SITE at (the web origin, not the API port), then restart.",
+          });
+
+          const mailReady = await core.mailService.isConfigured();
+          const mailPlugin = core.mailService.activeProviderId();
+          checks.push({
+            id: "mail",
+            label: "Outgoing email available",
+            status: mailReady ? "pass" : "warn",
+            detail: mailReady
+              ? `Provided by the "${mailPlugin}" plugin.`
+              : "No active mail provider — password reset and email verification will return 503.",
+            remedy: mailReady
+              ? null
+              : "Activate the smtp-mailer plugin from the admin console and set its SMTP credentials in .env.",
+          });
+
+          // describeAll(), NOT manifest(): the manifest lists only ACTIVE plugins,
+          // so a build with plugins that are all switched off would report zero and
+          // read as "nothing installed". Installed and active are separate facts and
+          // the operator needs both.
+          const installed = pluginHost.describeAll();
+          const activePlugins = installed.filter((p) => p.active);
+          checks.push({
+            id: "plugins",
+            label: "Plugins",
+            status: "pass",
+            detail:
+              installed.length === 0
+                ? "No plugins are bundled in this build."
+                : `${installed.length} installed (${installed.map((p) => p.id).join(", ")}); ` +
+                  (activePlugins.length === 0
+                    ? "none active yet."
+                    : `${activePlugins.length} active: ${activePlugins.map((p) => p.id).join(", ")}.`),
+            remedy:
+              installed.length > 0 && activePlugins.length === 0
+                ? "Switch the ones you want on from Admin → Plugins after setup."
+                : null,
+          });
+
+          return {
+            checks,
+            // Warnings are all recoverable from the admin console or a later .env
+            // edit; only a hard failure (no usable storage) blocks setup.
+            canProceed: !checks.some((c) => c.status === "fail"),
+          };
+        })
         // --- Auth ----------------------------------------------------------
         // Open, self-serve registration. The first account created becomes the
         // site `admin`; the rest are `member`. Registration auto-logs-in: it sets
@@ -899,6 +1094,34 @@ export function createApp({ core, host, plugins = [] }: AppDependencies) {
             }),
           },
         )
+        // --- Runtime configuration (admin, read-only) ----------------------
+        // What this server is ACTUALLY running with — so diagnosing a wrong value
+        // doesn't require shelling in to read `.env`. Read-only because nearly all
+        // of it is environment, fixed before boot.
+        //
+        // CORE settings only. A plugin's own configuration (SMTP credentials, and
+        // so on) belongs to that plugin's admin section, which the console renders
+        // only while the plugin is ACTIVE — surfacing it here would both break the
+        // Core/plugin boundary and show settings for plugins that are switched off.
+        // The one mail entry below is Core's MailService state (which plugin, if
+        // any, supplies a transport), never a plugin's settings.
+        .get("/admin/runtime", async ({ currentUser }): Promise<RuntimeSection[]> => {
+          const user = requireUser(currentUser);
+          if (!canModerate(user)) throw new AuthorizationError();
+          const installed = pluginHost.describeAll();
+          return describeRuntimeConfig({
+            publicBaseUrl,
+            uploadLimits: await core.settingsService.getUploadLimits(),
+            requireVerifiedEmailForReset:
+              await core.settingsService.getRequireVerifiedEmailForReset(),
+            mailProviderId: core.mailService.activeProviderId(),
+            mailConfigured: await core.mailService.isConfigured(),
+            plugins: {
+              installed: installed.length,
+              active: installed.filter((p) => p.active).length,
+            },
+          });
+        })
         // --- Extensions / plugin management (admin) ------------------------
         // Every known first-party plugin with metadata + current on/off state.
         .get("/admin/extensions", ({ currentUser }): ExtensionInfo[] => {

@@ -1,10 +1,19 @@
 import { useEffect, useRef, useState, type ComponentType, type FormEvent } from "react";
 
 import { useNavigate } from "@tanstack/react-router";
-import { Blocks, Loader2, Power, PowerOff, SlidersHorizontal, Tags } from "lucide-react";
+import {
+  Blocks,
+  Loader2,
+  Power,
+  PowerOff,
+  ServerCog,
+  SlidersHorizontal,
+  Tags,
+} from "lucide-react";
 
 import { authErrorMessage, useCurrentUser } from "../lib/auth";
 import { usePlugins, useExtensions, useToggleExtension, type ExtensionDto } from "../lib/plugins";
+import { useRuntimeConfig, type SettingSource } from "../lib/runtime";
 import { useUpdateUploadLimits, useUploadLimits } from "../lib/settings";
 import {
   CATEGORY_ORDER,
@@ -33,7 +42,7 @@ const INPUT_CLASS =
 const CARD_CLASS = "rounded-xl border border-line bg-surface p-5 shadow-sm";
 
 /** A built-in (non-plugin) console section. */
-type CoreSection = "settings" | "taxonomy" | "extensions";
+type CoreSection = "settings" | "taxonomy" | "extensions" | "runtime";
 /** The selected nav target — a core section or a specific plugin's tools. */
 type Section = { kind: "core"; key: CoreSection } | { kind: "plugin"; id: string };
 
@@ -88,6 +97,12 @@ export function AdminPage() {
               active={isCurrent({ kind: "core", key: "taxonomy" })}
               onClick={() => setSection({ kind: "core", key: "taxonomy" })}
             />
+            <NavButton
+              icon={ServerCog}
+              label="Runtime"
+              active={isCurrent({ kind: "core", key: "runtime" })}
+              onClick={() => setSection({ kind: "core", key: "runtime" })}
+            />
           </div>
 
           {pluginTools.length > 0 ? (
@@ -115,6 +130,7 @@ export function AdminPage() {
         {section.kind === "core" && section.key === "extensions" ? <ExtensionsSection /> : null}
         {section.kind === "core" && section.key === "settings" ? <UploadLimitsSection /> : null}
         {section.kind === "core" && section.key === "taxonomy" ? <TagCategorySection /> : null}
+        {section.kind === "core" && section.key === "runtime" ? <RuntimeConfigSection /> : null}
         {section.kind === "plugin" ? (
           <PluginToolSection id={section.id} active={pluginTools.some((p) => p.id === section.id)} />
         ) : null}
@@ -487,6 +503,103 @@ function TagCategorySection() {
           Set category
         </button>
       </form>
+    </section>
+  );
+}
+
+/** Badge describing where a setting's effective value came from. */
+function SourceBadge({ source }: { source: SettingSource }) {
+  const style: Record<SettingSource, string> = {
+    env: "border-link/30 bg-link/10 text-link",
+    database: "border-tag-copyright/30 bg-tag-copyright/10 text-tag-copyright",
+    default: "border-line bg-bg text-muted",
+  };
+  const label: Record<SettingSource, string> = {
+    env: "env",
+    database: "runtime override",
+    default: "default",
+  };
+  return (
+    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${style[source]}`}>
+      {label[source]}
+    </span>
+  );
+}
+
+/**
+ * Read-only view of the server's effective runtime configuration.
+ *
+ * Answers "what is this server actually using?" without shelling in to read
+ * `.env` — the question that otherwise gets answered by guessing. Read-only
+ * because nearly all of it is environment, fixed before boot; the two values an
+ * admin CAN change at runtime are edited under Settings and show as overrides
+ * here.
+ *
+ * Core settings only. Plugin configuration lives in each plugin's own admin
+ * section, which appears only while that plugin is active.
+ */
+function RuntimeConfigSection() {
+  const runtime = useRuntimeConfig();
+
+  return (
+    <section aria-labelledby="runtime-heading">
+      <h2 id="runtime-heading" className="text-base font-bold">
+        Runtime configuration
+      </h2>
+      <p className="mb-4 mt-1 max-w-2xl text-[13px] text-muted">
+        What this server is running with right now. Environment values need a restart to
+        change; the ones marked <span className="font-medium">runtime override</span> were
+        changed from this console. Secrets are redacted.
+      </p>
+
+      {runtime.isPending ? (
+        <p className="flex items-center gap-1.5 text-[13px] text-muted">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          Loading…
+        </p>
+      ) : runtime.isError ? (
+        <p role="alert" className="text-[13px] text-tag-artist">
+          Couldn’t load the runtime configuration.
+        </p>
+      ) : (
+        <div className="space-y-5">
+          {runtime.data.map((group) => (
+            <div key={group.title}>
+              <h3 className="mb-1.5 text-[13px] font-bold">{group.title}</h3>
+              <dl className="divide-y divide-line rounded-lg border border-line bg-surface">
+                {group.settings.map((setting) => (
+                  <div
+                    key={setting.key}
+                    className="flex flex-col gap-1 px-3 py-2 sm:flex-row sm:items-baseline sm:gap-3"
+                  >
+                    <dt className="shrink-0 font-mono text-[12px] font-medium sm:w-72">
+                      {setting.key}
+                    </dt>
+                    <dd className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {setting.value === null ? (
+                          <span className="text-[12px] italic text-muted">not set</span>
+                        ) : (
+                          <span className="break-all font-mono text-[12px]">{setting.value}</span>
+                        )}
+                        <SourceBadge source={setting.source} />
+                        {setting.secret ? (
+                          <span className="rounded border border-line bg-bg px-1.5 py-0.5 text-[10px] text-muted">
+                            redacted
+                          </span>
+                        ) : null}
+                      </div>
+                      {setting.note ? (
+                        <p className="mt-0.5 text-[11px] text-muted">{setting.note}</p>
+                      ) : null}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

@@ -48,6 +48,26 @@ class EnvConfig {
   }
 
   /**
+   * Port the WEB dev server listens on (default 3001). This API never binds it —
+   * it is read only to build the development fallback for {@link PUBLIC_BASE_URL},
+   * since mailed links must land on the web app, not here.
+   *
+   * Validated like {@link SERVER_PORT} rather than coerced: `Number(raw) || 3001`
+   * would pass a negative or out-of-range value straight through into a link that
+   * cannot resolve, and only fractionally-wrong ports would be caught.
+   */
+  get WEB_PORT(): number {
+    const raw = Bun.env.WEB_PORT;
+    if (raw === undefined || raw.trim() === "") return 3001;
+
+    const port = Number(raw);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`WEB_PORT must be an integer between 1 and 65535, got "${raw}"`);
+    }
+    return port;
+  }
+
+  /**
    * Postgres connection string. Required: the API cannot serve data without it,
    * so a missing value fails fast at startup rather than on the first query.
    */
@@ -213,8 +233,32 @@ class EnvConfig {
   }
 
   /**
+   * Console log rendering: `json` (one machine-readable object per line, for log
+   * aggregation) or `pretty` (aligned, colourised, human-readable).
+   *
+   * Defaults to `pretty` in development and `json` everywhere else — a shipped
+   * server's stdout is parsed by tooling, a developer's terminal is read by a
+   * person. Set explicitly to override either way (e.g. `LOG_FORMAT=json` locally
+   * to reproduce what production emits).
+   */
+  get LOG_FORMAT(): "json" | "pretty" {
+    const raw = Bun.env.LOG_FORMAT?.trim();
+    if (!raw) return this.isDevelopment ? "pretty" : "json";
+    if (raw !== "json" && raw !== "pretty") {
+      throw new Error(`LOG_FORMAT must be "json" or "pretty", got "${raw}"`);
+    }
+    return raw;
+  }
+
+  /**
    * Absolute public base URL the site is reached at (e.g. `https://booru.example`),
    * used to build the links in reset/verify emails. Returns null when unset.
+   *
+   * This must address the **web** origin, never this API's port. In production
+   * they are the same (the API serves the built SPA), but in development the web
+   * server runs separately and proxies `/api/*` here — so a link built against
+   * the API port hits a server that has no such route and answers with a JSON
+   * 404. Mailed links must always land on the web app.
    *
    * Validated as an absolute `http(s)` URL at boot so a misconfiguration fails
    * fast rather than at the first email. The trailing slash is trimmed so callers

@@ -27,6 +27,7 @@ import {
   ValidationError,
 } from "@bunbooru/core";
 
+import { maskConnectionUrl } from "../src/lib/runtime-config";
 import { createApp } from "../src/server";
 
 /** A fixed asset row for asserting wire serialization. */
@@ -146,6 +147,9 @@ function stubCore(
       // would yield a different string and fail to authenticate).
       currentUser: async (token) => (token === SESSION_TOKEN ? sampleUser : null),
       logout: async () => undefined,
+      // Non-zero by default: the stubbed instance is already "set up", so setup
+      // routes 404 unless a test overrides this.
+      countUsers: async () => 1,
       gcExpiredSessions: async () => 0,
       createApiKey: async () => ({ key: "bnb_secret", record: sampleApiKey }),
       listApiKeys: async () => [sampleApiKey],
@@ -1326,5 +1330,124 @@ describe("auth: password reset + email verification", () => {
       }),
     ).handle(jsonPost("/api/v1/auth/verify-email/confirm", { token: "bad" }));
     expect(bad.status).toBe(401);
+  });
+});
+
+describe("first-run setup", () => {
+  /** An app whose account count is `n` (0 = never set up). */
+  function appWithUsers(n: number, storage?: Parameters<typeof createApp>[0]["storage"]) {
+    return createApp({ core: stubCore({}, {}, {}, {}, { countUsers: async () => n }), storage });
+  }
+
+  function get(app: ReturnType<typeof createApp>, path: string) {
+    return app.handle(new Request(`http://localhost${path}`));
+  }
+
+  it("status reports needsSetup only while there are no accounts", async () => {
+    const fresh = await get(appWithUsers(0), "/api/v1/setup/status");
+    expect(fresh.status).toBe(200);
+    expect(await fresh.json()).toEqual({ needsSetup: true });
+
+    const done = await get(appWithUsers(1), "/api/v1/setup/status");
+    expect(await done.json()).toEqual({ needsSetup: false });
+  });
+
+  it("checks are served only before setup — 404 once an account exists", async () => {
+    // The diagnostics name filesystem paths, env vars and installed plugins, so
+    // they must not stay reachable after the instance is set up.
+    const done = await get(appWithUsers(1), "/api/v1/setup/checks");
+    expect(done.status).toBe(404);
+  });
+
+  it("checks run the storage probe and report a failure as blocking", async () => {
+    const failing = {
+      store: async () => {
+        throw new Error("EACCES: permission denied");
+      },
+      delete: async () => {},
+      exists: async () => false,
+      statModifiedAt: async () => null,
+      list: async function* () {},
+    } as unknown as Parameters<typeof createApp>[0]["storage"];
+
+    const res = await get(appWithUsers(0, failing), "/api/v1/setup/checks");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      canProceed: boolean;
+      checks: { id: string; status: string; remedy: string | null }[];
+    };
+    const storageCheck = body.checks.find((c) => c.id === "storage");
+    expect(storageCheck?.status).toBe("fail");
+    expect(storageCheck?.remedy).toContain("STORAGE_ROOT");
+    // A hard failure blocks setup; warnings alone would not.
+    expect(body.canProceed).toBe(false);
+  });
+
+  it("checks pass with a working store, and warnings alone still allow proceeding", async () => {
+    const written = new Map<string, boolean>();
+    const working = {
+      store: async (key: string) => void written.set(key, true),
+      delete: async (key: string) => void written.delete(key),
+      exists: async (key: string) => written.has(key),
+      statModifiedAt: async () => null,
+      list: async function* () {},
+    } as unknown as Parameters<typeof createApp>[0]["storage"];
+
+    const res = await get(appWithUsers(0, working), "/api/v1/setup/checks");
+    const body = (await res.json()) as {
+      canProceed: boolean;
+      checks: { id: string; status: string }[];
+    };
+    expect(body.checks.find((c) => c.id === "storage")?.status).toBe("pass");
+    expect(body.canProceed).toBe(true);
+    // The probe cleans up after itself — no leftover objects in the store.
+    expect(written.size).toBe(0);
+  });
+});
+
+describe("admin runtime configuration", () => {
+  it("redacts the password from DATABASE_URL but keeps it diagnosable", async () => {
+    // The whole point of the panel is diagnosing a wrong value, so host/port/db/user
+    // must survive; only the secret goes.
+    const masked = maskConnectionUrl("postgres://bunbooru:hunter2@db.internal:5433/bunbooru");
+    expect(masked).toBe("postgres://bunbooru:***@db.internal:5433/bunbooru");
+    expect(masked).not.toContain("hunter2");
+  });
+
+  it("leaves a credential-free URL untouched", async () => {
+    const url = "postgres://localhost:5432/bunbooru";
+    expect(maskConnectionUrl(url)).toBe(url);
+  });
+
+  it("redacts entirely rather than echoing an unparseable value", async () => {
+    // Fail closed: a malformed string might still contain a secret.
+    expect(maskConnectionUrl("not a url but hunter2 is in it")).toBe("***");
+    expect(maskConnectionUrl("not a url but hunter2 is in it")).not.toContain("hunter2");
+  });
+
+  it("is admin-only — 401 anonymous, 403 for a signed-in non-admin", async () => {
+    const anon = await createApp({ core: stubCore() }).handle(
+      new Request("http://localhost/api/v1/admin/runtime"),
+    );
+    expect(anon.status).toBe(401);
+
+    // sampleUser is a `member`. This endpoint returns the masked DATABASE_URL and
+    // the effective environment, so the authenticated-but-unprivileged path is the
+    // one that actually matters.
+    const member = await createApp({ core: stubCore() }).handle(
+      new Request("http://localhost/api/v1/admin/runtime", { headers: AUTH_HEADER }),
+    );
+    expect(member.status).toBe(403);
+  });
+
+  it("drops query parameters, which can carry credentials of their own", async () => {
+    // `sslpassword` is a real Postgres parameter; allow-listing safe keys would rot
+    // as drivers add new ones, so the whole query goes.
+    const masked = maskConnectionUrl(
+      "postgres://bunbooru:hunter2@localhost:5432/bunbooru?sslmode=require&sslpassword=s3cret",
+    );
+    expect(masked).not.toContain("s3cret");
+    expect(masked).not.toContain("hunter2");
+    expect(masked).toContain("postgres://bunbooru:***@localhost:5432/bunbooru");
   });
 });
