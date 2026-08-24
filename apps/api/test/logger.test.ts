@@ -129,4 +129,22 @@ describe("formatPretty", () => {
     expect(line).toContain("safe=kept");
     expect(line).toContain("boom=[unserializable]");
   });
+
+  it("survives an object whose key enumeration itself throws", () => {
+    // Object.keys throws on a Proxy with a rejecting ownKeys trap. No call site in
+    // this codebase passes one; the guard exists because logging must never be the
+    // thing that fails.
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys(): never {
+          throw new Error("ownKeys boom");
+        },
+      },
+    );
+    expect(() => formatPretty("error", "still_logged", hostile, AT, false)).not.toThrow();
+    const line = formatPretty("error", "still_logged", hostile, AT, false);
+    expect(line).toContain("still_logged");
+    expect(line).toContain("fields=[unserializable]");
+  });
 });

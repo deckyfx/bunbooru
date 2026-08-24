@@ -86,17 +86,26 @@ export function formatPretty(
   // front, and one that throws would take the whole log line (and the request)
   // with it. Guarding per field also keeps the OTHER fields readable, which is
   // the point of a diagnostic line.
-  const rendered = Object.keys(fields)
-    .map((key) => {
-      let value: string;
-      try {
-        value = renderValue(fields[key]);
-      } catch {
-        value = "[unserializable]";
-      }
-      return `${paint(key, ANSI.dim)}=${value}`;
-    })
-    .join(" ");
+  // The enumeration itself is guarded too: `Object.keys` throws on an exotic
+  // object (a Proxy with a rejecting `ownKeys` trap). Unreachable from this
+  // codebase's own call sites, but the whole point of the surrounding guards is
+  // that logging never becomes the thing that fails.
+  let rendered: string;
+  try {
+    rendered = Object.keys(fields)
+      .map((key) => {
+        let value: string;
+        try {
+          value = renderValue(fields[key]);
+        } catch {
+          value = "[unserializable]";
+        }
+        return `${paint(key, ANSI.dim)}=${value}`;
+      })
+      .join(" ");
+  } catch {
+    rendered = `${paint("fields", ANSI.dim)}=[unserializable]`;
+  }
 
   const head = `${paint(shortTime(at), ANSI.grey)} ${paint(label, levelColour)}`;
   // Pad only when fields follow — a bare message shouldn't carry trailing spaces.
