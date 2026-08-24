@@ -13,6 +13,7 @@ import { LoginPage } from "./routes/login";
 import { PostDetailPage } from "./routes/post-detail";
 import { PostsPage } from "./routes/posts";
 import { ResetPasswordPage } from "./routes/reset-password";
+import { SetupPage } from "./routes/setup";
 import { SignupPage } from "./routes/signup";
 import { UploadPage } from "./routes/upload";
 import { VerifyEmailPage } from "./routes/verify-email";
@@ -90,6 +91,17 @@ const accountRoute = createRoute({
   component: AccountPage,
 });
 
+/**
+ * First-run setup. The root layout redirects every other route here while the
+ * instance has no accounts, and redirects away from here once one exists — so
+ * this route is only ever reachable in exactly one state.
+ */
+const setupRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/setup",
+  component: SetupPage,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   postsRoute,
@@ -102,6 +114,7 @@ const routeTree = rootRoute.addChildren([
   verifyEmailRoute,
   adminRoute,
   accountRoute,
+  setupRoute,
 ]);
 
 export const router = createRouter({ routeTree });

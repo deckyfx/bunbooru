@@ -213,6 +213,24 @@ class EnvConfig {
   }
 
   /**
+   * Console log rendering: `json` (one machine-readable object per line, for log
+   * aggregation) or `pretty` (aligned, colourised, human-readable).
+   *
+   * Defaults to `pretty` in development and `json` everywhere else — a shipped
+   * server's stdout is parsed by tooling, a developer's terminal is read by a
+   * person. Set explicitly to override either way (e.g. `LOG_FORMAT=json` locally
+   * to reproduce what production emits).
+   */
+  get LOG_FORMAT(): "json" | "pretty" {
+    const raw = Bun.env.LOG_FORMAT?.trim();
+    if (!raw) return this.isDevelopment ? "pretty" : "json";
+    if (raw !== "json" && raw !== "pretty") {
+      throw new Error(`LOG_FORMAT must be "json" or "pretty", got "${raw}"`);
+    }
+    return raw;
+  }
+
+  /**
    * Absolute public base URL the site is reached at (e.g. `https://booru.example`),
    * used to build the links in reset/verify emails. Returns null when unset.
    *

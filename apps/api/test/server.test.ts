@@ -146,6 +146,9 @@ function stubCore(
       // would yield a different string and fail to authenticate).
       currentUser: async (token) => (token === SESSION_TOKEN ? sampleUser : null),
       logout: async () => undefined,
+      // Non-zero by default: the stubbed instance is already "set up", so setup
+      // routes 404 unless a test overrides this.
+      countUsers: async () => 1,
       gcExpiredSessions: async () => 0,
       createApiKey: async () => ({ key: "bnb_secret", record: sampleApiKey }),
       listApiKeys: async () => [sampleApiKey],
@@ -1326,5 +1329,77 @@ describe("auth: password reset + email verification", () => {
       }),
     ).handle(jsonPost("/api/v1/auth/verify-email/confirm", { token: "bad" }));
     expect(bad.status).toBe(401);
+  });
+});
+
+describe("first-run setup", () => {
+  /** An app whose account count is `n` (0 = never set up). */
+  function appWithUsers(n: number, storage?: Parameters<typeof createApp>[0]["storage"]) {
+    return createApp({ core: stubCore({}, {}, {}, {}, { countUsers: async () => n }), storage });
+  }
+
+  function get(app: ReturnType<typeof createApp>, path: string) {
+    return app.handle(new Request(`http://localhost${path}`));
+  }
+
+  it("status reports needsSetup only while there are no accounts", async () => {
+    const fresh = await get(appWithUsers(0), "/api/v1/setup/status");
+    expect(fresh.status).toBe(200);
+    expect(await fresh.json()).toEqual({ needsSetup: true });
+
+    const done = await get(appWithUsers(1), "/api/v1/setup/status");
+    expect(await done.json()).toEqual({ needsSetup: false });
+  });
+
+  it("checks are served only before setup — 404 once an account exists", async () => {
+    // The diagnostics name filesystem paths, env vars and installed plugins, so
+    // they must not stay reachable after the instance is set up.
+    const done = await get(appWithUsers(1), "/api/v1/setup/checks");
+    expect(done.status).toBe(404);
+  });
+
+  it("checks run the storage probe and report a failure as blocking", async () => {
+    const failing = {
+      store: async () => {
+        throw new Error("EACCES: permission denied");
+      },
+      delete: async () => {},
+      exists: async () => false,
+      statModifiedAt: async () => null,
+      list: async function* () {},
+    } as unknown as Parameters<typeof createApp>[0]["storage"];
+
+    const res = await get(appWithUsers(0, failing), "/api/v1/setup/checks");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      canProceed: boolean;
+      checks: { id: string; status: string; remedy: string | null }[];
+    };
+    const storageCheck = body.checks.find((c) => c.id === "storage");
+    expect(storageCheck?.status).toBe("fail");
+    expect(storageCheck?.remedy).toContain("STORAGE_ROOT");
+    // A hard failure blocks setup; warnings alone would not.
+    expect(body.canProceed).toBe(false);
+  });
+
+  it("checks pass with a working store, and warnings alone still allow proceeding", async () => {
+    const written = new Map<string, boolean>();
+    const working = {
+      store: async (key: string) => void written.set(key, true),
+      delete: async (key: string) => void written.delete(key),
+      exists: async (key: string) => written.has(key),
+      statModifiedAt: async () => null,
+      list: async function* () {},
+    } as unknown as Parameters<typeof createApp>[0]["storage"];
+
+    const res = await get(appWithUsers(0, working), "/api/v1/setup/checks");
+    const body = (await res.json()) as {
+      canProceed: boolean;
+      checks: { id: string; status: string }[];
+    };
+    expect(body.checks.find((c) => c.id === "storage")?.status).toBe("pass");
+    expect(body.canProceed).toBe(true);
+    // The probe cleans up after itself — no leftover objects in the store.
+    expect(written.size).toBe(0);
   });
 });

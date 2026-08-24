@@ -1,0 +1,4 @@
+[test]
+# Runs before every test file. Guards TEST_DATABASE_URL so the destructive
+# integration suites can never truncate a real database — see test-setup.ts.
+preload = ["./test-setup.ts"]

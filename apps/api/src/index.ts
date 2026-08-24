@@ -111,7 +111,7 @@ const pluginHost = createPluginHost({
 // provider) — so the mail flows reflect the persisted active set from boot.
 await pluginHost.init();
 
-const app = createApp({ core, host: pluginHost });
+const app = createApp({ core, host: pluginHost, storage });
 
 // Mount each plugin's routes under its `/api/v1/plugins/<id>` prefix. Done here
 // (not inside `createApp`) so the exported `App` type stays Core-only — plugin
