@@ -253,6 +253,30 @@ async function cmdFindings(repo: string, pr: string): Promise<void> {
   if (n === 0) console.log("  (no inline findings)");
 }
 
+/** What a `coderabbit review` invocation actually did. */
+export type ReviewOutcome = "reviewed" | "rate-limited" | "rejected-args" | "failed";
+
+/**
+ * Classify a finished review from its output and exit code.
+ *
+ * Exported and pure so the matching is testable against real captured output.
+ * Every pattern is anchored to a WHOLE LINE: the CLI echoes finding text into the
+ * same stream, so a loose `/rate limit/` search matches a review that merely
+ * *discusses* rate limiting and would report "no review ran" for a run that
+ * completed normally. (That nearly happened — the phrase appears in this file's
+ * own review output, and only line wrapping kept it from matching.)
+ *
+ * @param text - Combined stdout + stderr from the CLI.
+ * @param exitCode - The CLI's exit status. Findings do NOT make it non-zero.
+ */
+export function classifyReviewOutcome(text: string, exitCode: number): ReviewOutcome {
+  if (/^\s*(?:✗\s*)?Review limit reached\s*$/m.test(text)) return "rate-limited";
+  if (/^\s*Error: Rate limit exceeded\s*$/m.test(text)) return "rate-limited";
+  if (/^\s*error: unknown option\b/m.test(text)) return "rejected-args";
+  if (/^Usage: coderabbit review\b/m.test(text)) return "rejected-args";
+  return exitCode === 0 ? "reviewed" : "failed";
+}
+
 /**
  * `review [--base <branch>] [--base-commit <sha>]` — run the local CodeRabbit CLI
  * review of committed changes, capturing full output to `.cr/review.txt` (the CLI
@@ -287,24 +311,22 @@ async function cmdReview(base: string, baseCommit?: string): Promise<void> {
   // The failure mode this wrapper exists to prevent: the CLI rejected a flag,
   // printed usage, and exited 0. Without this the caller sees "success" and an
   // empty review.
-  // Rate limiting is a distinct outcome, not a failure to fix: the documented
-  // workflow is "review if you can, otherwise push", so it gets its own exit code
-  // a script can branch on rather than being lumped in with real errors.
-  if (/rate limit|review limit reached/i.test(text)) {
+  // Classify from whole-line markers, not a loose keyword scan — see
+  // classifyReviewOutcome. Rate limiting gets its own status because the
+  // documented workflow branches on it ("review if you can, otherwise push").
+  const outcome = classifyReviewOutcome(text, result.exitCode);
+  if (outcome === "rate-limited") {
     console.error(`\ncoderabbit is rate limited — no review ran.\n\nfull output: ${out}`);
     process.exit(2);
   }
-
-  if (/unknown option|^Usage: coderabbit review/im.test(text)) {
+  if (outcome === "rejected-args") {
     console.error(
       `\ncoderabbit rejected the arguments — no review ran. Its flags have changed before;\n` +
         `check \`coderabbit review --help\` against the invocation above.\n\nfull output: ${out}`,
     );
     process.exit(1);
   }
-
-  // Anything else non-zero: the review did not complete (auth, network, ...).
-  if (result.exitCode !== 0) {
+  if (outcome === "failed") {
     console.error(`\ncoderabbit exited ${result.exitCode} — no review ran.\n\nfull output: ${out}`);
     process.exit(1);
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { parseReviewArgs } from "./cr";
+import { classifyReviewOutcome, parseReviewArgs } from "./cr";
 
 /**
  * Argument handling for `cr review`.
@@ -73,5 +73,57 @@ describe("parseReviewArgs", () => {
     expect(() => parseReviewArgs(["--base", "a", "--base-commit"])).toThrow(
       /--base-commit requires a value/,
     );
+  });
+});
+
+/**
+ * Outcome classification. The trap is that the CLI echoes finding text into the
+ * same stream it reports its own status on, so any loose keyword search can be
+ * tripped by a review that merely DISCUSSES rate limiting.
+ */
+describe("classifyReviewOutcome", () => {
+  /** Real output from an exhausted quota. */
+  const RATE_LIMITED = [
+    "Connecting to CodeRabbit... 1s elapsed",
+    "",
+    "  ✗ Review limit reached",
+    "",
+    "  Limit details: You've used all 3 included reviews currently available.",
+    "  You can wait 21 minutes for the limit to reset.",
+    "Error: Rate limit exceeded",
+  ].join("\n");
+
+  it("detects a genuine rate limit", () => {
+    expect(classifyReviewOutcome(RATE_LIMITED, 1)).toBe("rate-limited");
+  });
+
+  it("does NOT mistake a finding that discusses rate limiting for one", () => {
+    // This exact situation arose: a review of this very file quoted the phrase,
+    // and only the CLI's line wrapping stopped a loose regex from matching.
+    const reviewMentioningIt = [
+      "  minor [Functional Correctness]",
+      "  → bin/cr.ts:293-296",
+      "  Use an unambiguous rate-limit response.",
+      "  A successful review can contain rate limit in a finding or quoted line.",
+      "Review complete",
+      "1 finding ✔",
+    ].join("\n");
+    expect(classifyReviewOutcome(reviewMentioningIt, 0)).toBe("reviewed");
+  });
+
+  it("detects rejected arguments", () => {
+    expect(classifyReviewOutcome("error: unknown option '--plain'\n", 0)).toBe("rejected-args");
+    expect(classifyReviewOutcome("Usage: coderabbit review [options]\n", 0)).toBe("rejected-args");
+  });
+
+  it("treats findings as a completed review, not a failure", () => {
+    // Verified against a real run: 5 findings, exit 0.
+    expect(classifyReviewOutcome("Review complete\n5 findings ✔\nMajor    3\n", 0)).toBe(
+      "reviewed",
+    );
+  });
+
+  it("reports any other non-zero exit as a failure", () => {
+    expect(classifyReviewOutcome("Connecting to CodeRabbit...\n", 1)).toBe("failed");
   });
 });
