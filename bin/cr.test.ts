@@ -126,4 +126,27 @@ describe("classifyReviewOutcome", () => {
   it("reports any other non-zero exit as a failure", () => {
     expect(classifyReviewOutcome("Connecting to CodeRabbit...\n", 1)).toBe("failed");
   });
+
+  it("trusts the completion banner over echoed marker text", () => {
+    // A review whose FINDINGS quote the CLI's own error strings must still be
+    // classified as completed — otherwise reviewing this very file reports that
+    // no review ran. The positive marker is checked first for exactly this reason.
+    const quotesEverything = [
+      "  major [Functional Correctness]",
+      "  → bin/cr.ts:275",
+      "  The guard matches error: unknown option anywhere in the stream.",
+      "Error: Rate limit exceeded",
+      "  ✗ Review limit reached",
+      "Review complete",
+      "2 findings ✔",
+    ].join("\n");
+    expect(classifyReviewOutcome(quotesEverything, 0)).toBe("reviewed");
+  });
+
+  it("does not let a leading blank line span into a later line", () => {
+    // `^\s*` would match here because \s consumes newlines; `[ \t]*` does not.
+    expect(classifyReviewOutcome("\n\nsomething else Review limit reached now\n", 1)).toBe(
+      "failed",
+    );
+  });
 });

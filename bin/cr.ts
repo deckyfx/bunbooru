@@ -270,10 +270,23 @@ export type ReviewOutcome = "reviewed" | "rate-limited" | "rejected-args" | "fai
  * @param exitCode - The CLI's exit status. Findings do NOT make it non-zero.
  */
 export function classifyReviewOutcome(text: string, exitCode: number): ReviewOutcome {
-  if (/^\s*(?:✗\s*)?Review limit reached\s*$/m.test(text)) return "rate-limited";
-  if (/^\s*Error: Rate limit exceeded\s*$/m.test(text)) return "rate-limited";
-  if (/^\s*error: unknown option\b/m.test(text)) return "rejected-args";
-  if (/^Usage: coderabbit review\b/m.test(text)) return "rejected-args";
+  // The POSITIVE marker is checked first, and that ordering is the whole design.
+  // The CLI echoes finding text into the same stream it reports status on, so any
+  // negative marker can be forged by a review that merely quotes it — this file's
+  // own tests contain both "Rate limit exceeded" and "error: unknown option". A
+  // completed review always prints this banner and a rate-limited one never does,
+  // so trusting it first makes echoed text harmless by construction.
+  if (/^[ \t]*Review complete[ \t]*$/m.test(text)) return "reviewed";
+
+  // `[ \t]` rather than `\s`: `\s` matches newlines, so `^\s*` could start at one
+  // line and match content on a later one — defeating the whole-line intent.
+  if (/^[ \t]*(?:✗[ \t]*)?Review limit reached[ \t]*$/m.test(text)) return "rate-limited";
+  if (/^[ \t]*Error: Rate limit exceeded[ \t]*$/m.test(text)) return "rate-limited";
+  // Trailing text is expected here (the CLI names the offending option), so these
+  // cannot be anchored at the end.
+  if (/^[ \t]*error: unknown option\b/m.test(text)) return "rejected-args";
+  if (/^[ \t]*Usage: coderabbit review\b/m.test(text)) return "rejected-args";
+
   return exitCode === 0 ? "reviewed" : "failed";
 }
 
