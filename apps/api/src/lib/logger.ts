@@ -71,7 +71,7 @@ function renderValue(value: unknown): string {
 }
 
 /** Human-readable single line: `12:30:04.512 INFO  plugin_loaded  id=example`. */
-function formatPretty(
+export function formatPretty(
   level: LogLevel,
   message: string,
   fields: LogFields,
@@ -81,9 +81,21 @@ function formatPretty(
   const { label, colour: levelColour } = LEVEL_STYLE[level];
   const paint = (text: string, code: string) => (colour ? `${code}${text}${ANSI.reset}` : text);
 
-  const entries = Object.entries(fields);
-  const rendered = entries
-    .map(([key, value]) => `${paint(key, ANSI.dim)}=${renderValue(value)}`)
+  // `Object.keys` does not invoke getters; reading each value does — so the read
+  // is guarded per field. `Object.entries` would have invoked every getter up
+  // front, and one that throws would take the whole log line (and the request)
+  // with it. Guarding per field also keeps the OTHER fields readable, which is
+  // the point of a diagnostic line.
+  const rendered = Object.keys(fields)
+    .map((key) => {
+      let value: string;
+      try {
+        value = renderValue(fields[key]);
+      } catch {
+        value = "[unserializable]";
+      }
+      return `${paint(key, ANSI.dim)}=${value}`;
+    })
     .join(" ");
 
   const head = `${paint(shortTime(at), ANSI.grey)} ${paint(label, levelColour)}`;
