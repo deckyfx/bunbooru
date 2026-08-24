@@ -28,8 +28,7 @@ const isProduction = envConfig.NODE_ENV === "production";
 // SERVER_PORT produced reset links to :3000/reset-password, which the API has no
 // route for and answers with a JSON 404.
 const publicBaseUrl =
-  envConfig.PUBLIC_BASE_URL ??
-  (isProduction ? null : `http://localhost:${Number(Bun.env.WEB_PORT ?? "3001") || 3001}`);
+  envConfig.PUBLIC_BASE_URL ?? (isProduction ? null : `http://localhost:${envConfig.WEB_PORT}`);
 
 const { core, db, storage } = createCoreRuntime({
   databaseUrl: envConfig.DATABASE_URL,
@@ -214,5 +213,18 @@ const shutdown = async (): Promise<void> => {
 process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 
-export type { ApiKeyDto, App, AssetDto, TagDto, UploadLimitsDto, UserDto } from "./server";
+export type {
+  ApiKeyDto,
+  App,
+  AssetDto,
+  SetupCheck as SetupCheckDto,
+  TagDto,
+  UploadLimitsDto,
+  UserDto,
+} from "./server";
+export type {
+  RuntimeSection as RuntimeSectionDto,
+  RuntimeSetting as RuntimeSettingDto,
+  SettingSource,
+} from "./lib/runtime-config";
 export type { ExtensionInfo as ExtensionDto } from "./plugins/host";

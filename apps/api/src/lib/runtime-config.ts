@@ -1,3 +1,5 @@
+import { DB_POOL_MAX_ENV, resolvePoolMax } from "@bunbooru/db";
+
 import { envConfig } from "../env-config";
 
 /**
@@ -45,11 +47,18 @@ function sourceOf(key: string): SettingSource {
 export function maskConnectionUrl(raw: string): string {
   try {
     const url = new URL(raw);
-    if (!url.password) return raw;
-    url.password = "***";
+    // Query parameters can carry credentials of their own (`sslpassword`,
+    // `password`, provider-specific tokens). Rather than allow-listing the safe
+    // ones — a list that silently rots as drivers add parameters — drop the query
+    // entirely and say so. Scheme, user, host, port and database are what
+    // diagnosing a wrong value actually needs.
+    const hadQuery = url.search !== "";
+    url.search = "";
+    if (url.password) url.password = "***";
     // URL serialization percent-encodes the mask; put it back verbatim so the
     // display reads as an obvious placeholder rather than "%2A%2A%2A".
-    return url.toString().replace("%2A%2A%2A", "***");
+    const masked = url.toString().replace("%2A%2A%2A", "***");
+    return hadQuery ? `${masked}?…` : masked;
   } catch {
     return "***";
   }
@@ -120,6 +129,8 @@ export function describeRuntimeConfig(input: RuntimeConfigInput): RuntimeSection
 
   const envUploadCap = envConfig.MAX_UPLOAD_BYTES;
   const envResumableCap = envConfig.MAX_RESUMABLE_UPLOAD_BYTES;
+  // Same resolver the db client uses, so the panel can't disagree with reality.
+  const resolvedPoolMax = resolvePoolMax(undefined, Bun.env[DB_POOL_MAX_ENV]);
 
   return [
     {
@@ -166,8 +177,11 @@ export function describeRuntimeConfig(input: RuntimeConfigInput): RuntimeSection
         },
         {
           key: "DB_POOL_MAX",
-          value: Bun.env.DB_POOL_MAX?.trim() || "10",
-          source: sourceOf("DB_POOL_MAX"),
+          // Report what the client will ACTUALLY use, via the same resolver it
+          // calls. Echoing the raw variable would show "abc" (or "0") as the pool
+          // size while the driver quietly fell back to its own default.
+          value: resolvedPoolMax === undefined ? "10 (driver default)" : String(resolvedPoolMax),
+          source: resolvedPoolMax === undefined ? "default" : sourceOf("DB_POOL_MAX"),
           secret: false,
           note: "Maximum pooled Postgres connections per handle.",
         },

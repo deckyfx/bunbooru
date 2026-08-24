@@ -24,7 +24,10 @@ import { unsafeTestDatabaseReason } from "./test-guard";
  * ceiling once a dev server is also holding some (`53300: too many clients`).
  * Set explicitly in the environment to override.
  */
-Bun.env.DB_POOL_MAX ??= "3";
+// `??=` alone would leave a blank value in place, and `resolvePoolMax` treats
+// blank as unset — so an empty DB_POOL_MAX would silently restore Bun's default
+// of 10 per handle, the exact exhaustion this line exists to prevent.
+if (!Bun.env.DB_POOL_MAX?.trim()) Bun.env.DB_POOL_MAX = "3";
 
 const reason = unsafeTestDatabaseReason(Bun.env.TEST_DATABASE_URL, Bun.env.DATABASE_URL);
 if (reason !== null) throw new Error(reason);

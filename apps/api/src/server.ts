@@ -78,6 +78,13 @@ export interface SetupCheck {
 }
 
 /** Per-IP throttles on the credential endpoints (in-memory, single-instance). */
+/**
+ * Throttle for the pre-setup diagnostics. Unauthenticated by necessity (there are
+ * no accounts yet) and it performs real work per call — a storage write/stat/delete
+ * — so an open loop against it is both an I/O amplifier and a way to fish for the
+ * env detail it reports.
+ */
+const SETUP_CHECKS_RATE = { windowMs: 5 * 60 * 1000, max: 20 } as const;
 const LOGIN_RATE = { windowMs: 15 * 60 * 1000, max: 10 } as const;
 const REGISTER_RATE = { windowMs: 60 * 60 * 1000, max: 5 } as const;
 /** Forgot-password throttles: per-IP (flood) AND per-address (targeted spam). */
@@ -279,6 +286,7 @@ export function createApp({
 }: AppDependencies) {
   // Per-app limiter instances (fresh per createApp, so tests don't share state;
   // one instance in production since the composition root builds the app once).
+  const setupChecksLimiter = createRateLimiter(SETUP_CHECKS_RATE);
   const loginLimiter = createRateLimiter(LOGIN_RATE);
   const registerLimiter = createRateLimiter(REGISTER_RATE);
   const forgotPasswordIpLimiter = createRateLimiter(FORGOT_PASSWORD_IP_RATE);
@@ -404,9 +412,14 @@ export function createApp({
         // Creating the first admin goes through the normal POST /auth/register —
         // `createBootstrapping` already assigns `admin` to the first account under
         // an advisory lock, so there is no second privileged account-creation path.
-        .get("/setup/checks", async () => {
+        .get("/setup/checks", async ({ request, server }) => {
           if ((await core.authService.countUsers()) > 0) {
             throw new HttpError(404, "Setup has already been completed");
+          }
+          // Throttled before any probing: the storage check writes and deletes a
+          // real object, so this must not be a free I/O amplifier.
+          if (!setupChecksLimiter.hit(clientIp(request, server, envConfig.TRUST_PROXY))) {
+            throw new HttpError(429, "Too many setup checks. Please try again shortly.");
           }
           const checks: SetupCheck[] = [];
 

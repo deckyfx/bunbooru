@@ -9,19 +9,19 @@
  */
 import { useQuery } from "@tanstack/react-query";
 
+import type { SetupCheckDto } from "@bunbooru/api";
+
 import { api, unwrap } from "./api";
 
 /** Query key for the setup gate, shared with the invalidation after setup. */
 export const SETUP_STATUS_KEY = ["setup-status"] as const;
 
-/** One first-run diagnostic, as returned by `GET /setup/checks`. */
-export interface SetupCheck {
-  id: string;
-  label: string;
-  status: "pass" | "warn" | "fail" | "skipped";
-  detail: string;
-  remedy: string | null;
-}
+/**
+ * One first-run diagnostic. Re-exported from the API rather than restated here:
+ * a duplicated shape drifts silently, and a new `status` value added server-side
+ * must become a compile error in the UI that switches on it, not a blank cell.
+ */
+export type SetupCheck = SetupCheckDto;
 
 /**
  * Whether this instance still needs first-run setup.

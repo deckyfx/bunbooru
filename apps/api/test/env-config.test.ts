@@ -10,6 +10,7 @@ const saved = {
   MAX_UPLOAD_BYTES: Bun.env.MAX_UPLOAD_BYTES,
   MAX_RESUMABLE_UPLOAD_BYTES: Bun.env.MAX_RESUMABLE_UPLOAD_BYTES,
   UPLOAD_GC_INTERVAL_MS: Bun.env.UPLOAD_GC_INTERVAL_MS,
+  WEB_PORT: Bun.env.WEB_PORT,
 };
 
 afterEach(() => {
@@ -167,5 +168,33 @@ describe("UPLOAD_GC_INTERVAL_MS", () => {
   it("throws above the timer ceiling", () => {
     Bun.env.UPLOAD_GC_INTERVAL_MS = String(MAX_TIMER_DELAY_MS + 1);
     expect(() => envConfig.UPLOAD_GC_INTERVAL_MS).toThrow();
+  });
+});
+
+describe("WEB_PORT", () => {
+  // Read only to build the development fallback for PUBLIC_BASE_URL — the origin
+  // of every link in outgoing mail — so a bad value yields a link that cannot
+  // resolve. Validated rather than coerced for exactly that reason.
+  it("defaults to 3001 when unset or blank", () => {
+    delete Bun.env.WEB_PORT;
+    expect(envConfig.WEB_PORT).toBe(3001);
+    Bun.env.WEB_PORT = "";
+    expect(envConfig.WEB_PORT).toBe(3001);
+    Bun.env.WEB_PORT = "   ";
+    expect(envConfig.WEB_PORT).toBe(3001);
+  });
+
+  it("parses a valid port", () => {
+    Bun.env.WEB_PORT = "5173";
+    expect(envConfig.WEB_PORT).toBe(5173);
+  });
+
+  it("throws rather than coercing an unusable value", () => {
+    // `Number(raw) || 3001` let "-1" and "70000" through into an unreachable link,
+    // and silently accepted "3001.5".
+    for (const bad of ["0", "-1", "70000", "3001.5", "abc", "Infinity"]) {
+      Bun.env.WEB_PORT = bad;
+      expect(() => envConfig.WEB_PORT).toThrow(/WEB_PORT/);
+    }
   });
 });

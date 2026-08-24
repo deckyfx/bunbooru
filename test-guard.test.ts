@@ -82,6 +82,17 @@ describe("unsafeTestDatabaseReason", () => {
     expect(reason).toContain('does not end in "_test"');
   });
 
+  it("rejects a URL with NO database at all", () => {
+    // The driver would connect to a server default — commonly the role's own
+    // database — which is exactly the un-vetted target this rule exists to stop.
+    for (const testUrl of [
+      "postgres://user:password@localhost",
+      "postgres://user:password@localhost:5432/",
+    ]) {
+      expect(unsafeTestDatabaseReason(testUrl, undefined)).toContain('does not end in "_test"');
+    }
+  });
+
   it("allows a remote host that merely shares the dev database's name", () => {
     // Same database NAME on a different server is a different database.
     expect(

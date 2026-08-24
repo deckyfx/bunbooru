@@ -1425,10 +1425,29 @@ describe("admin runtime configuration", () => {
     expect(maskConnectionUrl("not a url but hunter2 is in it")).not.toContain("hunter2");
   });
 
-  it("is admin-only", async () => {
+  it("is admin-only — 401 anonymous, 403 for a signed-in non-admin", async () => {
     const anon = await createApp({ core: stubCore() }).handle(
       new Request("http://localhost/api/v1/admin/runtime"),
     );
     expect(anon.status).toBe(401);
+
+    // sampleUser is a `member`. This endpoint returns the masked DATABASE_URL and
+    // the effective environment, so the authenticated-but-unprivileged path is the
+    // one that actually matters.
+    const member = await createApp({ core: stubCore() }).handle(
+      new Request("http://localhost/api/v1/admin/runtime", { headers: AUTH_HEADER }),
+    );
+    expect(member.status).toBe(403);
+  });
+
+  it("drops query parameters, which can carry credentials of their own", async () => {
+    // `sslpassword` is a real Postgres parameter; allow-listing safe keys would rot
+    // as drivers add new ones, so the whole query goes.
+    const masked = maskConnectionUrl(
+      "postgres://bunbooru:hunter2@localhost:5432/bunbooru?sslmode=require&sslpassword=s3cret",
+    );
+    expect(masked).not.toContain("s3cret");
+    expect(masked).not.toContain("hunter2");
+    expect(masked).toContain("postgres://bunbooru:***@localhost:5432/bunbooru");
   });
 });

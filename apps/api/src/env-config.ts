@@ -48,6 +48,26 @@ class EnvConfig {
   }
 
   /**
+   * Port the WEB dev server listens on (default 3001). This API never binds it —
+   * it is read only to build the development fallback for {@link PUBLIC_BASE_URL},
+   * since mailed links must land on the web app, not here.
+   *
+   * Validated like {@link SERVER_PORT} rather than coerced: `Number(raw) || 3001`
+   * would pass a negative or out-of-range value straight through into a link that
+   * cannot resolve, and only fractionally-wrong ports would be caught.
+   */
+  get WEB_PORT(): number {
+    const raw = Bun.env.WEB_PORT;
+    if (raw === undefined || raw.trim() === "") return 3001;
+
+    const port = Number(raw);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`WEB_PORT must be an integer between 1 and 65535, got "${raw}"`);
+    }
+    return port;
+  }
+
+  /**
    * Postgres connection string. Required: the API cannot serve data without it,
    * so a missing value fails fast at startup rather than on the first query.
    */

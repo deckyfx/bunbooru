@@ -94,7 +94,10 @@ function formatPretty(
 
 /** One machine-readable object per line, for log aggregation. */
 function formatJson(level: LogLevel, message: string, fields: LogFields, at: Date): string {
-  return JSON.stringify({ level, time: at.toISOString(), message, ...fields });
+  // Fields spread FIRST so the reserved keys always win. A caller passing
+  // `{ level: "info" }` on an error — or a `message` field echoing user input —
+  // must not be able to rewrite the line's own metadata and mislead a log search.
+  return JSON.stringify({ ...fields, level, time: at.toISOString(), message });
 }
 
 /**

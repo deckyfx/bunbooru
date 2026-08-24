@@ -72,10 +72,13 @@ export function unsafeTestDatabaseReason(
 
   // 2. Belt and braces: the name must look like a test database, so an unset
   //    DATABASE_URL (a bare shell, CI) can't slip past rule 1.
+  // A URL with NO database (`postgres://user:pw@localhost`) must be rejected too:
+  // the driver then connects to a server default — commonly the role's own
+  // database — which is precisely the un-vetted target this rule exists to stop.
   const name = databaseName(test);
-  if (name !== null && !name.endsWith("_test")) {
+  if (name === null || !name.endsWith("_test")) {
     return (
-      `TEST_DATABASE_URL database "${name}" does not end in "_test".\n` +
+      `TEST_DATABASE_URL database "${name ?? "(none in the URL)"}" does not end in "_test".\n` +
       "The integration tests TRUNCATE the tables they touch, so they only run against\n" +
       "a database whose name marks it as disposable. Rename it, or point at bunbooru_test."
     );

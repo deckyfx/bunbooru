@@ -7,26 +7,21 @@
  */
 import { useQuery } from "@tanstack/react-query";
 
+import type {
+  RuntimeSectionDto,
+  RuntimeSettingDto,
+  SettingSource as SettingSourceDto,
+} from "@bunbooru/api";
+
 import { api, unwrap } from "./api";
 
-/** Where a setting's effective value came from. */
-export type SettingSource = "env" | "default" | "database";
-
-/** One runtime setting row. */
-export interface RuntimeSetting {
-  key: string;
-  /** Effective value, already MASKED server-side when `secret`. Null when unset. */
-  value: string | null;
-  source: SettingSource;
-  secret: boolean;
-  note?: string;
-}
-
-/** A titled group of settings. */
-export interface RuntimeSection {
-  title: string;
-  settings: RuntimeSetting[];
-}
+/**
+ * Wire shapes for the runtime panel, re-exported from the API rather than
+ * restated here — see the note in `setup.ts`. Values arrive already masked.
+ */
+export type SettingSource = SettingSourceDto;
+export type RuntimeSetting = RuntimeSettingDto;
+export type RuntimeSection = RuntimeSectionDto;
 
 /**
  * The server's runtime configuration. Environment only changes on restart, so
