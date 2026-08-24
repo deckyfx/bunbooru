@@ -300,45 +300,85 @@ async function cmdReview(base: string, baseCommit?: string): Promise<void> {
   console.log(`\nfull output: ${out}`);
 }
 
-const [cmd, arg] = Bun.argv.slice(2);
+/** What `review` was asked to diff against. */
+export interface ReviewArgs {
+  /** Base branch (default `main`); ignored when {@link baseCommit} is set. */
+  base: string;
+  /** Base COMMIT on the current branch, for an incremental review. */
+  baseCommit?: string;
+}
 
-switch (cmd) {
-  case "review": {
-    // Fully local — deliberately does NOT resolve the repo slug, so it works
-    // without GitHub auth or a detectable remote.
-    const baseIdx = Bun.argv.indexOf("--base");
-    const commitIdx = Bun.argv.indexOf("--base-commit");
-    await cmdReview(
-      baseIdx !== -1 ? (Bun.argv[baseIdx + 1] ?? "main") : "main",
-      commitIdx !== -1 ? Bun.argv[commitIdx + 1] : undefined,
-    );
-    break;
+/**
+ * Parse the `review` sub-command's arguments.
+ *
+ * Exported (and pure) so the flag handling is testable without shelling out. A
+ * flag given WITHOUT its value throws rather than defaulting: silently falling
+ * back to a full `--base main` review is the same class of quiet-wrong behaviour
+ * this wrapper exists to prevent — you would get a review, just not the one you
+ * asked for, and only notice by reading the diff header.
+ *
+ * @param argv - Argument list, e.g. `["--base-commit", "abc123"]`.
+ */
+export function parseReviewArgs(argv: readonly string[]): ReviewArgs {
+  const valueAfter = (flag: string): string | undefined => {
+    const at = argv.indexOf(flag);
+    if (at === -1) return undefined;
+    const value = argv[at + 1];
+    // A following token that is itself a flag means the value was omitted.
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`${flag} requires a value`);
+    }
+    return value;
+  };
+  return { base: valueAfter("--base") ?? "main", baseCommit: valueAfter("--base-commit") };
+}
+
+// Only dispatch when RUN as a script. Importing this module (the arg-parser
+// tests do) must not execute a command as a side effect.
+if (import.meta.main) {
+  const [cmd, arg] = Bun.argv.slice(2);
+
+  switch (cmd) {
+    case "review": {
+      // Fully local — deliberately does NOT resolve the repo slug, so it works
+      // without GitHub auth or a detectable remote.
+      // A usage error deserves one clear line, not a stack trace.
+      let args;
+      try {
+        args = parseReviewArgs(Bun.argv.slice(3));
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      }
+      await cmdReview(args.base, args.baseCommit);
+      break;
+    }
+    case "status": {
+      if (!arg) throw new Error("usage: cr status <pr>");
+      await cmdStatus(await repoSlug(), arg);
+      break;
+    }
+    case "slot": {
+      if (!arg) throw new Error("usage: cr slot <pr>");
+      await cmdSlot(await repoSlug(), arg);
+      break;
+    }
+    case "trigger": {
+      if (!arg) throw new Error("usage: cr trigger <pr>");
+      await cmdTrigger(await repoSlug(), arg);
+      break;
+    }
+    case "findings": {
+      if (!arg) throw new Error("usage: cr findings <pr>");
+      await cmdFindings(await repoSlug(), arg);
+      break;
+    }
+    default:
+      console.log(
+        "usage: bun bin/cr.ts <review|status|slot|trigger|findings> [args]\n" +
+          "  review [--base <branch>|--base-commit <sha>] | status <pr> | slot <pr> | trigger <pr> | findings <pr>",
+      );
+      // Non-zero so shell wrappers / CI treat an unknown command as a failure.
+      process.exitCode = 1;
   }
-  case "status": {
-    if (!arg) throw new Error("usage: cr status <pr>");
-    await cmdStatus(await repoSlug(), arg);
-    break;
-  }
-  case "slot": {
-    if (!arg) throw new Error("usage: cr slot <pr>");
-    await cmdSlot(await repoSlug(), arg);
-    break;
-  }
-  case "trigger": {
-    if (!arg) throw new Error("usage: cr trigger <pr>");
-    await cmdTrigger(await repoSlug(), arg);
-    break;
-  }
-  case "findings": {
-    if (!arg) throw new Error("usage: cr findings <pr>");
-    await cmdFindings(await repoSlug(), arg);
-    break;
-  }
-  default:
-    console.log(
-      "usage: bun bin/cr.ts <review|status|slot|trigger|findings> [args]\n" +
-        "  review [--base <branch>|--base-commit <sha>] | status <pr> | slot <pr> | trigger <pr> | findings <pr>",
-    );
-    // Non-zero so shell wrappers / CI treat an unknown command as a failure.
-    process.exitCode = 1;
 }
