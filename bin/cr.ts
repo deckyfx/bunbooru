@@ -6,6 +6,7 @@
  * hand-written `gh api … | jq … | python` each time:
  *
  *   bun bin/cr.ts review [--base <branch>]   Run the CodeRabbit CLI review → file, print findings
+ *   bun bin/cr.ts review --base-commit <sha> Review only the commits since <sha> (incremental rounds)
  *   bun bin/cr.ts status <pr>                Review state (in-progress / rate-limited+slot / N findings) + CI
  *   bun bin/cr.ts slot <pr>                  Just the next available review slot (UTC + WIB)
  *   bun bin/cr.ts trigger <pr>               Post "@coderabbitai review" on a PR
@@ -253,24 +254,45 @@ async function cmdFindings(repo: string, pr: string): Promise<void> {
 }
 
 /**
- * `review [--base <branch>]` — run the local CodeRabbit CLI review of committed
- * changes against `base`, capturing full output to `.cr/review.txt` (the CLI
+ * `review [--base <branch>] [--base-commit <sha>]` — run the local CodeRabbit CLI
+ * review of committed changes, capturing full output to `.cr/review.txt` (the CLI
  * dedupes per branch, so this run's findings are otherwise unrecoverable), and
  * print the findings summary lines.
  *
- * @param base - Base branch to diff against (default `main`).
+ * `--base-commit` scopes the review to the commits since `<sha>`, which is what
+ * you want when iterating on review rounds: a full `--base main` re-reviews the
+ * whole branch and buries the new work.
+ *
+ * @param base - Base branch to diff against (default `main`); ignored when
+ *   `baseCommit` is given.
+ * @param baseCommit - Base COMMIT on the current branch, for an incremental review.
  */
-async function cmdReview(base: string): Promise<void> {
+async function cmdReview(base: string, baseCommit?: string): Promise<void> {
   await $`mkdir -p .cr`;
   const out = ".cr/review.txt";
-  console.log(`running: coderabbit review --base ${base} --type committed (→ ${out})`);
+  // Flags as of CLI 0.7.x: `--committed` is a boolean, and plain text is the
+  // default. The older `--type committed --plain` spelling was REMOVED — and an
+  // unknown flag makes the CLI print its usage and exit 0, so a stale invocation
+  // looks like it succeeded while never reviewing anything. Hence the guard below.
+  const scope = baseCommit ? ["--base-commit", baseCommit] : ["--base", base];
+  console.log(`running: coderabbit review ${scope.join(" ")} --committed (→ ${out})`);
   // Capture both streams directly: Bun's $ doesn't parse `> file 2>&1` redirects,
   // and .nothrow() keeps a non-zero exit (findings present) from throwing.
-  const result = await $`coderabbit review --base ${base} --type committed --plain`
-    .nothrow()
-    .quiet();
+  const result = await $`coderabbit review ${scope} --committed`.nothrow().quiet();
   const text = `${result.stdout.toString()}${result.stderr.toString()}`;
   await Bun.write(out, text);
+
+  // The failure mode this wrapper exists to prevent: the CLI rejected a flag,
+  // printed usage, and exited 0. Without this the caller sees "success" and an
+  // empty review.
+  if (/unknown option|^Usage: coderabbit review/im.test(text)) {
+    console.error(
+      `\ncoderabbit rejected the arguments — no review ran. Its flags have changed before;\n` +
+        `check \`coderabbit review --help\` against the invocation above.\n\nfull output: ${out}`,
+    );
+    process.exit(1);
+  }
+
   const summary = text
     .split("\n")
     .filter((l) => /findings|Actionable|Major|Minor|Critical|No findings|^\s*→/i.test(l));
@@ -285,7 +307,11 @@ switch (cmd) {
     // Fully local — deliberately does NOT resolve the repo slug, so it works
     // without GitHub auth or a detectable remote.
     const baseIdx = Bun.argv.indexOf("--base");
-    await cmdReview(baseIdx !== -1 ? (Bun.argv[baseIdx + 1] ?? "main") : "main");
+    const commitIdx = Bun.argv.indexOf("--base-commit");
+    await cmdReview(
+      baseIdx !== -1 ? (Bun.argv[baseIdx + 1] ?? "main") : "main",
+      commitIdx !== -1 ? Bun.argv[commitIdx + 1] : undefined,
+    );
     break;
   }
   case "status": {
@@ -311,7 +337,7 @@ switch (cmd) {
   default:
     console.log(
       "usage: bun bin/cr.ts <review|status|slot|trigger|findings> [args]\n" +
-        "  review [--base <branch>] | status <pr> | slot <pr> | trigger <pr> | findings <pr>",
+        "  review [--base <branch>|--base-commit <sha>] | status <pr> | slot <pr> | trigger <pr> | findings <pr>",
     );
     // Non-zero so shell wrappers / CI treat an unknown command as a failure.
     process.exitCode = 1;

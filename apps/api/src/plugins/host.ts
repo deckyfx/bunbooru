@@ -20,6 +20,16 @@ export interface ExtensionInfo {
   adminPages: { id: string; title: string }[];
   /** Whether the plugin is currently mounted (its routes/pages are served). */
   active: boolean;
+  /**
+   * Why this plugin's in-memory capability state can no longer be trusted, or null.
+   *
+   * Set only when a persistence failure AND its compensating capability op both
+   * failed, leaving the installed capabilities out of step with the persisted
+   * active flag. Further transitions are refused until the process restarts —
+   * `init()` rebuilds the active set from the database and reinstalls from
+   * scratch, so a restart resolves it completely.
+   */
+  degraded: string | null;
 }
 
 /** Wire shape of `GET /api/v1/plugins` — active plugins only. */
@@ -35,6 +45,23 @@ export class UnknownPluginError extends Error {
   constructor(public readonly pluginId: string) {
     super(`Unknown plugin: ${pluginId}`);
     this.name = "UnknownPluginError";
+  }
+}
+
+/**
+ * A transition was refused because the plugin's capability state and its persisted
+ * flag are known to disagree — see {@link ExtensionInfo.degraded}.
+ *
+ * Distinct from a transient failure: retrying cannot help, because the host would
+ * be operating on a state it already knows is wrong. Only a restart clears it.
+ */
+export class PluginDegradedError extends Error {
+  constructor(
+    public readonly pluginId: string,
+    reason: string,
+  ) {
+    super(`Plugin "${pluginId}" is in a degraded state: ${reason}`);
+    this.name = "PluginDegradedError";
   }
 }
 
@@ -136,6 +163,15 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
   const byId = new Map<string, LoadedPlugin>(loaded.map((p) => [p.id, p]));
   /** In-memory mirror of the persisted active set (hot-path lookups + gating). */
   const active = new Set<string>();
+  /**
+   * Plugins whose capability state and persisted flag are known to disagree,
+   * mapped to the reason. Populated only when a transition failed AND its
+   * compensation failed too — at that point the host cannot reconcile them, so it
+   * refuses further transitions rather than letting an operator retry into a
+   * worse state. Deliberately NOT persisted: `init()` rebuilds everything from the
+   * database, so the condition cannot survive a restart.
+   */
+  const degraded = new Map<string, string>();
 
   /**
    * Per-plugin transition queue. `activate`/`deactivate` for a given id run one at
@@ -156,6 +192,26 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
       ),
     );
     return run;
+  }
+
+  /**
+   * Record that `id`'s capability state can no longer be reconciled, and build the
+   * error the caller surfaces. Both the persistence failure and the compensation
+   * failure travel in the AggregateError so neither cause is lost.
+   */
+  function markDegraded(id: string, what: string, primary: unknown, recovery: unknown): Error {
+    const reason = `${what} failed to persist AND its capability rollback failed — installed capabilities may not match the persisted state. Restart the server to rebuild from the database.`;
+    degraded.set(id, reason);
+    logger.error("plugin_degraded", { id, reason });
+    return new AggregateError([primary, recovery], `plugin "${id}" ${reason}`);
+  }
+
+  /** Refuse a transition on a plugin whose state is already unreconcilable. */
+  function assertNotDegraded(id: string): void {
+    const reason = degraded.get(id);
+    // Retrying blindly would install or remove capabilities on top of a state the
+    // host already knows is wrong, so fail fast and point at the fix.
+    if (reason !== undefined) throw new PluginDegradedError(id, reason);
   }
 
   /** Install every binding's capability for `p`; on any throw, best-effort remove
@@ -207,6 +263,7 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
       tables: [...p.tables],
       adminPages: p.adminPages,
       active: active.has(p.id),
+      degraded: degraded.get(p.id) ?? null,
     };
   }
 
@@ -257,6 +314,9 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
         // Idempotent (the admin route documents it so): a redundant activate is a
         // no-op — never re-runs installs (which a later persist failure would then
         // wrongly roll back on an already-active plugin).
+        // BEFORE the idempotency check: while degraded the host cannot claim to know
+        // whether the plugin is already active, so short-circuiting would be a lie.
+        assertNotDegraded(id);
         if (active.has(id)) return describe(p);
         // Install capabilities FIRST, so a failure (e.g. a mail provider conflict)
         // aborts with NO persisted or in-memory change — the plugin stays as it was.
@@ -272,10 +332,7 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
           try {
             removeCapabilities(p);
           } catch (recoveryError) {
-            throw new AggregateError(
-              [error, recoveryError],
-              `plugin "${id}" failed to persist activation AND its capability rollback failed — capability state may be inconsistent`,
-            );
+            throw markDegraded(id, "activation", error, recoveryError);
           }
           throw error;
         }
@@ -290,6 +347,7 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
       if (!p) throw new UnknownPluginError(id);
       return serialize(id, async () => {
         // Idempotent, symmetric with activate(): a redundant deactivate is a no-op.
+        assertNotDegraded(id); // see activate() — precedes the idempotency check
         if (!active.has(id)) return describe(p);
         // Remove capabilities FIRST (with rollback), so a throwing onDeactivate
         // leaves the plugin FULLY active rather than persisted-inactive-but-still-
@@ -303,10 +361,7 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
           try {
             installCapabilities(p);
           } catch (recoveryError) {
-            throw new AggregateError(
-              [error, recoveryError],
-              `plugin "${id}" failed to persist deactivation AND its capability restore failed — capability state may be inconsistent`,
-            );
+            throw markDegraded(id, "deactivation", error, recoveryError);
           }
           throw error;
         }
@@ -339,6 +394,8 @@ export function staticPluginHost(manifest: readonly PluginManifestEntry[] = []):
         tables: [],
         adminPages: e.adminPages,
         active: true,
+        // The static host performs no transitions, so it can never degrade.
+        degraded: null,
       })),
     activate: async (id) => {
       throw new UnknownPluginError(id);
