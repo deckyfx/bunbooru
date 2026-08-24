@@ -6,6 +6,7 @@
  * hand-written `gh api … | jq … | python` each time:
  *
  *   bun bin/cr.ts review [--base <branch>]   Run the CodeRabbit CLI review → file, print findings
+ *   bun bin/cr.ts review --base-commit <sha> Review only the commits since <sha> (incremental rounds)
  *   bun bin/cr.ts status <pr>                Review state (in-progress / rate-limited+slot / N findings) + CI
  *   bun bin/cr.ts slot <pr>                  Just the next available review slot (UTC + WIB)
  *   bun bin/cr.ts trigger <pr>               Post "@coderabbitai review" on a PR
@@ -252,25 +253,120 @@ async function cmdFindings(repo: string, pr: string): Promise<void> {
   if (n === 0) console.log("  (no inline findings)");
 }
 
+/** What a `coderabbit review` invocation actually did. */
+export type ReviewOutcome = "reviewed" | "rate-limited" | "rejected-args" | "failed";
+
 /**
- * `review [--base <branch>]` — run the local CodeRabbit CLI review of committed
- * changes against `base`, capturing full output to `.cr/review.txt` (the CLI
+ * Classify a finished review from its output and exit code.
+ *
+ * Exported and pure so the matching is testable against real captured output.
+ * Every pattern is anchored to a WHOLE LINE: the CLI echoes finding text into the
+ * same stream, so a loose `/rate limit/` search matches a review that merely
+ * *discusses* rate limiting and would report "no review ran" for a run that
+ * completed normally. (That nearly happened — the phrase appears in this file's
+ * own review output, and only line wrapping kept it from matching.)
+ *
+ * @param text - Combined stdout + stderr from the CLI.
+ * @param exitCode - The CLI's exit status. Findings do NOT make it non-zero.
+ */
+export function classifyReviewOutcome(text: string, exitCode: number): ReviewOutcome {
+  // The POSITIVE marker is checked first, and that ordering is the whole design.
+  // The CLI echoes finding text into the same stream it reports status on, so any
+  // negative marker can be forged by a review that merely quotes it — this file's
+  // own tests contain both "Rate limit exceeded" and "error: unknown option". A
+  // completed review always prints this banner and a rate-limited one never does,
+  // so trusting it first makes echoed text harmless by construction.
+  if (/^[ \t]*Review complete[ \t]*$/m.test(text)) {
+    // The banner says the review ran; a non-zero exit alongside it contradicts that
+    // (findings alone exit 0), so treat the disagreement as a failure rather than
+    // guessing which half to believe.
+    return exitCode === 0 ? "reviewed" : "failed";
+  }
+
+  // A run with nothing in range is a COMPLETE invocation, not a failure — it just
+  // has no banner. Recognising it explicitly is what lets the fallback below be
+  // strict.
+  if (/^[ \t]*Nothing to review\.?[ \t]*$/m.test(text)) {
+    // Same cross-check as the banner above: a non-zero exit contradicts the claim
+    // that the run completed, so don't privilege the marker over the status.
+    return exitCode === 0 ? "reviewed" : "failed";
+  }
+
+  // `[ \t]` rather than `\s`: `\s` matches newlines, so `^\s*` could start at one
+  // line and match content on a later one — defeating the whole-line intent.
+  if (/^[ \t]*(?:✗[ \t]*)?Review limit reached[ \t]*$/m.test(text)) return "rate-limited";
+  if (/^[ \t]*Error: Rate limit exceeded[ \t]*$/m.test(text)) return "rate-limited";
+  // Trailing text is expected here (the CLI names the offending option), so these
+  // cannot be anchored at the end.
+  if (/^[ \t]*error: unknown option\b/m.test(text)) return "rejected-args";
+  if (/^[ \t]*Usage: coderabbit review\b/m.test(text)) return "rejected-args";
+
+  // Deliberately NOT `exitCode === 0 ? "reviewed" : "failed"`. Unrecognised output
+  // means the wrapper cannot tell what happened, and "assume it worked" is the
+  // failure mode this whole classifier exists to remove — an empty stream with a
+  // zero exit would otherwise be reported as a successful review.
+  return "failed";
+}
+
+/**
+ * `review [--base <branch>] [--base-commit <sha>]` — run the local CodeRabbit CLI
+ * review of committed changes, capturing full output to `.cr/review.txt` (the CLI
  * dedupes per branch, so this run's findings are otherwise unrecoverable), and
  * print the findings summary lines.
  *
- * @param base - Base branch to diff against (default `main`).
+ * `--base-commit` scopes the review to the commits since `<sha>`, which is what
+ * you want when iterating on review rounds: a full `--base main` re-reviews the
+ * whole branch and buries the new work.
+ *
+ * @param base - Base branch to diff against (default `main`); ignored when
+ *   `baseCommit` is given.
+ * @param baseCommit - Base COMMIT on the current branch, for an incremental review.
  */
-async function cmdReview(base: string): Promise<void> {
+async function cmdReview(base: string, baseCommit?: string): Promise<void> {
   await $`mkdir -p .cr`;
   const out = ".cr/review.txt";
-  console.log(`running: coderabbit review --base ${base} --type committed (→ ${out})`);
+  // Flags as of CLI 0.7.x: `--committed` is a boolean, and plain text is the
+  // default. The older `--type committed --plain` spelling was REMOVED — and an
+  // unknown flag makes the CLI print its usage and exit 0, so a stale invocation
+  // looks like it succeeded while never reviewing anything. Hence the guard below.
+  const scope = baseCommit ? ["--base-commit", baseCommit] : ["--base", base];
+  console.log(`running: coderabbit review ${scope.join(" ")} --committed (→ ${out})`);
   // Capture both streams directly: Bun's $ doesn't parse `> file 2>&1` redirects,
-  // and .nothrow() keeps a non-zero exit (findings present) from throwing.
-  const result = await $`coderabbit review --base ${base} --type committed --plain`
-    .nothrow()
-    .quiet();
-  const text = `${result.stdout.toString()}${result.stderr.toString()}`;
+  // and .nothrow() lets us classify the outcome instead of throwing a shell error.
+  // NOTE: findings do NOT make the CLI exit non-zero — a run reporting 5 findings
+  // exits 0 — so a non-zero exit means the review genuinely did not happen.
+  const result = await $`coderabbit review ${scope} --committed`.nothrow().quiet();
+  // Join with a newline: without one, stderr's first line is glued onto stdout's
+  // last, and every whole-line marker in classifyReviewOutcome stops matching —
+  // the CLI writes its status to stderr and its progress to stdout.
+  const stdout = result.stdout.toString();
+  const stderr = result.stderr.toString();
+  const text = stdout && !stdout.endsWith("\n") ? `${stdout}\n${stderr}` : `${stdout}${stderr}`;
   await Bun.write(out, text);
+
+  // The failure mode this wrapper exists to prevent: the CLI rejected a flag,
+  // printed usage, and exited 0. Without this the caller sees "success" and an
+  // empty review.
+  // Classify from whole-line markers, not a loose keyword scan — see
+  // classifyReviewOutcome. Rate limiting gets its own status because the
+  // documented workflow branches on it ("review if you can, otherwise push").
+  const outcome = classifyReviewOutcome(text, result.exitCode);
+  if (outcome === "rate-limited") {
+    console.error(`\ncoderabbit is rate limited — no review ran.\n\nfull output: ${out}`);
+    process.exit(2);
+  }
+  if (outcome === "rejected-args") {
+    console.error(
+      `\ncoderabbit rejected the arguments — no review ran. Its flags have changed before;\n` +
+        `check \`coderabbit review --help\` against the invocation above.\n\nfull output: ${out}`,
+    );
+    process.exit(1);
+  }
+  if (outcome === "failed") {
+    console.error(`\ncoderabbit exited ${result.exitCode} — no review ran.\n\nfull output: ${out}`);
+    process.exit(1);
+  }
+
   const summary = text
     .split("\n")
     .filter((l) => /findings|Actionable|Major|Minor|Critical|No findings|^\s*→/i.test(l));
@@ -278,41 +374,107 @@ async function cmdReview(base: string): Promise<void> {
   console.log(`\nfull output: ${out}`);
 }
 
+/** What `review` was asked to diff against. */
+export interface ReviewArgs {
+  /** Base branch (default `main`); ignored when {@link baseCommit} is set. */
+  base: string;
+  /** Base COMMIT on the current branch, for an incremental review. */
+  baseCommit?: string;
+}
+
+/**
+ * Parse the `review` sub-command's arguments.
+ *
+ * Exported (and pure) so the flag handling is testable without shelling out. A
+ * flag given WITHOUT its value throws rather than defaulting: silently falling
+ * back to a full `--base main` review is the same class of quiet-wrong behaviour
+ * this wrapper exists to prevent — you would get a review, just not the one you
+ * asked for, and only notice by reading the diff header.
+ *
+ * @param argv - Argument list, e.g. `["--base-commit", "abc123"]`.
+ */
+export function parseReviewArgs(argv: readonly string[]): ReviewArgs {
+  const known = new Set(["--base", "--base-commit"]);
+  const out: ReviewArgs = { base: "main" };
+  let sawBase = false;
+
+  // Sequential scan rather than indexOf: indexOf silently ignores a MISSPELLED
+  // flag, a stray positional, and any repeat of a flag — each of which would then
+  // fall through to a full `--base main` review. Getting a review that isn't the
+  // one you asked for is the exact failure this wrapper exists to prevent, so
+  // anything unrecognised is an error, not a shrug.
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i] as string;
+    if (!known.has(token)) {
+      throw new Error(
+        token.startsWith("--")
+          ? `unknown option ${token} (expected --base or --base-commit)`
+          : `unexpected argument "${token}"`,
+      );
+    }
+    const value = argv[i + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`${token} requires a value`);
+    }
+    if (token === "--base") {
+      if (sawBase) throw new Error("--base given more than once");
+      out.base = value;
+      sawBase = true;
+    } else {
+      if (out.baseCommit !== undefined) throw new Error("--base-commit given more than once");
+      out.baseCommit = value;
+    }
+    i += 1; // consume the value
+  }
+  return out;
+}
+
 const [cmd, arg] = Bun.argv.slice(2);
 
-switch (cmd) {
-  case "review": {
-    // Fully local — deliberately does NOT resolve the repo slug, so it works
-    // without GitHub auth or a detectable remote.
-    const baseIdx = Bun.argv.indexOf("--base");
-    await cmdReview(baseIdx !== -1 ? (Bun.argv[baseIdx + 1] ?? "main") : "main");
-    break;
+// Only dispatch when RUN as a script. Importing this module (the arg-parser
+// tests do) must not execute a command as a side effect.
+if (import.meta.main) {
+  switch (cmd) {
+    case "review": {
+      // Fully local — deliberately does NOT resolve the repo slug, so it works
+      // without GitHub auth or a detectable remote.
+      // A usage error deserves one clear line, not a stack trace.
+      let args;
+      try {
+        args = parseReviewArgs(Bun.argv.slice(3));
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      }
+      await cmdReview(args.base, args.baseCommit);
+      break;
+    }
+    case "status": {
+      if (!arg) throw new Error("usage: cr status <pr>");
+      await cmdStatus(await repoSlug(), arg);
+      break;
+    }
+    case "slot": {
+      if (!arg) throw new Error("usage: cr slot <pr>");
+      await cmdSlot(await repoSlug(), arg);
+      break;
+    }
+    case "trigger": {
+      if (!arg) throw new Error("usage: cr trigger <pr>");
+      await cmdTrigger(await repoSlug(), arg);
+      break;
+    }
+    case "findings": {
+      if (!arg) throw new Error("usage: cr findings <pr>");
+      await cmdFindings(await repoSlug(), arg);
+      break;
+    }
+    default:
+      console.log(
+        "usage: bun bin/cr.ts <review|status|slot|trigger|findings> [args]\n" +
+          "  review [--base <branch>|--base-commit <sha>] | status <pr> | slot <pr> | trigger <pr> | findings <pr>",
+      );
+      // Non-zero so shell wrappers / CI treat an unknown command as a failure.
+      process.exitCode = 1;
   }
-  case "status": {
-    if (!arg) throw new Error("usage: cr status <pr>");
-    await cmdStatus(await repoSlug(), arg);
-    break;
-  }
-  case "slot": {
-    if (!arg) throw new Error("usage: cr slot <pr>");
-    await cmdSlot(await repoSlug(), arg);
-    break;
-  }
-  case "trigger": {
-    if (!arg) throw new Error("usage: cr trigger <pr>");
-    await cmdTrigger(await repoSlug(), arg);
-    break;
-  }
-  case "findings": {
-    if (!arg) throw new Error("usage: cr findings <pr>");
-    await cmdFindings(await repoSlug(), arg);
-    break;
-  }
-  default:
-    console.log(
-      "usage: bun bin/cr.ts <review|status|slot|trigger|findings> [args]\n" +
-        "  review [--base <branch>] | status <pr> | slot <pr> | trigger <pr> | findings <pr>",
-    );
-    // Non-zero so shell wrappers / CI treat an unknown command as a failure.
-    process.exitCode = 1;
 }

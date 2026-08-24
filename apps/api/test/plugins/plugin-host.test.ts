@@ -12,7 +12,7 @@ import type {
 import { createCoreEvents } from "@bunbooru/core";
 import { Elysia } from "elysia";
 
-import { createPluginHost, UnknownPluginError } from "../../src/plugins/host";
+import { createPluginHost, PluginDegradedError, UnknownPluginError } from "../../src/plugins/host";
 import type { LoadedPlugin } from "../../src/plugins/loader";
 import { createApp } from "../../src/server";
 
@@ -371,6 +371,97 @@ describe("createPluginHost", () => {
     await expect(host.activate("nope")).rejects.toBeInstanceOf(UnknownPluginError);
     await expect(host.deactivate("nope")).rejects.toBeInstanceOf(UnknownPluginError);
   });
+
+  it("marks a plugin degraded when persistence AND its rollback both fail", async () => {
+    const binding = {
+      onActivate: () => {},
+      onDeactivate: () => {
+        throw new Error("rollback boom");
+      },
+    };
+    const state = fakeState();
+    state.setActive = async () => {
+      throw new Error("persist boom");
+    };
+    const host = createPluginHost({
+      pluginState: state,
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+
+    const err = await host.activate("beta").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AggregateError);
+    // Both causes survive — neither the DB failure nor the rollback failure is lost.
+    expect((err as AggregateError).errors.map((e: Error) => e.message)).toEqual([
+      "persist boom",
+      "rollback boom",
+    ]);
+
+    // The plugin is now reported as degraded, so an operator can see WHY the
+    // console disagrees with what the server is actually running.
+    const info = host.describeAll().find((p) => p.id === "beta");
+    expect(info?.degraded).toContain("Restart the server");
+    expect(info?.active).toBe(false);
+  });
+
+  it("refuses further transitions on a degraded plugin", async () => {
+    const binding = {
+      onActivate: () => {},
+      onDeactivate: () => {
+        throw new Error("rollback boom");
+      },
+    };
+    const state = fakeState();
+    state.setActive = async () => {
+      throw new Error("persist boom");
+    };
+    const host = createPluginHost({
+      pluginState: state,
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+    await host.activate("beta").catch(() => {});
+
+    // Retrying would install or remove capabilities on top of a state the host
+    // already knows is wrong, so it fails fast with a distinct error rather than
+    // repeating the original (transient-looking) persistence failure.
+    await expect(host.activate("beta")).rejects.toBeInstanceOf(PluginDegradedError);
+    await expect(host.deactivate("beta")).rejects.toBeInstanceOf(PluginDegradedError);
+  });
+
+  it("leaves unaffected plugins usable", async () => {
+    // Degradation is per-plugin: one broken transition must not freeze the console.
+    const binding = {
+      onActivate: () => {},
+      onDeactivate: () => {
+        throw new Error("rollback boom");
+      },
+    };
+    let failNext = true;
+    const state = fakeState();
+    const realSetActive = state.setActive;
+    state.setActive = async (id, value) => {
+      if (failNext) throw new Error("persist boom");
+      await realSetActive(id, value);
+    };
+    const host = createPluginHost({
+      pluginState: state,
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [binding],
+    });
+    await host.init();
+    await host.activate("beta").catch(() => {});
+
+    failNext = false;
+    await host.activate("alpha");
+    expect(host.isActive("alpha")).toBe(true);
+    expect(host.describeAll().find((p) => p.id === "alpha")?.degraded).toBeNull();
+  });
 });
 
 /** Minimal Core for `createApp` — the requests below carry no auth, so the
@@ -387,6 +478,8 @@ const appCore = {
   pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
 } satisfies Core;
+
+
 
 describe("plugin route gate (onRequest)", () => {
   it("404s an inactive plugin's routes, then serves them once activated", async () => {
@@ -413,4 +506,6 @@ describe("plugin route gate (onRequest)", () => {
     const body = (await res.json()) as { id: string }[];
     expect(body.map((p) => p.id)).toEqual(["alpha"]);
   });
+
 });
+
