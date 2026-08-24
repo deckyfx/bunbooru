@@ -286,7 +286,11 @@ export function classifyReviewOutcome(text: string, exitCode: number): ReviewOut
   // A run with nothing in range is a COMPLETE invocation, not a failure — it just
   // has no banner. Recognising it explicitly is what lets the fallback below be
   // strict.
-  if (/^[ \t]*Nothing to review\.?[ \t]*$/m.test(text)) return "reviewed";
+  if (/^[ \t]*Nothing to review\.?[ \t]*$/m.test(text)) {
+    // Same cross-check as the banner above: a non-zero exit contradicts the claim
+    // that the run completed, so don't privilege the marker over the status.
+    return exitCode === 0 ? "reviewed" : "failed";
+  }
 
   // `[ \t]` rather than `\s`: `\s` matches newlines, so `^\s*` could start at one
   // line and match content on a later one — defeating the whole-line intent.

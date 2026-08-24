@@ -170,4 +170,10 @@ describe("classifyReviewOutcome", () => {
     ].join("\n");
     expect(classifyReviewOutcome(nothing, 0)).toBe("reviewed");
   });
+
+  it("distrusts the empty-range marker too when the exit code disagrees", () => {
+    // Every positive marker gets the same cross-check — otherwise the newer one
+    // quietly becomes the lenient path the older one was tightened to remove.
+    expect(classifyReviewOutcome("Nothing to review.\n", 1)).toBe("failed");
+  });
 });
