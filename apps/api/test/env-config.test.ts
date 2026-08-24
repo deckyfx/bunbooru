@@ -11,6 +11,7 @@ const saved = {
   MAX_RESUMABLE_UPLOAD_BYTES: Bun.env.MAX_RESUMABLE_UPLOAD_BYTES,
   UPLOAD_GC_INTERVAL_MS: Bun.env.UPLOAD_GC_INTERVAL_MS,
   WEB_PORT: Bun.env.WEB_PORT,
+  LOG_FORMAT: Bun.env.LOG_FORMAT,
 };
 
 afterEach(() => {
@@ -196,5 +197,38 @@ describe("WEB_PORT", () => {
       Bun.env.WEB_PORT = bad;
       expect(() => envConfig.WEB_PORT).toThrow(/WEB_PORT/);
     }
+  });
+});
+
+describe("LOG_FORMAT", () => {
+  it("defaults to pretty in development and json elsewhere", () => {
+    delete Bun.env.LOG_FORMAT;
+    Bun.env.NODE_ENV = "development";
+    expect(envConfig.LOG_FORMAT).toBe("pretty");
+    Bun.env.NODE_ENV = "production";
+    expect(envConfig.LOG_FORMAT).toBe("json");
+  });
+
+  it("honours an explicit value in either direction", () => {
+    // Forcing json locally is how you reproduce what production emits.
+    Bun.env.NODE_ENV = "development";
+    Bun.env.LOG_FORMAT = "json";
+    expect(envConfig.LOG_FORMAT).toBe("json");
+    Bun.env.NODE_ENV = "production";
+    Bun.env.LOG_FORMAT = "pretty";
+    expect(envConfig.LOG_FORMAT).toBe("pretty");
+  });
+
+  it("treats blank or whitespace-only as unset", () => {
+    Bun.env.NODE_ENV = "development";
+    Bun.env.LOG_FORMAT = "";
+    expect(envConfig.LOG_FORMAT).toBe("pretty");
+    Bun.env.LOG_FORMAT = "   ";
+    expect(envConfig.LOG_FORMAT).toBe("pretty");
+  });
+
+  it("throws on an unrecognised value rather than silently picking one", () => {
+    Bun.env.LOG_FORMAT = "plain";
+    expect(() => envConfig.LOG_FORMAT).toThrow(/LOG_FORMAT/);
   });
 });

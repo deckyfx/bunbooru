@@ -16,7 +16,14 @@
  * check and truncate a real database.
  */
 export function isLoopbackHost(host: string): boolean {
-  return host === "localhost" || host === "::1" || host === "[::1]" || host.startsWith("127.");
+  if (host === "localhost" || host === "::1" || host === "[::1]") return true;
+  // Only a real IPv4 literal counts. A bare `startsWith("127.")` would also match
+  // a DNS name like `127.example.com`, mapping a REMOTE host to localhost — which
+  // could then compare equal to the dev database and block a legitimate test URL.
+  const octets = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!octets) return false;
+  const parts = octets.slice(1).map(Number);
+  return parts.every((part) => part <= 255) && parts[0] === 127;
 }
 
 /**

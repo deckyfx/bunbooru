@@ -92,12 +92,49 @@ function formatPretty(
   return `${head} ${body}`;
 }
 
+/**
+ * `JSON.stringify` replacer that survives values it would otherwise reject.
+ *
+ * Plain `stringify` THROWS on a `bigint` and on a cyclic structure — and a logger
+ * that throws takes the request with it, turning a diagnostic into an outage. It
+ * also flattens an `Error` to `{}`, silently discarding the one field anybody
+ * logging an error wants.
+ *
+ * The shared `seen` set means a genuinely repeated (but acyclic) reference also
+ * renders as `[circular]`. That is an accepted trade: a slightly lossy log line
+ * beats a thrown one.
+ */
+function jsonSafeReplacer(): (key: string, value: unknown) => unknown {
+  const seen = new WeakSet<object>();
+  return (_key, value) => {
+    if (typeof value === "bigint") return value.toString();
+    if (value instanceof Error) return { name: value.name, message: value.message };
+    if (typeof value === "object" && value !== null) {
+      if (seen.has(value)) return "[circular]";
+      seen.add(value);
+    }
+    return value;
+  };
+}
+
 /** One machine-readable object per line, for log aggregation. */
-function formatJson(level: LogLevel, message: string, fields: LogFields, at: Date): string {
+export function formatJson(
+  level: LogLevel,
+  message: string,
+  fields: LogFields,
+  at: Date,
+): string {
   // Fields spread FIRST so the reserved keys always win. A caller passing
   // `{ level: "info" }` on an error — or a `message` field echoing user input —
   // must not be able to rewrite the line's own metadata and mislead a log search.
-  return JSON.stringify({ ...fields, level, time: at.toISOString(), message });
+  const line = { ...fields, level, time: at.toISOString(), message };
+  try {
+    return JSON.stringify(line, jsonSafeReplacer());
+  } catch {
+    // Last resort — a getter that throws, or anything the replacer can't tame.
+    // Emit the metadata without the fields rather than lose the line entirely.
+    return JSON.stringify({ level, time: at.toISOString(), message, fields: "[unserializable]" });
+  }
 }
 
 /**

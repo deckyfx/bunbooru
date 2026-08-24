@@ -19,6 +19,20 @@ describe("isLoopbackHost", () => {
       expect(isLoopbackHost(host)).toBe(false);
     }
   });
+
+  it("does not treat a DNS name beginning '127.' as loopback", () => {
+    // A prefix match would map these REMOTE hosts onto localhost, where they could
+    // compare equal to the dev database and block a legitimate test URL.
+    for (const host of ["127.example.com", "127.0.0.1.evil.test", "127.foo"]) {
+      expect(isLoopbackHost(host)).toBe(false);
+    }
+  });
+
+  it("rejects IPv4 literals with out-of-range octets", () => {
+    for (const host of ["127.0.0.256", "127.999.0.1"]) {
+      expect(isLoopbackHost(host)).toBe(false);
+    }
+  });
 });
 
 describe("target", () => {
