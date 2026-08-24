@@ -49,7 +49,8 @@ describe("formatJson", () => {
     expect(line.error).toEqual({ name: "Error", message: "boom" });
   });
 
-  it("falls back to metadata-only rather than losing the line", () => {
+  it("falls back to metadata-only when a NESTED getter throws", () => {
+    // Invoked by JSON.stringify, inside the try.
     const hostile = {
       get exploding(): never {
         throw new Error("getter boom");
@@ -58,6 +59,21 @@ describe("formatJson", () => {
     const line = JSON.parse(formatJson("error", "still_logged", { hostile }, AT));
     expect(line.message).toBe("still_logged");
     expect(line.level).toBe("error");
+    expect(line.fields).toBe("[unserializable]");
+  });
+
+  it("falls back when a getter on FIELDS ITSELF throws", () => {
+    // Distinct from the nested case: expanding `fields` invokes this getter, so it
+    // fires during the spread rather than during serialization. With the spread
+    // outside the try, this escaped the fallback and took the request with it.
+    const fields = {
+      get boom(): never {
+        throw new Error("spread boom");
+      },
+    };
+    expect(() => formatJson("error", "still_logged", fields, AT)).not.toThrow();
+    const line = JSON.parse(formatJson("error", "still_logged", fields, AT));
+    expect(line.message).toBe("still_logged");
     expect(line.fields).toBe("[unserializable]");
   });
 });

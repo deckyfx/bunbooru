@@ -127,8 +127,10 @@ export function formatJson(
   // Fields spread FIRST so the reserved keys always win. A caller passing
   // `{ level: "info" }` on an error — or a `message` field echoing user input —
   // must not be able to rewrite the line's own metadata and mislead a log search.
-  const line = { ...fields, level, time: at.toISOString(), message };
   try {
+    // Spread INSIDE the try: expanding `fields` invokes its own enumerable
+    // getters, so a getter that throws would escape a try placed after this line.
+    const line = { ...fields, level, time: at.toISOString(), message };
     return JSON.stringify(line, jsonSafeReplacer());
   } catch {
     // Last resort — a getter that throws, or anything the replacer can't tame.
