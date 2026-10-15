@@ -1,10 +1,11 @@
 # syntax=docker/dockerfile:1
 
-# ── Stage 1: build the standalone backend binary ──────────────────────────────
+# ── Stage 1: build the single fullstack binary (API + embedded web SPA) ──────
 # oven/bun:1 is Debian/glibc-based, so the compiled binary links glibc and runs
 # on the distroless glibc runtime below. (Don't swap to an Alpine/musl builder
 # without also swapping the runtime — the libc families must match.)
-FROM oven/bun:1 AS builder
+# Pinned to the toolchain the repo is developed and CI-tested on.
+FROM oven/bun:1.4.3 AS builder
 WORKDIR /app
 
 # Manifests only, first — so the install layer is cached and only re-runs when a
@@ -21,14 +22,20 @@ COPY packages/storage/package.json packages/storage/
 COPY packages/search/package.json packages/search/
 COPY packages/plugin-sdk/package.json packages/plugin-sdk/
 COPY plugins/example/package.json plugins/example/
+COPY plugins/shimmie-import/package.json plugins/shimmie-import/
+COPY plugins/smtp-mailer/package.json plugins/smtp-mailer/
+COPY plugins/thumbnailer/package.json plugins/thumbnailer/
 
 RUN bun install --frozen-lockfile
 
-# Now the source, then build the API binary.
+# Now the source, then build. `bun run build` embeds the migrations (scripts/),
+# builds the web SPA, and compiles the API with that SPA inside it — one binary
+# serving the site and /api/v1 on one port.
 COPY apps ./apps
 COPY packages ./packages
 COPY plugins ./plugins
-RUN bun run build:api
+COPY scripts ./scripts
+RUN bun run build
 
 # ── Stage 2: minimal runtime ──────────────────────────────────────────────────
 # Distroless `nonroot` runs as UID 65532 (no shell, no package manager) so the

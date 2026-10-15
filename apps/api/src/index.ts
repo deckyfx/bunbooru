@@ -6,6 +6,8 @@ import { createPluginHost, type PluginCapabilityBinding } from "./plugins/host";
 import { loadPlugins } from "./plugins/loader";
 import { PLUGIN_REGISTRY } from "./plugins/registry";
 import { createApp } from "./server";
+import { WEB_ASSETS } from "./web/embedded-assets";
+import { createWebRoutes } from "./web/routes";
 
 /**
  * `@bunbooru/api` — the REST API composition root.
@@ -126,6 +128,14 @@ const app = createApp({ core, host: pluginHost, storage, publicBaseUrl });
 for (const p of loadedPlugins) {
   if (p.routes) app.use(p.routes);
 }
+
+// The web SPA, from the files compiled into the production binary: one process,
+// one port, same origin (so no CORS). From source WEB_ASSETS is empty and this
+// mounts nothing; in dev the web server on WEB_PORT serves the SPA and proxies
+// `/api/*` here. Its catch-all ranks below every concrete route, so mounting it
+// last is for readability, not correctness.
+app.use(createWebRoutes(WEB_ASSETS));
+logger.info("web_spa", { embedded: WEB_ASSETS.length > 0, files: WEB_ASSETS.length });
 
 app.listen(
   { port: envConfig.SERVER_PORT, maxRequestBodySize: MAX_REQUEST_BODY_BYTES },

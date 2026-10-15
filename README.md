@@ -115,6 +115,37 @@ bun run services:up:redis  # Postgres + Redis
 bun run services:down      # stop services
 ```
 
+## Development
+
+The API and the web app are separate Bun projects and run as two servers in
+development, so the web app gets hot reload:
+
+```bash
+bun run dev                # API on :3000 (SERVER_PORT)
+bun run dev:web            # web on :3001 (WEB_PORT), proxies /api/* to the API
+```
+
+Open the web port; it proxies `/api/*` to the API, so the browser sees one origin.
+
+## Production: one binary, one port
+
+`bun run build` produces a single self-contained executable at
+`apps/api/dist/bunbooru`:
+
+1. embeds every package's and plugin's migrations (applied automatically at boot);
+2. builds the web SPA (`apps/web/build.ts`) into static files;
+3. compiles the API with those files embedded.
+
+The binary serves the site and `/api/v1` from one port (`SERVER_PORT`, default
+3000), with no `dist/` or `drizzle/` folder needed beside it. Configure it
+through the environment: `DATABASE_URL`, `STORAGE_ROOT` and `PUBLIC_BASE_URL` at
+minimum (see `.env.example`).
+
+```bash
+bun run build              # → apps/api/dist/bunbooru
+bun run docker:build       # the same binary in a distroless image (port 3000)
+```
+
 ## Current Status
 
 🚧 Early Development
