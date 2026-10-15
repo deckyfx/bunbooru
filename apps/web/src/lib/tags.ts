@@ -5,11 +5,11 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { TagDto } from "@bunbooru/api";
+import type { TagDto, TagVersionDto } from "@bunbooru/api";
 
 import { api, unwrap } from "./api";
 
-export type { TagDto };
+export type { TagDto, TagVersionDto };
 
 export type TagCategory = "artist" | "copyright" | "character" | "general" | "meta";
 
@@ -95,7 +95,38 @@ export function useSetAssetTags(id: number) {
   return useMutation({
     mutationFn: async (tags: string[]) =>
       unwrap(await api.api.v1.assets({ id: String(id) }).tags.patch({ tags })),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["asset-tags", id] }),
+    onSuccess: () => invalidatePostTags(queryClient, id),
+  });
+}
+
+/** After a post's tags change: its tag list, and its history (a new version). */
+function invalidatePostTags(queryClient: ReturnType<typeof useQueryClient>, id: number) {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["asset-tags", id] }),
+    queryClient.invalidateQueries({ queryKey: ["tag-history", id] }),
+  ]);
+}
+
+/**
+ * A post's tag history, newest first. Only fetched while `enabled` (the panel is
+ * collapsed by default, so most views never ask for it).
+ */
+export function useTagHistory(id: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ["tag-history", id],
+    enabled: enabled && Number.isInteger(id) && id > 0,
+    queryFn: async (): Promise<TagVersionDto[]> =>
+      unwrap(await api.api.v1.assets({ id: String(id) }).tags.history.get({ query: { limit: 50 } })),
+  });
+}
+
+/** Restore a recorded version's tag set (`POST /assets/:id/tags/revert`). */
+export function useRevertTags(id: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (versionId: number): Promise<TagDto[]> =>
+      unwrap(await api.api.v1.assets({ id: String(id) }).tags.revert.post({ versionId })),
+    onSuccess: () => invalidatePostTags(queryClient, id),
   });
 }
 

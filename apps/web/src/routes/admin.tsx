@@ -21,6 +21,8 @@ import {
   useSetTagCategory,
   type TagCategory,
 } from "../lib/tags";
+import { CARD_CLASS, INPUT_CLASS } from "../components/admin/styles";
+import { TagAliasesCard, TagImplicationsCard } from "../components/admin/tag-gardening";
 import { PLUGIN_ADMIN_SECTIONS } from "../plugins/registry";
 
 /** Human-readable byte size for the caps hint. */
@@ -36,10 +38,6 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(1)} ${units[unit]}`;
 }
 
-const INPUT_CLASS =
-  "block w-full rounded border border-line p-1.5 text-[12px] outline-none focus:border-link";
-
-const CARD_CLASS = "rounded-xl border border-line bg-surface p-5 shadow-sm";
 
 /** A built-in (non-plugin) console section. */
 type CoreSection = "settings" | "taxonomy" | "extensions" | "runtime";
@@ -129,7 +127,13 @@ export function AdminPage() {
       <div className="min-w-0 flex-1">
         {section.kind === "core" && section.key === "extensions" ? <ExtensionsSection /> : null}
         {section.kind === "core" && section.key === "settings" ? <UploadLimitsSection /> : null}
-        {section.kind === "core" && section.key === "taxonomy" ? <TagCategorySection /> : null}
+        {section.kind === "core" && section.key === "taxonomy" ? (
+          <div className="space-y-4">
+            <TagCategorySection />
+            <TagAliasesCard />
+            <TagImplicationsCard />
+          </div>
+        ) : null}
         {section.kind === "core" && section.key === "runtime" ? <RuntimeConfigSection /> : null}
         {section.kind === "plugin" ? (
           <PluginToolSection id={section.id} active={pluginTools.some((p) => p.id === section.id)} />

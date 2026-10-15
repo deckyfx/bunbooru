@@ -97,7 +97,10 @@ async function ingestPost(
       createdAt: post.postedAt,
     });
     createdAssetId = asset.id;
-    if (post.tags.length > 0) await ctx.services.tags.setAssetTags(asset.id, post.tags);
+    // Credited to the target user in the post's tag history, like the upload.
+    if (post.tags.length > 0) {
+      await ctx.services.tags.setAssetTags(asset.id, post.tags, targetUserId);
+    }
     await upsertItem(ctx, adapter.sourceInstance, post.sourcePostId, runId, {
       assetId: asset.id,
       status: "complete",

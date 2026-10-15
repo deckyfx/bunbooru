@@ -99,6 +99,13 @@ function clampLimit(limit: number, fallback: number, max: number): number {
 
 /** Build a {@link TagService} over its repositories. */
 export function createTagService({ tags, aliases, implications, versions }: TagServiceDeps): TagService {
+  // Known limitation: aliases and implications are read BEFORE the write
+  // transaction, so an edit racing an admin's alias/implication change (within
+  // the same few milliseconds) can apply the old vocabulary: a just-aliased name
+  // briefly returns as a tag, or a just-added implication misses this post until
+  // its next edit. Accepted for an admin-only, rare operation. The airtight fix,
+  // if ever needed, is to take the gardening lock in SHARED mode around the whole
+  // resolve-and-apply step, inside one transaction.
   async function setAssetTags(
     assetId: number,
     rawNames: string[],
