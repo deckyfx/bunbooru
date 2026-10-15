@@ -363,16 +363,19 @@ export function createApp({
           startedAt === undefined ? undefined : Math.round(performance.now() - startedAt),
       });
     })
-    .get("/", () => ({
-      name: CORE_PACKAGE,
-      sdk: PLUGIN_SDK_VERSION,
-      status: "ok",
-    }))
     // Unversioned, stable probe for orchestrators (Docker HEALTHCHECK, k8s).
     // Kept outside `/api/v1` so it never moves when the API version changes.
     .get("/health", () => ({ status: "ok" as const }))
     .group("/api/v1", (api) =>
       api
+        // Service identity. Lives under `/api/v1`, not at `/`: in the production
+        // binary `/` belongs to the web SPA (see web/routes.ts), and a concrete
+        // `GET /` here would outrank its catch-all and shadow the home page.
+        .get("", () => ({
+          name: CORE_PACKAGE,
+          sdk: PLUGIN_SDK_VERSION,
+          status: "ok",
+        }))
         // Opaque visitor id for the traffic counters — never an IP. The client
         // owns a stable id (localStorage) and sends it as `x-visitor-id`, so we
         // read+validate it (no server-minted cookie → no first-load mint race).

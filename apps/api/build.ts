@@ -1,31 +1,81 @@
 /**
- * Production build for the Bunbooru backend engine.
+ * Production build: the whole of Bunbooru as ONE standalone executable.
  *
- * Compiles `apps/api` (and its bundled workspace packages) into a single
- * standalone executable with no external runtime dependencies. Used by the
- * Docker build stage; also runnable locally via `bun run build:api`.
+ * Three stages:
+ * 1. Embed migrations, so the binary carries SQL that matches the current
+ *    drizzle/ folders (a compiled binary has no drizzle/ on disk; see
+ *    BUN_DATABASE.md). Fails on journal/folder drift.
+ * 2. Build the web SPA (`apps/web/build.ts`) into static files.
+ * 3. Compile `apps/api` with every one of those files embedded, so the binary
+ *    serves the SPA and `/api/v1` from one port. The two apps stay separate
+ *    projects: the API never imports web source, only embeds its build output.
  *
+ * Used by the Docker build stage; also runnable locally via `bun run build`.
  * Paths are anchored to this file so the script works regardless of CWD.
  */
-import { $ } from "bun";
+import { $, type BunPlugin } from "bun";
+
+import { buildWeb, type WebBuild } from "../web/build";
 
 const entrypoint = `${import.meta.dir}/src/index.ts`;
 const outfile = `${import.meta.dir}/dist/bunbooru`;
+/** The source stub (an empty asset list) that stage 3 swaps for the real manifest. */
+const embeddedAssetsModule = `${import.meta.dir}/src/web/embedded-assets.ts`;
 
-// Regenerate the embedded-migration manifests FIRST, so the binary always carries
-// SQL that matches the current drizzle/ folders (a compiled binary has no drizzle/
-// on disk — see BUN_DATABASE.md). Fails the build on journal/folder drift.
+/**
+ * Generated replacement for `src/web/embedded-assets.ts`. Each `with { type:
+ * "file" }` import makes the compiler embed that file and resolve the binding to
+ * its `/$bunfs/…` path, which `Bun.file` can open inside the executable.
+ */
+function renderAssetManifest({ distDir, files }: WebBuild): string {
+  const imports = files.map(
+    (file, i) => `import asset${i} from ${JSON.stringify(`${distDir}/${file}`)} with { type: "file" };`,
+  );
+  const entries = files.map(
+    (file, i) => `  { urlPath: ${JSON.stringify(`/${file}`)}, file: asset${i} },`,
+  );
+  return [
+    ...imports,
+    "",
+    "export const WEB_ASSETS = [",
+    ...entries,
+    "];",
+    "",
+  ].join("\n");
+}
+
+/** Bundler plugin that serves the generated manifest in place of the stub module. */
+function embedWebAssets(manifest: string): BunPlugin {
+  return {
+    name: "embed-web-assets",
+    setup(build) {
+      build.onLoad({ filter: new RegExp(`^${RegExp.escape(embeddedAssetsModule)}$`) }, () => ({
+        contents: manifest,
+        loader: "ts",
+      }));
+    },
+  };
+}
+
 console.log("📝 Embedding migrations...");
 await $`bun ${import.meta.dir}/../../scripts/embed-migrations.ts`;
 
-console.log("📦 Building Bunbooru backend engine...");
+console.log("🎨 Building web SPA...");
+const web = await buildWeb();
+if (!web.files.includes("index.html")) {
+  console.error(`❌ Web build produced no index.html in ${web.distDir}`);
+  process.exit(1);
+}
+console.log(`   ${web.files.length} files`);
 
+console.log("📦 Compiling Bunbooru (API + embedded SPA)...");
 const result = await Bun.build({
   entrypoints: [entrypoint],
   compile: { outfile },
   target: "bun",
   minify: true,
   sourcemap: "none",
+  plugins: [embedWebAssets(renderAssetManifest(web))],
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
   },

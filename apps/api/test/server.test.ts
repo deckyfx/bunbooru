@@ -1,4 +1,7 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type {
   ApiKey,
@@ -29,6 +32,7 @@ import {
 
 import { maskConnectionUrl } from "../src/lib/runtime-config";
 import { createApp } from "../src/server";
+import { createWebRoutes } from "../src/web/routes";
 
 /** A fixed asset row for asserting wire serialization. */
 const sampleAsset: Asset = {
@@ -239,9 +243,9 @@ describe("health", () => {
   });
 });
 
-describe("root", () => {
-  it("GET / reports service identity", async () => {
-    const res = await request("/");
+describe("service identity", () => {
+  it("GET /api/v1 reports service identity", async () => {
+    const res = await request("/api/v1");
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.status).toBe("ok");
@@ -1449,5 +1453,55 @@ describe("admin runtime configuration", () => {
     expect(masked).not.toContain("s3cret");
     expect(masked).not.toContain("hunter2");
     expect(masked).toContain("postgres://bunbooru:***@localhost:5432/bunbooru");
+  });
+});
+
+describe("embedded web SPA on the API app (single-binary mode)", () => {
+  let dir: string;
+  // Mounted on the REAL app, the way index.ts does it: after createApp, so the
+  // catch-all sits alongside every concrete route and under the root error handler.
+  let fullstack: ReturnType<typeof buildApp>;
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "bunbooru-spa-"));
+    await Bun.write(join(dir, "index.html"), "<!doctype html><title>shell</title>");
+    await Bun.write(join(dir, "chunk-abc123.js"), "console.log(1)");
+    fullstack = buildApp(stubCore()).use(
+      createWebRoutes([
+        { urlPath: "/index.html", file: join(dir, "index.html") },
+        { urlPath: "/chunk-abc123.js", file: join(dir, "chunk-abc123.js") },
+      ]),
+    );
+  });
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function get(path: string): Promise<Response> {
+    return fullstack.handle(new Request(`http://localhost${path}`));
+  }
+
+  it("serves the SPA shell at / and on client routes", async () => {
+    for (const path of ["/", "/posts/12", "/setup"]) {
+      const res = await get(path);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("<title>shell</title>");
+    }
+  });
+
+  it("leaves concrete API routes outranking the catch-all", async () => {
+    expect(await (await get("/health")).json()).toEqual({ status: "ok" });
+    expect(await (await get("/api/v1/health")).json()).toEqual({ status: "ok" });
+    const identity = (await (await get("/api/v1")).json()) as Record<string, unknown>;
+    expect(identity.status).toBe("ok");
+  });
+
+  it("answers an unknown API path with the API's JSON 404, not the SPA", async () => {
+    const res = await get("/api/v1/does-not-exist");
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { message: string; requestId: string } };
+    expect(body.error.requestId).toBeString();
+    expect(res.headers.get("x-request-id")).toBe(body.error.requestId);
   });
 });

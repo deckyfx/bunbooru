@@ -16,6 +16,13 @@ dist
 *.db
 *.sqlite
 
+# Local runtime data (Postgres/Redis bind mounts, uploads): partly root-owned,
+# so sending it would also fail the build with a permission error.
+data
+# Local study copies and CodeRabbit review captures.
+reference
+.cr
+
 Dockerfile
 .dockerignore
 docker-compose.yml
