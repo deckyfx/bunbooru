@@ -23,6 +23,8 @@ const appCore = {
   assetService: {} as AssetService,
   uploadService: {} as Core["uploadService"],
   tagService: {} as TagService,
+  tagAliasService: {} as Core["tagAliasService"],
+  tagImplicationService: {} as Core["tagImplicationService"],
   statsService: {} as StatsService,
   authService: {} as AuthService,
   settingsService: {} as SettingsService,

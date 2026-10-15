@@ -4,6 +4,8 @@ import { sql } from "drizzle-orm";
 import {
   createAssetRepository,
   createDb,
+  createTagAliasRepository,
+  createTagRepository,
   type AssetRepository,
   type DB,
   type NewAsset,
@@ -120,5 +122,55 @@ describe.skipIf(!TEST_DATABASE_URL)("Search execution (integration)", () => {
     expect(r.total).toBe(2);
     expect(r.pageCount).toBe(2);
     expect(r.assets).toHaveLength(1);
+  });
+});
+
+describe.skipIf(!TEST_DATABASE_URL)("Search with aliases (integration)", () => {
+  let db: DB;
+  let repo: AssetRepository;
+
+  beforeAll(() => {
+    db = createDb(TEST_DATABASE_URL as string);
+    repo = createAssetRepository(db);
+  });
+
+  // a: cat (once aliased from kitty), b: dog.
+  beforeEach(async () => {
+    await db.execute(
+      sql`TRUNCATE TABLE assets, asset_tags, tags, tag_aliases RESTART IDENTITY CASCADE`,
+    );
+    const tags = createTagRepository(db);
+    const a = await repo.create(asset("a", {}));
+    const b = await repo.create(asset("b", {}));
+    const [kitty] = await tags.getOrCreateByNames(["kitty"]);
+    const [dog] = await tags.getOrCreateByNames(["dog"]);
+    await tags.setAssetTags(a.id, [kitty!.id], null);
+    await tags.setAssetTags(b.id, [dog!.id], null);
+    await createTagAliasRepository(db).create({
+      antecedentName: "kitty",
+      consequentName: "cat",
+      creatorId: null,
+    });
+  });
+
+  const keys = (p: { assets: Array<{ storageKey: string }> }) =>
+    p.assets.map((x) => x.storageKey).sort();
+  const aliasAware = () =>
+    createAssetService(repo, noopStorage, undefined, (names) =>
+      createTagAliasRepository(db).resolve(names),
+    );
+
+  it("finds posts by the alias antecedent, which no post carries any more", async () => {
+    expect(keys(await aliasAware().list({ query: "kitty" }))).toEqual(["k/a"]);
+    expect(keys(await aliasAware().list({ query: "cat" }))).toEqual(["k/a"]);
+  });
+
+  it("applies the alias inside a negation and alongside its consequent", async () => {
+    expect(keys(await aliasAware().list({ query: "-kitty" }))).toEqual(["k/b"]);
+    expect(keys(await aliasAware().list({ query: "kitty cat" }))).toEqual(["k/a"]);
+  });
+
+  it("without a resolver, the antecedent matches nothing (it was migrated away)", async () => {
+    expect((await createAssetService(repo, noopStorage).list({ query: "kitty" })).total).toBe(0);
   });
 });

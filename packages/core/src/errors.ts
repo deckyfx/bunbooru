@@ -52,6 +52,17 @@ export class RegistrationConflictError extends Error {
   }
 }
 
+/**
+ * The request would duplicate something that already exists (an alias for that
+ * name, the same implication pair). API → 409.
+ */
+export class ConflictError extends Error {
+  constructor(message = "Already exists") {
+    super(message);
+    this.name = "ConflictError";
+  }
+}
+
 /** Invalid input that passed HTTP-schema shape but failed a domain rule. API → 400. */
 export class ValidationError extends Error {
   constructor(message = "Invalid input") {

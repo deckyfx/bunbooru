@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, like, ne, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
-import { assets, assetTags, tags, type Tag, type TagCategory } from "../schema";
+import { assets, assetTags, assetTagVersions, tags, type Tag, type TagCategory } from "../schema";
 import type { DB } from "../client";
 
 /**
@@ -24,10 +24,12 @@ export interface TagRepository {
   /**
    * Replace an asset's tag set with exactly `tagIds`, in one transaction:
    * link added tags, unlink removed ones, and adjust each affected tag's
-   * `postCount` by the matching delta. Idempotent — re-applying the same set is
-   * a no-op.
+   * `postCount` by the matching delta. When the set actually changes, the same
+   * transaction records a tag-history version attributed to `editorId` (null for
+   * a system or plugin edit). Idempotent: re-applying the same set changes
+   * nothing and records nothing.
    */
-  setAssetTags(assetId: number, tagIds: number[]): Promise<void>;
+  setAssetTags(assetId: number, tagIds: number[], editorId: number | null): Promise<void>;
   /**
    * Name-prefix search ordered by popularity (`postCount` desc) for
    * autocomplete; `limit` bounds the result set.
@@ -108,7 +110,7 @@ export function createTagRepository(db: DB): TagRepository {
         .orderBy(asc(tags.category), desc(tags.postCount), asc(tags.name));
     },
 
-    async setAssetTags(assetId, tagIds) {
+    async setAssetTags(assetId, tagIds, editorId) {
       const desired = [...new Set(tagIds)];
       await db.transaction(async (tx) => {
         // Lock the owning asset row so concurrent edits to the SAME asset's tags
@@ -137,6 +139,27 @@ export function createTagRepository(db: DB): TagRepository {
           await tx
             .delete(assetTags)
             .where(and(eq(assetTags.assetId, assetId), inArray(assetTags.tagId, toRemove)));
+        }
+
+        // History: the full resulting set (what a revert restores) plus the diff,
+        // by NAME so a version stays readable after a tag is aliased away. Taken
+        // under the same row lock, so versions of one asset are strictly ordered.
+        if (toAdd.length > 0 || toRemove.length > 0) {
+          const involved = [...new Set([...desired, ...toRemove])];
+          const named = await tx
+            .select({ id: tags.id, name: tags.name })
+            .from(tags)
+            .where(inArray(tags.id, involved));
+          const nameOf = new Map(named.map((t) => [t.id, t.name]));
+          const names = (ids: number[]) =>
+            ids.map((id) => nameOf.get(id)).filter((n): n is string => n !== undefined).sort();
+          await tx.insert(assetTagVersions).values({
+            assetId,
+            userId: editorId,
+            tags: names(desired),
+            added: names(toAdd),
+            removed: names(toRemove),
+          });
         }
       });
     },

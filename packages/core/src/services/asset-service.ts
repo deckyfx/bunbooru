@@ -3,7 +3,7 @@ import type { StorageProvider, StoredObject } from "@bunbooru/storage";
 
 import { UnsupportedMediaError } from "../errors";
 import type { CoreEvents } from "../events";
-import { compileAssetSearch } from "../search/asset-query";
+import { compileAssetSearch, type AliasResolver } from "../search/asset-query";
 
 /** Default and ceiling page sizes — the ceiling bounds the cost of one query. */
 export const DEFAULT_PER_PAGE = 20;
@@ -157,6 +157,7 @@ export function createAssetService(
   repository: AssetRepository,
   storage: StorageProvider,
   events?: CoreEvents,
+  resolveAliases?: AliasResolver,
 ): AssetService {
   /**
    * The shared ingest pipeline: hash → dedupe → sniff → store → insert → emit,
@@ -283,7 +284,7 @@ export function createAssetService(
       // same filter so pagination metadata matches the page. Trim first so
       // surrounding whitespace is normalized away, not fed to the parser.
       const query = options.query?.trim();
-      const where = query ? compileAssetSearch(query) : undefined;
+      const where = query ? await compileAssetSearch(query, resolveAliases) : undefined;
 
       // Count and page in parallel — they're independent reads.
       const [list, total] = await Promise.all([

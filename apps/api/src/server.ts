@@ -11,9 +11,13 @@ import {
   type Asset,
   type AssetUpdate,
   type Core,
+  type Page,
   type PublicUser,
   type StorageProvider,
   type Tag,
+  type TagAlias,
+  type TagImplication,
+  type TagVersion,
   type User,
 } from "@bunbooru/core";
 import { PLUGIN_SDK_VERSION } from "@bunbooru/plugin-sdk";
@@ -121,6 +125,81 @@ export type TagDto = Pick<Tag, "name" | "category" | "postCount">;
 function serializeTag(tag: Tag): TagDto {
   return { name: tag.name, category: tag.category, postCount: tag.postCount };
 }
+
+/** Wire shape of an alias: `antecedent` is a bare name (it has no tag row any more). */
+export type TagAliasDto = {
+  antecedent: string;
+  consequent: TagDto;
+  creator: string | null;
+  createdAt: string;
+};
+
+/** Wire shape of an implication. */
+export type TagImplicationDto = {
+  antecedent: TagDto;
+  consequent: TagDto;
+  creator: string | null;
+  createdAt: string;
+};
+
+/** Wire shape of one tag-history entry. `editor` is null for a system/plugin edit. */
+export type TagVersionDto = {
+  id: number;
+  tags: string[];
+  added: string[];
+  removed: string[];
+  editor: string | null;
+  createdAt: string;
+};
+
+/** One page of an admin list, with pagination metadata. */
+export type PageDto<T> = { items: T[]; total: number; page: number; perPage: number; pageCount: number };
+
+function serializeAlias(alias: TagAlias): TagAliasDto {
+  return {
+    antecedent: alias.antecedentName,
+    consequent: serializeTag(alias.consequent),
+    creator: alias.creatorName,
+    createdAt: alias.createdAt.toISOString(),
+  };
+}
+
+function serializeImplication(implication: TagImplication): TagImplicationDto {
+  return {
+    antecedent: serializeTag(implication.antecedent),
+    consequent: serializeTag(implication.consequent),
+    creator: implication.creatorName,
+    createdAt: implication.createdAt.toISOString(),
+  };
+}
+
+function serializeVersion(version: TagVersion): TagVersionDto {
+  return {
+    id: version.id,
+    tags: version.tags,
+    added: version.added,
+    removed: version.removed,
+    editor: version.username,
+    createdAt: version.createdAt.toISOString(),
+  };
+}
+
+/** Map a Core {@link Page} onto the wire, serializing each item. */
+function serializePage<T, D>(page: Page<T>, serialize: (item: T) => D): PageDto<D> {
+  return { ...page, items: page.items.map(serialize) };
+}
+
+/** `?page&perPage` for the admin lists; the service clamps them further. */
+const listQuery = t.Object({
+  page: t.Optional(t.Numeric({ minimum: 1, maximum: 1_000_000, multipleOf: 1 })),
+  perPage: t.Optional(t.Numeric({ minimum: 1, maximum: 200, multipleOf: 1 })),
+});
+
+/** An alias/implication pair from admin input; the service normalizes both names. */
+const tagPairBody = t.Object({
+  antecedent: t.String({ minLength: 1, maxLength: 100 }),
+  consequent: t.String({ minLength: 1, maxLength: 100 }),
+});
 
 /** Accepted tag categories on write — mirrors the DB `tag_category` enum. */
 const tagCategorySchema = t.Union([
@@ -874,7 +953,7 @@ export function createApp({
             if (!asset) throw new HttpError(404, "Asset not found");
             // Only the uploader or an admin may edit a post's tags.
             if (!isOwnerOrAdmin(user, asset.uploaderId)) throw new AuthorizationError();
-            const tags = await core.tagService.setAssetTags(params.id, body.tags);
+            const tags = await core.tagService.setAssetTags(params.id, body.tags, user.id);
             return tags.map(serializeTag);
           },
           {
@@ -883,6 +962,49 @@ export function createApp({
             // is length-bounded (the service normalizes/drops invalid ones).
             body: t.Object({
               tags: t.Array(t.String({ maxLength: 100 }), { maxItems: 1000 }),
+            }),
+          },
+        )
+        // A post's tag history, newest first (public, like the tags themselves).
+        // Keyset-paginated: pass the last id you got as `before` for the next page.
+        .get(
+          "/assets/:id/tags/history",
+          async ({ params, query }) => {
+            const asset = await core.assetService.getById(params.id);
+            if (!asset) throw new HttpError(404, "Asset not found");
+            const versions = await core.tagService.history(params.id, {
+              limit: query.limit,
+              beforeId: query.before,
+            });
+            return versions.map(serializeVersion);
+          },
+          {
+            params: idParam,
+            query: t.Object({
+              limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100, multipleOf: 1 })),
+              before: t.Optional(
+                t.Numeric({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER, multipleOf: 1 }),
+              ),
+            }),
+          },
+        )
+        // Restore a recorded version's tag set, as a new edit by the caller. Same
+        // permission as editing tags: the uploader or an admin.
+        .post(
+          "/assets/:id/tags/revert",
+          async ({ params, body, currentUser }) => {
+            const user = requireUser(currentUser);
+            const asset = await core.assetService.getById(params.id);
+            if (!asset) throw new HttpError(404, "Asset not found");
+            if (!isOwnerOrAdmin(user, asset.uploaderId)) throw new AuthorizationError();
+            const tags = await core.tagService.revert(params.id, body.versionId, user.id);
+            if (!tags) throw new HttpError(404, "Version not found for this post");
+            return tags.map(serializeTag);
+          },
+          {
+            params: idParam,
+            body: t.Object({
+              versionId: t.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
             }),
           },
         )
@@ -927,6 +1049,92 @@ export function createApp({
             return serializeTag(tag);
           },
           { params: tagNameParam, body: t.Object({ category: tagCategorySchema }) },
+        )
+        // --- Tag gardening: aliases + implications ---------------------------
+        // Lists are public (they explain why a tag got rewritten or added);
+        // changes are admin-only (`requireUser` → 401, `canModerate` → 403).
+        .get(
+          "/tag-aliases",
+          async ({ query }) =>
+            serializePage(
+              await core.tagAliasService.list({ page: query.page, perPage: query.perPage }),
+              serializeAlias,
+            ),
+          { query: listQuery },
+        )
+        // Alias `antecedent` → `consequent`, migrating every post. 400 for a rule
+        // violation (chains, implications on the antecedent), 409 if already aliased.
+        .post(
+          "/tag-aliases",
+          async ({ body, currentUser, set }) => {
+            const user = requireUser(currentUser);
+            if (!canModerate(user)) throw new AuthorizationError();
+            const { alias, migratedPosts } = await core.tagAliasService.create(
+              body.antecedent,
+              body.consequent,
+              user.id,
+            );
+            set.status = 201;
+            return { alias: serializeAlias(alias), migratedPosts };
+          },
+          { body: tagPairBody },
+        )
+        .delete(
+          "/tag-aliases/:name",
+          async ({ params, currentUser, set }) => {
+            const user = requireUser(currentUser);
+            if (!canModerate(user)) throw new AuthorizationError();
+            if (!(await core.tagAliasService.remove(params.name))) {
+              throw new HttpError(404, "Alias not found");
+            }
+            set.status = 204;
+            return "";
+          },
+          { params: tagNameParam },
+        )
+        .get(
+          "/tag-implications",
+          async ({ query }) =>
+            serializePage(
+              await core.tagImplicationService.list({ page: query.page, perPage: query.perPage }),
+              serializeImplication,
+            ),
+          { query: listQuery },
+        )
+        // Make `antecedent` imply `consequent`, backfilling existing posts. 400 for
+        // a rule violation (loops, aliased names), 409 if the pair exists.
+        .post(
+          "/tag-implications",
+          async ({ body, currentUser, set }) => {
+            const user = requireUser(currentUser);
+            if (!canModerate(user)) throw new AuthorizationError();
+            const { implication, backfilledPosts } = await core.tagImplicationService.create(
+              body.antecedent,
+              body.consequent,
+              user.id,
+            );
+            set.status = 201;
+            return { implication: serializeImplication(implication), backfilledPosts };
+          },
+          { body: tagPairBody },
+        )
+        .delete(
+          "/tag-implications/:antecedent/:consequent",
+          async ({ params, currentUser, set }) => {
+            const user = requireUser(currentUser);
+            if (!canModerate(user)) throw new AuthorizationError();
+            if (!(await core.tagImplicationService.remove(params.antecedent, params.consequent))) {
+              throw new HttpError(404, "Implication not found");
+            }
+            set.status = 204;
+            return "";
+          },
+          {
+            params: t.Object({
+              antecedent: t.String({ minLength: 1, maxLength: 100 }),
+              consequent: t.String({ minLength: 1, maxLength: 100 }),
+            }),
+          },
         )
         // --- Traffic counters ----------------------------------------------
         // Record a view of a post (throttled to at most once per window per

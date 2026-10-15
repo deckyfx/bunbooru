@@ -16,6 +16,8 @@ import type {
   SettingsService,
   StatsService,
   Tag,
+  TagAlias,
+  TagImplication,
   TagService,
   UploadService,
   User,
@@ -23,6 +25,7 @@ import type {
 import {
   AuthenticationError,
   AuthorizationError,
+  ConflictError,
   createCoreEvents,
   RegistrationConflictError,
   UnsupportedMediaError,
@@ -63,6 +66,20 @@ const sampleTag: Tag = {
   category: "general",
   postCount: 42,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
+};
+
+/** Fixed alias/implication rows for the tag-gardening routes. */
+const sampleAlias: TagAlias = {
+  antecedentName: "kitty",
+  consequent: { ...sampleTag, id: 2, name: "cat" },
+  creatorName: "admin",
+  createdAt: new Date("2026-01-03T00:00:00.000Z"),
+};
+const sampleImplication: TagImplication = {
+  antecedent: { ...sampleTag, id: 2, name: "cat" },
+  consequent: { ...sampleTag, id: 3, name: "animal" },
+  creatorName: "admin",
+  createdAt: new Date("2026-01-04T00:00:00.000Z"),
 };
 
 /** A fixed user row; its `passwordHash` must never appear on the wire. */
@@ -135,7 +152,19 @@ function stubCore(
       setCategory: async () => sampleTag,
       relatedTags: async () => [sampleTag],
       tagsForAssets: async () => [sampleTag],
+      history: async () => [],
+      revert: async () => [sampleTag],
       ...tagOverrides,
+    },
+    tagAliasService: {
+      list: async () => ({ items: [], total: 0, page: 1, perPage: 50, pageCount: 0 }),
+      create: async () => ({ alias: sampleAlias, migratedPosts: 0 }),
+      remove: async () => true,
+    },
+    tagImplicationService: {
+      list: async () => ({ items: [], total: 0, page: 1, perPage: 50, pageCount: 0 }),
+      create: async () => ({ implication: sampleImplication, backfilledPosts: 0 }),
+      remove: async () => true,
     },
     statsService: {
       recordView: async () => true,
@@ -1503,5 +1532,202 @@ describe("embedded web SPA on the API app (single-binary mode)", () => {
     const body = (await res.json()) as { error: { message: string; requestId: string } };
     expect(body.error.requestId).toBeString();
     expect(res.headers.get("x-request-id")).toBe(body.error.requestId);
+  });
+});
+
+describe("tag gardening routes", () => {
+  const adminAuth: Partial<AuthService> = { currentUser: async () => adminUser };
+  const ownedAsset = { getById: async () => sampleAsset };
+
+  function req(path: string, method = "GET", body?: unknown, auth = true): Request {
+    return new Request(`http://localhost/api/v1${path}`, {
+      method,
+      headers: {
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+        ...(auth ? AUTH_HEADER : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  }
+
+  /** A stub Core with admin auth and the given gardening-service overrides. */
+  function gardeningCore(
+    overrides: { aliases?: Partial<Core["tagAliasService"]>; implications?: Partial<Core["tagImplicationService"]> },
+    auth: Partial<AuthService> = adminAuth,
+  ): Core {
+    const base = stubCore({}, {}, {}, {}, auth);
+    return {
+      ...base,
+      tagAliasService: { ...base.tagAliasService, ...overrides.aliases },
+      tagImplicationService: { ...base.tagImplicationService, ...overrides.implications },
+    };
+  }
+
+  it("PATCH /assets/:id/tags attributes the edit to the caller", async () => {
+    let editor: number | null | undefined;
+    const core = stubCore(ownedAsset, {}, {
+      setAssetTags: async (_id, _names, editorId) => {
+        editor = editorId;
+        return [sampleTag];
+      },
+    });
+    const res = await buildApp(core).handle(req("/assets/1/tags", "PATCH", { tags: ["1girl"] }));
+    expect(res.status).toBe(200);
+    expect(editor).toBe(sampleUser.id);
+  });
+
+  it("GET /assets/:id/tags/history serializes versions and forwards the cursor", async () => {
+    let received: unknown;
+    const core = stubCore(ownedAsset, {}, {
+      history: async (assetId, options) => {
+        received = { assetId, ...options };
+        return [
+          {
+            id: 9,
+            assetId: 1,
+            userId: 7,
+            username: "alice",
+            tags: ["cat", "solo"],
+            added: ["cat"],
+            removed: ["kitty"],
+            createdAt: new Date("2026-02-01T00:00:00.000Z"),
+          },
+        ];
+      },
+    });
+    const res = await buildApp(core).handle(req("/assets/1/tags/history?limit=5&before=12", "GET", undefined, false));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([
+      {
+        id: 9,
+        tags: ["cat", "solo"],
+        added: ["cat"],
+        removed: ["kitty"],
+        editor: "alice",
+        createdAt: "2026-02-01T00:00:00.000Z",
+      },
+    ]);
+    expect(received).toEqual({ assetId: 1, limit: 5, beforeId: 12 });
+  });
+
+  it("GET /assets/:id/tags/history → 404 for a missing post", async () => {
+    const res = await buildApp(stubCore()).handle(req("/assets/1/tags/history", "GET", undefined, false));
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /assets/:id/tags/revert restores as the caller; 404 for a foreign/missing version", async () => {
+    let call: unknown;
+    const ok = stubCore(ownedAsset, {}, {
+      revert: async (assetId, versionId, editorId) => {
+        call = { assetId, versionId, editorId };
+        return [sampleTag];
+      },
+    });
+    const res = await buildApp(ok).handle(req("/assets/1/tags/revert", "POST", { versionId: 4 }));
+    expect(res.status).toBe(200);
+    expect(call).toEqual({ assetId: 1, versionId: 4, editorId: sampleUser.id });
+
+    const missing = stubCore(ownedAsset, {}, { revert: async () => null });
+    expect((await buildApp(missing).handle(req("/assets/1/tags/revert", "POST", { versionId: 4 }))).status).toBe(404);
+  });
+
+  it("POST /assets/:id/tags/revert → 403 for a non-owner member, 401 for anon", async () => {
+    const foreign = stubCore({ getById: async () => ({ ...sampleAsset, uploaderId: 999 }) });
+    expect((await buildApp(foreign).handle(req("/assets/1/tags/revert", "POST", { versionId: 4 }))).status).toBe(403);
+    expect(
+      (await buildApp(stubCore(ownedAsset)).handle(req("/assets/1/tags/revert", "POST", { versionId: 4 }, false))).status,
+    ).toBe(401);
+  });
+
+  it("GET /tag-aliases and /tag-implications are public pages", async () => {
+    const core = gardeningCore({
+      aliases: { list: async () => ({ items: [sampleAlias], total: 1, page: 1, perPage: 50, pageCount: 1 }) },
+      implications: {
+        list: async () => ({ items: [sampleImplication], total: 1, page: 1, perPage: 50, pageCount: 1 }),
+      },
+    });
+    const aliases = await buildApp(core).handle(req("/tag-aliases?page=1&perPage=50", "GET", undefined, false));
+    expect(aliases.status).toBe(200);
+    expect(await aliases.json()).toEqual({
+      items: [
+        {
+          antecedent: "kitty",
+          consequent: { name: "cat", category: "general", postCount: 42 },
+          creator: "admin",
+          createdAt: "2026-01-03T00:00:00.000Z",
+        },
+      ],
+      total: 1,
+      page: 1,
+      perPage: 50,
+      pageCount: 1,
+    });
+    const implications = await buildApp(core).handle(req("/tag-implications", "GET", undefined, false));
+    expect(((await implications.json()) as { items: { antecedent: { name: string } }[] }).items[0]?.antecedent.name).toBe("cat");
+  });
+
+  it("POST /tag-aliases → 201 with the migration count for an admin", async () => {
+    let call: unknown;
+    const core = gardeningCore({
+      aliases: {
+        create: async (antecedent, consequent, creatorId) => {
+          call = { antecedent, consequent, creatorId };
+          return { alias: sampleAlias, migratedPosts: 12 };
+        },
+      },
+    });
+    const res = await buildApp(core).handle(req("/tag-aliases", "POST", { antecedent: "kitty", consequent: "cat" }));
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { migratedPosts: number }).migratedPosts).toBe(12);
+    expect(call).toEqual({ antecedent: "kitty", consequent: "cat", creatorId: adminUser.id });
+  });
+
+  it("maps gardening refusals: 409 for a duplicate, 400 for a rule violation", async () => {
+    const duplicate = gardeningCore({
+      aliases: {
+        create: async () => {
+          throw new ConflictError('"kitty" is already aliased');
+        },
+      },
+    });
+    const dupRes = await buildApp(duplicate).handle(req("/tag-aliases", "POST", { antecedent: "kitty", consequent: "cat" }));
+    expect(dupRes.status).toBe(409);
+    expect(((await dupRes.json()) as { error: { message: string } }).error.message).toContain("already aliased");
+
+    const loop = gardeningCore({
+      implications: {
+        create: async () => {
+          throw new ValidationError("this would create a loop");
+        },
+      },
+    });
+    const loopRes = await buildApp(loop).handle(req("/tag-implications", "POST", { antecedent: "a", consequent: "b" }));
+    expect(loopRes.status).toBe(400);
+  });
+
+  it("gardening writes are admin-only: 403 for a member, 401 for anon", async () => {
+    const member = gardeningCore({}, {});
+    for (const [path, method, body] of [
+      ["/tag-aliases", "POST", { antecedent: "a", consequent: "b" }],
+      ["/tag-aliases/a", "DELETE", undefined],
+      ["/tag-implications", "POST", { antecedent: "a", consequent: "b" }],
+      ["/tag-implications/a/b", "DELETE", undefined],
+    ] as const) {
+      expect((await buildApp(member).handle(req(path, method, body))).status).toBe(403);
+      expect((await buildApp(member).handle(req(path, method, body, false))).status).toBe(401);
+    }
+  });
+
+  it("DELETE routes → 204 when removed, 404 when there was nothing", async () => {
+    const removed = gardeningCore({});
+    expect((await buildApp(removed).handle(req("/tag-aliases/kitty", "DELETE"))).status).toBe(204);
+    expect((await buildApp(removed).handle(req("/tag-implications/cat/animal", "DELETE"))).status).toBe(204);
+
+    const none = gardeningCore({
+      aliases: { remove: async () => false },
+      implications: { remove: async () => false },
+    });
+    expect((await buildApp(none).handle(req("/tag-aliases/kitty", "DELETE"))).status).toBe(404);
+    expect((await buildApp(none).handle(req("/tag-implications/cat/animal", "DELETE"))).status).toBe(404);
   });
 });

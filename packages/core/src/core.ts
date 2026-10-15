@@ -10,7 +10,10 @@ import {
   createSessionRepository,
   createSettingsRepository,
   createStatsRepository,
+  createTagAliasRepository,
+  createTagImplicationRepository,
   createTagRepository,
+  createTagVersionRepository,
   createUploadSessionRepository,
   createUserRepository,
   type DB,
@@ -30,6 +33,11 @@ import { createPluginCatalogService, type PluginCatalogService } from "./service
 import { createPluginStateService, type PluginStateService } from "./services/plugin-state-service";
 import { createSettingsService, type SettingsService } from "./services/settings-service";
 import { createStatsService, type StatsService } from "./services/stats-service";
+import { createTagAliasService, type TagAliasService } from "./services/tag-alias-service";
+import {
+  createTagImplicationService,
+  type TagImplicationService,
+} from "./services/tag-implication-service";
 import { createTagService, type TagService } from "./services/tag-service";
 import { createUploadService, type UploadService } from "./services/upload-service";
 
@@ -42,8 +50,12 @@ export interface Core {
   assetService: AssetService;
   /** Resumable chunked uploads — stages chunks, then finalizes via `assetService`. */
   uploadService: UploadService;
-  /** Tag taxonomy + asset↔tag application (normalization, set/diff, postCount). */
+  /** Tag taxonomy + asset↔tag application (normalization, aliases, implications, history). */
   tagService: TagService;
+  /** Tag aliases (`kitty` means `cat`): admin-managed, applied to tagging and search. */
+  tagAliasService: TagAliasService;
+  /** Tag implications (`cat` implies `animal`): admin-managed, materialized onto posts. */
+  tagImplicationService: TagImplicationService;
   /** Traffic counters — per-post views (debounced) + daily unique visitors. */
   statsService: StatsService;
   /** Accounts + opaque server sessions + API keys — auth/currentUser + session GC. */
@@ -110,7 +122,13 @@ export function assembleCore(
 ): Core {
   const events = createCoreEvents();
   const mailService = createMailService();
-  const assetService = createAssetService(createAssetRepository(db), storage, events);
+  const tagRepository = createTagRepository(db);
+  const tagAliasRepository = createTagAliasRepository(db);
+  const tagImplicationRepository = createTagImplicationRepository(db);
+  // Search rewrites aliased names through the same table tagging uses.
+  const assetService = createAssetService(createAssetRepository(db), storage, events, (names) =>
+    tagAliasRepository.resolve(names),
+  );
   const settingsService = createSettingsService(createSettingsRepository(db), {
     defaults: {
       maxUploadBytes: limits.maxUploadBytes,
@@ -126,7 +144,14 @@ export function assembleCore(
     // Read the (runtime-editable) resumable cap at call time.
     () => settingsService.getUploadLimits().then((l) => l.maxResumableUploadBytes),
   );
-  const tagService = createTagService(createTagRepository(db));
+  const tagService = createTagService({
+    tags: tagRepository,
+    aliases: tagAliasRepository,
+    implications: tagImplicationRepository,
+    versions: createTagVersionRepository(db),
+  });
+  const tagAliasService = createTagAliasService(tagAliasRepository);
+  const tagImplicationService = createTagImplicationService(tagImplicationRepository);
   const statsService = createStatsService(createStatsRepository(db));
   const authService = createAuthService(
     createUserRepository(db),
@@ -148,6 +173,8 @@ export function assembleCore(
     assetService,
     uploadService,
     tagService,
+    tagAliasService,
+    tagImplicationService,
     statsService,
     authService,
     settingsService,
