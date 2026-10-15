@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { PageDto, TagAliasDto, TagImplicationDto } from "@bunbooru/api";
 
-import { api, unwrap } from "./api";
+import { api, pathParam, unwrap } from "./api";
 
 export type { TagAliasDto, TagImplicationDto };
 
@@ -57,7 +57,7 @@ export function useDeleteTagAlias() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (antecedent: string) => {
-      const res = await api.api.v1["tag-aliases"]({ name: antecedent }).delete();
+      const res = await api.api.v1["tag-aliases"]({ name: pathParam(antecedent) }).delete();
       if (res.error) throw res.error;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ALIASES_KEY }),
@@ -92,8 +92,8 @@ export function useDeleteTagImplication() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (pair: { antecedent: string; consequent: string }) => {
-      const res = await api.api.v1["tag-implications"]({ antecedent: pair.antecedent })({
-        consequent: pair.consequent,
+      const res = await api.api.v1["tag-implications"]({ antecedent: pathParam(pair.antecedent) })({
+        consequent: pathParam(pair.consequent),
       }).delete();
       if (res.error) throw res.error;
     },

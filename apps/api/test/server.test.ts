@@ -1718,6 +1718,30 @@ describe("tag gardening routes", () => {
     }
   });
 
+  it("decodes percent-encoded tag names in path params (ac/dc, what?, 50%)", async () => {
+    const seen: unknown[] = [];
+    const core = gardeningCore({
+      aliases: {
+        remove: async (name) => {
+          seen.push(name);
+          return true;
+        },
+      },
+      implications: {
+        remove: async (antecedent, consequent) => {
+          seen.push([antecedent, consequent]);
+          return true;
+        },
+      },
+    });
+    const enc = encodeURIComponent;
+    expect((await buildApp(core).handle(req(`/tag-aliases/${enc("ac/dc")}`, "DELETE"))).status).toBe(204);
+    expect(
+      (await buildApp(core).handle(req(`/tag-implications/${enc("what?")}/${enc("50%")}`, "DELETE"))).status,
+    ).toBe(204);
+    expect(seen).toEqual(["ac/dc", ["what?", "50%"]]);
+  });
+
   it("DELETE routes → 204 when removed, 404 when there was nothing", async () => {
     const removed = gardeningCore({});
     expect((await buildApp(removed).handle(req("/tag-aliases/kitty", "DELETE"))).status).toBe(204);

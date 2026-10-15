@@ -80,6 +80,17 @@ export const treatyOptions =
 
 export const api = treaty<App>(treatyOrigin, treatyOptions);
 
+/**
+ * Encode a free-form value (a tag name) for use as an Eden PATH parameter.
+ * Eden splices path parameters into the URL as-is (it only encodes the query
+ * string), so a tag like `ac/dc` would split the path (404), `what?` would lose
+ * everything from `?`, and `50%` would be a malformed escape. Elysia decodes the
+ * segment back on the server. Numeric ids don't need this.
+ */
+export function pathParam(value: string): string {
+  return encodeURIComponent(value);
+}
+
 /** Public URL for an asset's stored bytes (used as an `<img src>`, not a data call). */
 export function assetFileUrl(id: number): string {
   return `/api/v1/assets/${id}/file`;

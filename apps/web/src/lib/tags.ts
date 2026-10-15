@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { TagDto, TagVersionDto } from "@bunbooru/api";
 
-import { api, unwrap } from "./api";
+import { api, pathParam, unwrap } from "./api";
 
 export type { TagDto, TagVersionDto };
 
@@ -139,7 +139,7 @@ export function useSetTagCategory() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ name, category }: { name: string; category: TagCategory }): Promise<TagDto> =>
-      unwrap(await api.api.v1.tags({ name }).patch({ category })),
+      unwrap(await api.api.v1.tags({ name: pathParam(name) }).patch({ category })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tag-autocomplete"] }),
   });
 }
@@ -167,7 +167,7 @@ export function useRelatedTags(name: string, limit = 10) {
     queryKey: ["related-tags", trimmed, limit],
     enabled: trimmed.length > 0,
     queryFn: async (): Promise<TagDto[]> =>
-      unwrap(await api.api.v1.tags({ name: trimmed }).related.get({ query: { limit } })),
+      unwrap(await api.api.v1.tags({ name: pathParam(trimmed) }).related.get({ query: { limit } })),
   });
 }
 
