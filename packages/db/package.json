@@ -10,9 +10,10 @@
   "scripts": {
     "db:generate": "drizzle-kit generate && bun ../../scripts/embed-migrations.ts",
     "db:studio": "drizzle-kit studio",
-    "migrate": "bun run src/migrate.ts"
+    "migrate": "bun run src/migrate.ts",
+    "typecheck": "bun check src test"
   },
   "dependencies": {
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.4"
   }
 }

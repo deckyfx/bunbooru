@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "module": "src/index.ts",
+  "scripts": {
+    "typecheck": "bun check src"
+  },
   "dependencies": {
     "@bunbooru/core": "workspace:*",
     "@bunbooru/events": "workspace:*"
