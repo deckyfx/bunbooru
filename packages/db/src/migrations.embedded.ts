@@ -28,6 +28,7 @@ import m_0011_foamy_king_bedlam from "../drizzle/0011_foamy_king_bedlam.sql" wit
 import m_0012_reflective_harrier from "../drizzle/0012_reflective_harrier.sql" with { type: "text" };
 import m_0013_magical_sabra from "../drizzle/0013_magical_sabra.sql" with { type: "text" };
 import m_0014_redundant_black_queen from "../drizzle/0014_redundant_black_queen.sql" with { type: "text" };
+import m_0015_real_carnage from "../drizzle/0015_real_carnage.sql" with { type: "text" };
 
 /** tag+".sql" → raw SQL text (compiled into the binary). */
 const files: Record<string, string> = {
@@ -46,6 +47,7 @@ const files: Record<string, string> = {
   "0012_reflective_harrier.sql": m_0012_reflective_harrier,
   "0013_magical_sabra.sql": m_0013_magical_sabra,
   "0014_redundant_black_queen.sql": m_0014_redundant_black_queen,
+  "0015_real_carnage.sql": m_0015_real_carnage,
 };
 
 /** The embedded journal + SQL for this package, for `applyEmbeddedMigrations`. */

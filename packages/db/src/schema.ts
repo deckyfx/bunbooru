@@ -178,6 +178,87 @@ export const assetTags = pgTable(
 );
 
 /**
+ * Tag aliases: `antecedentName` (e.g. `kitty`) means the same as the consequent
+ * tag (`cat`). Creating one migrates every post from the antecedent to the
+ * consequent and deletes the antecedent tag, so from then on the antecedent
+ * exists only here: as a NAME (no tag row to point at) that tagging and search
+ * both rewrite to the consequent. No chains: a consequent is never itself an
+ * antecedent (enforced by the alias service).
+ */
+export const tagAliases = pgTable(
+  "tag_aliases",
+  {
+    antecedentName: text("antecedent_name").primaryKey(),
+    consequentId: bigint("consequent_id", { mode: "number" })
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+    creatorId: bigint("creator_id", { mode: "number" }).references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("tag_aliases_consequent_idx").on(table.consequentId)],
+);
+
+/**
+ * Tag implications: a post tagged with the antecedent (`cat`) is also tagged with
+ * the consequent (`animal`), transitively. Implied tags are MATERIALIZED onto
+ * posts (at tag time, and once for existing posts when the implication is
+ * created), so search stays a plain tag lookup. Removing an implication leaves
+ * tags already applied in place. The graph is kept acyclic by the implication
+ * service.
+ */
+export const tagImplications = pgTable(
+  "tag_implications",
+  {
+    antecedentId: bigint("antecedent_id", { mode: "number" })
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+    consequentId: bigint("consequent_id", { mode: "number" })
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+    creatorId: bigint("creator_id", { mode: "number" }).references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.antecedentId, table.consequentId] }),
+    // The recursive closure walks antecedent → consequent; this serves the
+    // reverse lookups ("what implies X?").
+    index("tag_implications_consequent_idx").on(table.consequentId),
+    check("tag_implications_not_self", sql`${table.antecedentId} <> ${table.consequentId}`),
+  ],
+);
+
+/**
+ * Tag edit history: one row per DIRECT change to a post's tags (upload, edit,
+ * revert), with the full resulting set (`tags`, which a revert restores) and the
+ * diff (`added` / `removed`, for display). Stored as names, not ids, so history
+ * stays readable after a tag is aliased away. Bulk rewrites by aliases and
+ * implications are deliberately not recorded per post: the alias/implication row
+ * itself records who made that change and when.
+ */
+export const assetTagVersions = pgTable(
+  "asset_tag_versions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    assetId: bigint("asset_id", { mode: "number" })
+      .notNull()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    /** Who made the edit; null for system/plugin edits or a deleted account. */
+    userId: bigint("user_id", { mode: "number" }).references(() => users.id, {
+      onDelete: "set null",
+    }),
+    tags: text("tags").array().notNull(),
+    added: text("added").array().notNull(),
+    removed: text("removed").array().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("asset_tag_versions_asset_idx").on(table.assetId, table.id)],
+);
+
+/**
  * View-dedup ledger: one row per (visitor, asset). The stats service upserts
  * here and only bumps `assets.view_count` when a row is newly inserted or its
  * `countedAt` is older than the session window — so refreshes within a session
@@ -383,6 +464,10 @@ export type NewTag = typeof tags.$inferInsert;
 
 export type AssetTag = typeof assetTags.$inferSelect;
 export type NewAssetTag = typeof assetTags.$inferInsert;
+
+export type TagAliasRow = typeof tagAliases.$inferSelect;
+export type TagImplicationRow = typeof tagImplications.$inferSelect;
+export type AssetTagVersionRow = typeof assetTagVersions.$inferSelect;
 
 export type PostView = typeof postViews.$inferSelect;
 export type NewPostView = typeof postViews.$inferInsert;

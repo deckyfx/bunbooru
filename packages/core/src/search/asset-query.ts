@@ -1,7 +1,16 @@
 import { and, between, eq, gt, gte, lt, lte, not, or, sql, type SQL } from "drizzle-orm";
 
 import { assets, assetTags, tags, type Rating } from "@bunbooru/db";
-import { parse, type MetatagNode, type QueryNode } from "@bunbooru/search";
+import {
+  collectTagNames,
+  optimize,
+  parse,
+  type MetatagNode,
+  type QueryNode,
+} from "@bunbooru/search";
+
+/** Looks up aliases for the given tag names: antecedent → consequent name. */
+export type AliasResolver = (names: string[]) => Promise<ReadonlyMap<string, string>>;
 
 /**
  * The Search Engine (Core-owned per CLAUDE.md). Compiles a query string into a
@@ -11,11 +20,19 @@ import { parse, type MetatagNode, type QueryNode } from "@bunbooru/search";
  *   rating:safe width:>1000 1girl -monochrome
  *     → rating = 'safe' AND width > 1000 AND <tag 1girl> AND NOT <tag monochrome>
  *
- * Metatags map to asset columns and filter immediately. Tag terms compile to an
- * `asset_tags` EXISTS subquery — valid SQL today, matching once tagging lands.
+ * The full pipeline: parse → fetch the aliases for exactly the tag names the
+ * query mentions (one batched lookup) → optimize (resolve aliases, simplify) →
+ * build SQL. Metatags map to asset columns; tag terms compile to an `asset_tags`
+ * EXISTS subquery. Without a resolver, aliases are simply not applied.
  */
-export function compileAssetSearch(query: string): SQL | undefined {
-  return buildNode(parse(query));
+export async function compileAssetSearch(
+  query: string,
+  resolveAliases?: AliasResolver,
+): Promise<SQL | undefined> {
+  const ast = parse(query);
+  const names = collectTagNames(ast);
+  const aliases = resolveAliases && names.length > 0 ? await resolveAliases(names) : undefined;
+  return buildNode(optimize(ast, { aliases }));
 }
 
 const RATINGS = new Set<Rating>(["safe", "questionable", "explicit", "unrated"]);

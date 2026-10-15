@@ -26,7 +26,19 @@ export type { StoredObject } from "@bunbooru/storage";
 export type { MailProvider, OutgoingMail } from "./mail/mail-provider";
 
 // Domain row types, re-exported so downstream apps depend on Core, not db directly.
-export type { ApiKey, Asset, AssetUpdate, Rating, Tag, TagCategory, User, UserRole } from "@bunbooru/db";
+export type {
+  ApiKey,
+  Asset,
+  AssetUpdate,
+  Rating,
+  Tag,
+  TagAlias,
+  TagCategory,
+  TagImplication,
+  TagVersion,
+  User,
+  UserRole,
+} from "@bunbooru/db";
 
 // The Drizzle handle type + migration runner, re-exported so the plugin loader
 // (and the SDK) reach them through Core rather than importing `@bunbooru/db`.
@@ -82,11 +94,26 @@ export {
 export {
   createTagService,
   normalizeTagName,
+  requireTagName,
+  DEFAULT_HISTORY_LIMIT,
   DEFAULT_TAG_LIMIT,
+  MAX_HISTORY_LIMIT,
   MAX_TAG_LENGTH,
   MAX_TAG_LIMIT,
   type TagService,
+  type TagServiceDeps,
 } from "./services/tag-service";
+// Tag gardening — aliases + implications (admin-managed; data access in @bunbooru/db).
+export { createTagAliasService, type TagAliasService } from "./services/tag-alias-service";
+export {
+  createTagImplicationService,
+  type TagImplicationService,
+} from "./services/tag-implication-service";
+export {
+  DEFAULT_LIST_PER_PAGE,
+  MAX_LIST_PER_PAGE,
+  type Page,
+} from "./services/paging";
 
 // Traffic counters — per-post views (debounced) + daily unique visitors.
 export {
@@ -145,6 +172,7 @@ export { canModerate, canWrite, isOwnerOrAdmin } from "./services/permissions";
 export {
   AuthenticationError,
   AuthorizationError,
+  ConflictError,
   MailNotConfiguredError,
   MailProviderConflictError,
   RegistrationConflictError,

@@ -7,6 +7,7 @@ import { AssetImage } from "../components/asset-image";
 import { RatingControl, type Rating } from "../components/rating-control";
 import { SearchBox } from "../components/popover/search-box";
 import { PostTagPanel } from "../components/tags/post-tag-panel";
+import { TagHistoryPanel } from "../components/tags/tag-history-panel";
 import { assetFileUrl } from "../lib/api";
 import { useAsset, usePostNeighbors, useUpdateAsset, type AssetDto } from "../lib/assets";
 import { useIsLoggedIn } from "../lib/auth";
@@ -69,6 +70,7 @@ function PostDetailView({ id }: { id: string }) {
         {/* Only mount the tag panel for a real asset — its query 404s otherwise,
             and editing tags on a non-existent post makes no sense. */}
         {asset ? <PostTagPanel key={asset.id} assetId={asset.id} /> : null}
+        {asset ? <TagHistoryPanel key={asset.id} asset={asset} /> : null}
 
         {asset ? (
           <AssetInfo key={asset.id} asset={asset} />

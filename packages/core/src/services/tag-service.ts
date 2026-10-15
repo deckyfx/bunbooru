@@ -1,10 +1,23 @@
-import type { Tag, TagCategory, TagRepository } from "@bunbooru/db";
+import type {
+  Tag,
+  TagAliasRepository,
+  TagCategory,
+  TagImplicationRepository,
+  TagRepository,
+  TagVersion,
+  TagVersionRepository,
+} from "@bunbooru/db";
+
+import { ValidationError } from "../errors";
 
 /** Max characters in a normalized tag name (defensive bound on a single label). */
 export const MAX_TAG_LENGTH = 100;
 /** Default and ceiling result counts for autocomplete. */
 export const DEFAULT_TAG_LIMIT = 20;
 export const MAX_TAG_LIMIT = 100;
+/** Default and ceiling page sizes for a post's tag history. */
+export const DEFAULT_HISTORY_LIMIT = 20;
+export const MAX_HISTORY_LIMIT = 100;
 
 /**
  * Normalize a raw tag name to canonical booru form: trimmed, lowercased, runs of
@@ -19,17 +32,45 @@ export function normalizeTagName(raw: string): string | null {
 }
 
 /**
- * Tag application logic — normalization and the set/diff workflow over a
- * {@link TagRepository}. Holds no SQL; the repository keeps `postCount` and the
- * join consistent transactionally.
+ * Normalize a tag name from admin input (aliases, implications), or throw a
+ * {@link ValidationError} naming its `role`. Stricter than tagging, which just
+ * drops a bad name: `*` is refused, since it would make the name a search pattern.
+ */
+export function requireTagName(raw: string, role: string): string {
+  const name = normalizeTagName(raw);
+  if (name === null) throw new ValidationError(`The ${role} must be a tag name of 1-100 characters`);
+  if (name.includes("*")) throw new ValidationError(`The ${role} can't contain "*"`);
+  return name;
+}
+
+/**
+ * Tag application logic — normalization, the vocabulary rules (aliases,
+ * implications) and the set/diff workflow over a {@link TagRepository}. Holds no
+ * SQL; the repository keeps `postCount`, the join and the history consistent
+ * transactionally.
  */
 export interface TagService {
   /**
-   * Replace an asset's tags with the normalized, de-duplicated set parsed from
-   * `rawNames` (unknown names are created). Returns the asset's resulting tags
-   * in canonical order.
+   * Replace an asset's tags with the set parsed from `rawNames`:
+   * 1. normalize and de-duplicate;
+   * 2. rewrite aliased names to their consequent (`kitty` → `cat`);
+   * 3. add everything those tags imply (`cat` → `animal`), transitively;
+   * 4. create unknown tags and apply, recording a history version attributed to
+   *    `editorId` (null for a system or plugin edit).
+   *
+   * An implied tag removed by hand comes straight back while its antecedent
+   * stays, as on Danbooru. Returns the resulting tags in canonical order.
    */
-  setAssetTags(assetId: number, rawNames: string[]): Promise<Tag[]>;
+  setAssetTags(assetId: number, rawNames: string[], editorId?: number | null): Promise<Tag[]>;
+  /** A post's tag history, newest first; `beforeId` continues from a previous page. */
+  history(assetId: number, options?: { limit?: number; beforeId?: number }): Promise<TagVersion[]>;
+  /**
+   * Restore the tag set recorded in `versionId`, as a NEW edit by `editorId`
+   * (history only grows). It goes through the same rules as any edit, so an
+   * alias created since then still applies. Null when the version doesn't exist
+   * or belongs to another post.
+   */
+  revert(assetId: number, versionId: number, editorId: number | null): Promise<Tag[] | null>;
   /** The tags currently on an asset, in canonical order. */
   listForAsset(assetId: number): Promise<Tag[]>;
   /** Prefix autocomplete ordered by popularity; `limit` is clamped to a ceiling. */
@@ -42,21 +83,63 @@ export interface TagService {
   tagsForAssets(assetIds: number[]): Promise<Tag[]>;
 }
 
-/** Build a {@link TagService} over a {@link TagRepository}. */
-export function createTagService(tags: TagRepository): TagService {
+/** What the tag service reads and writes. */
+export interface TagServiceDeps {
+  tags: TagRepository;
+  aliases: Pick<TagAliasRepository, "resolve">;
+  implications: Pick<TagImplicationRepository, "closure">;
+  versions: TagVersionRepository;
+}
+
+/** Clamp a caller-supplied count to `[1, max]`, defaulting non-finite input. */
+function clampLimit(limit: number, fallback: number, max: number): number {
+  const requested = Number.isFinite(limit) ? Math.floor(limit) : fallback;
+  return Math.min(Math.max(1, requested), max);
+}
+
+/** Build a {@link TagService} over its repositories. */
+export function createTagService({ tags, aliases, implications, versions }: TagServiceDeps): TagService {
+  // Known limitation: aliases and implications are read BEFORE the write
+  // transaction, so an edit racing an admin's alias/implication change (within
+  // the same few milliseconds) can apply the old vocabulary: a just-aliased name
+  // briefly returns as a tag, or a just-added implication misses this post until
+  // its next edit. Accepted for an admin-only, rare operation. The airtight fix,
+  // if ever needed, is to take the gardening lock in SHARED mode around the whole
+  // resolve-and-apply step, inside one transaction.
+  async function setAssetTags(
+    assetId: number,
+    rawNames: string[],
+    editorId: number | null = null,
+  ): Promise<Tag[]> {
+    const normalized = [
+      ...new Set(rawNames.map(normalizeTagName).filter((n): n is string => n !== null)),
+    ];
+    // Aliases first, so an antecedent never comes back to life as a tag and
+    // `kitty cat` collapses to one `cat`.
+    const aliased = await aliases.resolve(normalized);
+    const names = [...new Set(normalized.map((name) => aliased.get(name) ?? name))];
+
+    const rows = names.length > 0 ? await tags.getOrCreateByNames(names) : [];
+    const explicit = rows.map((t) => t.id);
+    const implied = await implications.closure(explicit);
+    await tags.setAssetTags(assetId, [...new Set([...explicit, ...implied])], editorId);
+    // Re-read so the result is canonically ordered and reflects exactly what's
+    // linked (the postCount on `rows` is pre-update; listForAsset is current).
+    return tags.listForAsset(assetId);
+  }
+
   return {
-    async setAssetTags(assetId, rawNames) {
-      const names = [
-        ...new Set(rawNames.map(normalizeTagName).filter((n): n is string => n !== null)),
-      ];
-      const rows = names.length > 0 ? await tags.getOrCreateByNames(names) : [];
-      await tags.setAssetTags(
-        assetId,
-        rows.map((t) => t.id),
-      );
-      // Re-read so the result is canonically ordered and reflects exactly what's
-      // linked (the postCount on `rows` is pre-update; listForAsset is current).
-      return tags.listForAsset(assetId);
+    setAssetTags,
+
+    history(assetId, options = {}) {
+      const limit = clampLimit(options.limit ?? DEFAULT_HISTORY_LIMIT, DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT);
+      return versions.listForAsset(assetId, limit, options.beforeId);
+    },
+
+    async revert(assetId, versionId, editorId) {
+      const version = await versions.findById(versionId);
+      if (!version || version.assetId !== assetId) return null;
+      return setAssetTags(assetId, version.tags, editorId);
     },
 
     listForAsset(assetId) {
@@ -66,11 +149,9 @@ export function createTagService(tags: TagRepository): TagService {
     autocomplete(prefix, limit = DEFAULT_TAG_LIMIT) {
       const normalized = normalizeTagName(prefix);
       if (normalized === null) return Promise.resolve([]);
-      // Coerce non-finite (NaN/Infinity) to the default before clamping, so a bad
-      // upstream value can't reach the repository as a NaN limit.
-      const requested = Number.isFinite(limit) ? Math.floor(limit) : DEFAULT_TAG_LIMIT;
-      const clamped = Math.min(Math.max(1, requested), MAX_TAG_LIMIT);
-      return tags.searchByPrefix(normalized, clamped);
+      // Non-finite (NaN/Infinity) falls back to the default before clamping, so a
+      // bad upstream value can't reach the repository as a NaN limit.
+      return tags.searchByPrefix(normalized, clampLimit(limit, DEFAULT_TAG_LIMIT, MAX_TAG_LIMIT));
     },
 
     setCategory(name, category) {
@@ -82,9 +163,7 @@ export function createTagService(tags: TagRepository): TagService {
     relatedTags(name, limit = DEFAULT_TAG_LIMIT) {
       const normalized = normalizeTagName(name);
       if (normalized === null) return Promise.resolve([]);
-      const requested = Number.isFinite(limit) ? Math.floor(limit) : DEFAULT_TAG_LIMIT;
-      const clamped = Math.min(Math.max(1, requested), MAX_TAG_LIMIT);
-      return tags.relatedTags(normalized, clamped);
+      return tags.relatedTags(normalized, clampLimit(limit, DEFAULT_TAG_LIMIT, MAX_TAG_LIMIT));
     },
 
     tagsForAssets(assetIds) {

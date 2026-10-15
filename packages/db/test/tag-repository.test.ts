@@ -72,6 +72,7 @@ describe.skipIf(!TEST_DATABASE_URL)("TagRepository (integration)", () => {
     await tags.setAssetTags(
       assetId,
       rows.map((t) => t.id),
+      null,
     );
 
     const listed = await tags.listForAsset(assetId);
@@ -90,10 +91,10 @@ describe.skipIf(!TEST_DATABASE_URL)("TagRepository (integration)", () => {
     const solo = byName.get("solo")!;
     const smile = byName.get("smile")!;
 
-    await tags.setAssetTags(a1, [oneGirl.id, solo.id]);
-    await tags.setAssetTags(a2, [oneGirl.id]); // 1girl now on two assets
+    await tags.setAssetTags(a1, [oneGirl.id, solo.id], null);
+    await tags.setAssetTags(a2, [oneGirl.id], null); // 1girl now on two assets
     // Re-tag a1: drop solo, add smile.
-    await tags.setAssetTags(a1, [oneGirl.id, smile.id]);
+    await tags.setAssetTags(a1, [oneGirl.id, smile.id], null);
 
     const counts = Object.fromEntries(
       (await tags.searchByPrefix("", 100)).map((t) => [t.name, t.postCount]),
@@ -109,6 +110,7 @@ describe.skipIf(!TEST_DATABASE_URL)("TagRepository (integration)", () => {
     await tags.setAssetTags(
       assetId,
       rows.map((t) => t.id),
+      null,
     );
     expect((await tags.findByName("1girl"))?.postCount).toBe(1);
 
@@ -123,8 +125,8 @@ describe.skipIf(!TEST_DATABASE_URL)("TagRepository (integration)", () => {
   it("re-applying the same set is a no-op (postCount unchanged)", async () => {
     const assetId = await seedAsset("a");
     const rows = await tags.getOrCreateByNames(["1girl"]);
-    await tags.setAssetTags(assetId, [rows[0]!.id]);
-    await tags.setAssetTags(assetId, [rows[0]!.id]);
+    await tags.setAssetTags(assetId, [rows[0]!.id], null);
+    await tags.setAssetTags(assetId, [rows[0]!.id], null);
     expect((await tags.findByName("1girl"))?.postCount).toBe(1);
   });
 
@@ -134,7 +136,7 @@ describe.skipIf(!TEST_DATABASE_URL)("TagRepository (integration)", () => {
       (await tags.getOrCreateByNames(["sky", "skyscraper"])).map((t) => [t.name, t]),
     );
     // Make "sky" more popular by linking it to an asset.
-    await tags.setAssetTags(a, [byName.get("sky")!.id]);
+    await tags.setAssetTags(a, [byName.get("sky")!.id], null);
 
     const results = await tags.searchByPrefix("sky", 10);
     expect(results.map((t) => t.name)).toEqual(["sky", "skyscraper"]); // postCount desc
@@ -154,9 +156,9 @@ describe.skipIf(!TEST_DATABASE_URL)("TagRepository (integration)", () => {
     );
     const id = (n: string) => byName.get(n)!.id;
     // 1girl+solo share a1,a2 (2); 1girl+smile share a1,a3 (2); 1girl+hat share a1 (1).
-    await tags.setAssetTags(a1, [id("1girl"), id("solo"), id("smile"), id("hat")]);
-    await tags.setAssetTags(a2, [id("1girl"), id("solo")]);
-    await tags.setAssetTags(a3, [id("1girl"), id("smile")]);
+    await tags.setAssetTags(a1, [id("1girl"), id("solo"), id("smile"), id("hat")], null);
+    await tags.setAssetTags(a2, [id("1girl"), id("solo")], null);
+    await tags.setAssetTags(a3, [id("1girl"), id("smile")], null);
 
     const related = await tags.relatedTags("1girl", 10);
     const names = related.map((t) => t.name);
@@ -175,8 +177,8 @@ describe.skipIf(!TEST_DATABASE_URL)("TagRepository (integration)", () => {
       (await tags.getOrCreateByNames(["1girl", "solo", "smile"])).map((t) => [t.name, t]),
     );
     const id = (n: string) => byName.get(n)!.id;
-    await tags.setAssetTags(a1, [id("1girl"), id("solo")]);
-    await tags.setAssetTags(a2, [id("1girl"), id("smile")]); // 1girl shared → listed once
+    await tags.setAssetTags(a1, [id("1girl"), id("solo")], null);
+    await tags.setAssetTags(a2, [id("1girl"), id("smile")], null); // 1girl shared → listed once
 
     // All 'general' category → ordered by postCount desc, then name asc:
     // 1girl (postCount 2) first, then smile & solo (postCount 1) by name.

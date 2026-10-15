@@ -227,8 +227,12 @@ export type {
   ApiKeyDto,
   App,
   AssetDto,
+  PageDto,
   SetupCheck as SetupCheckDto,
+  TagAliasDto,
   TagDto,
+  TagImplicationDto,
+  TagVersionDto,
   UploadLimitsDto,
   UserDto,
 } from "./server";

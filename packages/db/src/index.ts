@@ -34,6 +34,25 @@ export {
   type TagRepository,
 } from "./repositories/tag-repository";
 export {
+  createTagAliasRepository,
+  type AliasRejection,
+  type CreateAliasResult,
+  type TagAlias,
+  type TagAliasRepository,
+} from "./repositories/tag-alias-repository";
+export {
+  createTagImplicationRepository,
+  type CreateImplicationResult,
+  type ImplicationRejection,
+  type TagImplication,
+  type TagImplicationRepository,
+} from "./repositories/tag-implication-repository";
+export {
+  createTagVersionRepository,
+  type TagVersion,
+  type TagVersionRepository,
+} from "./repositories/tag-version-repository";
+export {
   createStatsRepository,
   type StatsRepository,
 } from "./repositories/stats-repository";

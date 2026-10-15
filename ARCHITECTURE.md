@@ -112,8 +112,9 @@ Drizzle schemas, repositories, migrations, transactions, database adapters.
 
 ## search
 
-Owns the Lexer, Parser, AST, Optimizer, and SQL Builder. No HTTP, no Drizzle,
-no database.
+Owns the Lexer, Parser, AST, and Optimizer. No HTTP, no Drizzle, no database:
+the facts the optimizer needs from the database (tag aliases) are handed to it
+as plain data. The SQL Builder lives in Core, next to the schema it targets.
 
 ## auth
 
@@ -181,11 +182,17 @@ Background jobs triggered: Thumbnail, OCR, AI, Notifications, Search Index.
 # Search Pipeline
 
 ```
-Query String → Lexer → Tokens → Parser → AST → Optimization
-             → Query Builder → Repository → Database
+Query String → Lexer → Tokens → Parser → AST
+             → (Core) fetch aliases for the AST's tag names, in one lookup
+             → Optimizer (alias rewriting, flattening, dedupe) → AST
+             → (Core) SQL Builder → Repository → Database
 ```
 
 The AST is the canonical representation. Everything else consumes AST.
+
+Tag implications are not expanded here: implied tags are materialized onto
+posts when tagged (and backfilled when an implication is created), so a search
+for `animal` is a plain tag lookup.
 
 ---
 
