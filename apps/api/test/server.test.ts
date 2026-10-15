@@ -1468,8 +1468,8 @@ describe("embedded web SPA on the API app (single-binary mode)", () => {
     await Bun.write(join(dir, "chunk-abc123.js"), "console.log(1)");
     fullstack = buildApp(stubCore()).use(
       createWebRoutes([
-        { urlPath: "/index.html", file: join(dir, "index.html") },
-        { urlPath: "/chunk-abc123.js", file: join(dir, "chunk-abc123.js") },
+        { urlPath: "/index.html", file: join(dir, "index.html"), immutable: false },
+        { urlPath: "/chunk-abc123.js", file: join(dir, "chunk-abc123.js"), immutable: true },
       ]),
     );
   });

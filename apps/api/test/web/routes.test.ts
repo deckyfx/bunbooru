@@ -11,15 +11,18 @@ let assets: WebAsset[];
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "bunbooru-web-"));
-  const files: Record<string, string> = {
-    "index.html": "<!doctype html><title>shell</title>",
-    "chunk-abc123.js": "console.log(1)",
-    "chunk-def456.css": "body{}",
-  };
+  // [name, contents, immutable]: what the build records from the bundler's
+  // output. `app.js` stands in for a stable-named output a build option could emit.
+  const files: [string, string, boolean][] = [
+    ["index.html", "<!doctype html><title>shell</title>", false],
+    ["chunk-abc123.js", "console.log(1)", true],
+    ["chunk-def456.css", "body{}", true],
+    ["app.js", "console.log(2)", false],
+  ];
   assets = [];
-  for (const [name, contents] of Object.entries(files)) {
+  for (const [name, contents, immutable] of files) {
     await Bun.write(join(dir, name), contents);
-    assets.push({ urlPath: `/${name}`, file: join(dir, name) });
+    assets.push({ urlPath: `/${name}`, file: join(dir, name), immutable });
   }
 });
 
@@ -39,16 +42,25 @@ describe("createWebRoutes", () => {
   });
 
   it("refuses an asset set without index.html", () => {
-    expect(() => createWebRoutes([{ urlPath: "/chunk.js", file: "/nope" }])).toThrow(/index\.html/);
+    expect(() =>
+      createWebRoutes([{ urlPath: "/chunk.js", file: "/nope", immutable: true }]),
+    ).toThrow(/index\.html/);
   });
 
-  it("serves an embedded file at its exact path, cached forever with its content type", async () => {
+  it("serves a content-hashed file at its exact path, cached forever with its content type", async () => {
     const res = await get(createWebRoutes(assets), "/chunk-abc123.js");
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("console.log(1)");
     expect(res.headers.get("content-type")).toStartWith("text/javascript");
     expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("revalidates an embedded file whose name is not content-hashed", async () => {
+    const res = await get(createWebRoutes(assets), "/app.js");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("console.log(2)");
+    expect(res.headers.get("cache-control")).toBe("no-cache");
   });
 
   it.each(["/", "/posts/12", "/admin/extensions", "/index.html"])(

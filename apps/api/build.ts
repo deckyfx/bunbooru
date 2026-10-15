@@ -29,10 +29,12 @@ const embeddedAssetsModule = `${import.meta.dir}/src/web/embedded-assets.ts`;
  */
 function renderAssetManifest({ distDir, files }: WebBuild): string {
   const imports = files.map(
-    (file, i) => `import asset${i} from ${JSON.stringify(`${distDir}/${file}`)} with { type: "file" };`,
+    ({ path }, i) =>
+      `import asset${i} from ${JSON.stringify(`${distDir}/${path}`)} with { type: "file" };`,
   );
   const entries = files.map(
-    (file, i) => `  { urlPath: ${JSON.stringify(`/${file}`)}, file: asset${i} },`,
+    ({ path, hashedName }, i) =>
+      `  { urlPath: ${JSON.stringify(`/${path}`)}, file: asset${i}, immutable: ${hashedName} },`,
   );
   return [
     ...imports,
@@ -62,7 +64,7 @@ await $`bun ${import.meta.dir}/../../scripts/embed-migrations.ts`;
 
 console.log("🎨 Building web SPA...");
 const web = await buildWeb();
-if (!web.files.includes("index.html")) {
+if (!web.files.some((file) => file.path === "index.html")) {
   console.error(`❌ Web build produced no index.html in ${web.distDir}`);
   process.exit(1);
 }

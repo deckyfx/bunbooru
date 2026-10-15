@@ -11,12 +11,24 @@
  */
 import tailwind from "bun-plugin-tailwind";
 
+/** One file the build emitted. */
+export interface WebBuildFile {
+  /** Path relative to {@link WebBuild.distDir}, e.g. `index.html`, `chunk-x.js`. */
+  path: string;
+  /**
+   * Whether the file NAME carries its content hash, so its URL can never point at
+   * different bytes and may be cached forever. Read from the bundler's own record,
+   * not assumed from a naming convention: `index.html` has a hash but keeps a
+   * stable name, and a future build option could give other outputs stable names.
+   */
+  hashedName: boolean;
+}
+
 /** The built SPA: its output directory and every file in it. */
 export interface WebBuild {
   /** Absolute path of the output directory. */
   distDir: string;
-  /** Output files relative to {@link WebBuild.distDir}, e.g. `index.html`, `chunk-x.js`. */
-  files: string[];
+  files: WebBuildFile[];
 }
 
 /** Build the SPA into `dist/`. Throws with the bundler's messages on failure. */
@@ -47,7 +59,13 @@ export async function buildWeb(): Promise<WebBuild> {
     throw new Error(`Web build failed:\n${messages}`);
   }
 
-  const files = result.outputs.map((output) => output.path.slice(distDir.length + 1)).sort();
+  const files = result.outputs
+    .map((output) => {
+      const path = output.path.slice(distDir.length + 1);
+      const name = path.slice(path.lastIndexOf("/") + 1);
+      return { path, hashedName: output.hash !== null && name.includes(output.hash) };
+    })
+    .sort((a, b) => a.path.localeCompare(b.path));
   return { distDir, files };
 }
 

@@ -6,19 +6,25 @@ export interface WebAsset {
   urlPath: string;
   /** Path `Bun.file` can open: `/$bunfs/…` in a compiled binary, a real path in tests. */
   file: string;
+  /**
+   * Whether the URL itself names the content (the bundler put the file's hash in
+   * its name), so it may be cached forever. Recorded by the build from the
+   * bundler's own output, never inferred here from the name's shape.
+   */
+  immutable: boolean;
 }
 
 /** The SPA shell, answered for every client-side route. */
 const INDEX_PATH = "/index.html";
 
+/** A content-hashed URL never changes meaning, so browsers may keep it forever. */
+const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
 /**
- * Every built file except `index.html` carries a content hash in its name (Bun's
- * bundler names chunks and assets `name-<hash>.ext`), so a URL never changes
- * meaning and browsers may cache it forever.
+ * Anything with a stable URL must be revalidated on every load: `index.html`
+ * names the current chunks, and any other stable name could change content in
+ * the next deploy.
  */
-const HASHED_CACHE = "public, max-age=31536000, immutable";
-/** `index.html` names the current chunks, so it must be revalidated on every load. */
-const SHELL_CACHE = "no-cache";
+const REVALIDATE_CACHE = "no-cache";
 
 /** Paths the SPA must never answer: an unknown API route is a 404, not HTML. */
 const API_PREFIX = /^\/api(?:\/|$)/;
@@ -46,7 +52,8 @@ function serveFile(file: string, cacheControl: string): Response {
  * One catch-all GET route, so registration order doesn't matter: Elysia ranks
  * every concrete route (`/api/v1/…`, `/health`, plugin routes) above a wildcard.
  * The catch-all then answers, in order:
- * - an embedded file at that exact path;
+ * - an embedded file at that exact path, cached forever only if its name is
+ *   content-hashed;
  * - a 404 for `/api/…`, so a typo in an API path stays a JSON error, never HTML;
  * - a 404 for a missing asset (`/old-chunk.js`), so a stale reference fails
  *   clearly instead of being parsed as HTML;
@@ -57,8 +64,8 @@ function serveFile(file: string, cacheControl: string): Response {
  */
 export function createWebRoutes(assets: readonly WebAsset[]) {
   const plugin = new Elysia({ name: "web-spa" });
-  const byPath = new Map(assets.map((asset) => [asset.urlPath, asset.file]));
-  const shell = byPath.get(INDEX_PATH);
+  const byPath = new Map(assets.map((asset) => [asset.urlPath, asset]));
+  const shell = byPath.get(INDEX_PATH)?.file;
   if (!shell) {
     if (assets.length > 0) {
       throw new Error(`Embedded web assets are missing ${INDEX_PATH}.`);
@@ -67,9 +74,9 @@ export function createWebRoutes(assets: readonly WebAsset[]) {
   }
 
   return plugin.get("/*", ({ path }) => {
-    const file = byPath.get(path);
-    if (file) return serveFile(file, path === INDEX_PATH ? SHELL_CACHE : HASHED_CACHE);
+    const asset = byPath.get(path);
+    if (asset) return serveFile(asset.file, asset.immutable ? IMMUTABLE_CACHE : REVALIDATE_CACHE);
     if (API_PREFIX.test(path) || ASSET_FILE.test(path)) throw new NotFoundError();
-    return serveFile(shell, SHELL_CACHE);
+    return serveFile(shell, REVALIDATE_CACHE);
   });
 }
