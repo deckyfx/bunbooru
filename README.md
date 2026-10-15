@@ -87,14 +87,14 @@ docs/
 
 ## Getting Started
 
-Requires [Bun](https://bun.sh) and Docker.
+Requires [Bun](https://bun.sh) ≥ 1.4.3 (for `bun check`) and Docker.
 
 ```bash
 cp .env.example .env       # configure local environment
 bun install                # install workspace dependencies
 bun run services:up        # start Postgres (the required service)
 bun run migrate            # apply database migrations
-bun run typecheck          # verify the workspace compiles
+bun run typecheck          # type-check every workspace (`bun check`)
 bun run test               # run the test suite
 ```
 

@@ -8,14 +8,15 @@
   },
   "types": "./src/index.ts",
   "scripts": {
-    "db:generate": "drizzle-kit generate && bun ../../scripts/embed-migrations.ts"
+    "db:generate": "drizzle-kit generate && bun ../../scripts/embed-migrations.ts",
+    "typecheck": "bun check src test"
   },
   "dependencies": {
     "@bunbooru/plugin-sdk": "workspace:*",
-    "drizzle-orm": "^0.45.2",
-    "elysia": "^1.4.29"
+    "drizzle-orm": "^0.45.4",
+    "elysia": "^1.4.30"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.10"
+    "drizzle-kit": "^0.31.11"
   }
 }
