@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 
 import { AccountLinks } from "../components/account-links";
 import { Counter } from "../components/counter";
+import { usePluginNavLinks } from "../components/plugin-slot";
 import { ThemeSwitcher } from "../components/theme-switcher";
 import { useCurrentUser } from "../lib/auth";
 import { useSiteStats } from "../lib/stats";
@@ -13,7 +14,6 @@ const HOME_MENU = [
   { label: "Posts", to: "/posts" },
   { label: "Upload", to: "/uploads/new" },
   { label: "Tags", to: "/posts" },
-  { label: "Pools", to: "/posts" },
   { label: "Wiki", to: "/posts" },
   { label: "Comments", to: "/posts" },
   { label: "Forum", to: "/posts" },
@@ -21,6 +21,7 @@ const HOME_MENU = [
 
 export function HomePage() {
   const navigate = useNavigate();
+  const pluginLinks = usePluginNavLinks();
   const [query, setQuery] = useState("");
   const { data: stats } = useSiteStats();
   // `AccountLinks` renders nothing until `/auth/me` resolves; gate the divider on
@@ -71,7 +72,18 @@ export function HomePage() {
         </form>
 
         <nav className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-base">
-          {HOME_MENU.map((item) => (
+          {HOME_MENU.slice(0, 2).map((item) => (
+            <Link key={item.label} to={item.to} className="text-link hover:underline">
+              {item.label}
+            </Link>
+          ))}
+          {/* Active plugins' pages (Favorites, Pools) sit right after the core links. */}
+          {pluginLinks.map((link) => (
+            <Link key={`${link.pluginId}:${link.label}`} to={link.to} className="text-link hover:underline">
+              {link.label}
+            </Link>
+          ))}
+          {HOME_MENU.slice(2).map((item) => (
             <Link key={item.label} to={item.to} className="text-link hover:underline">
               {item.label}
             </Link>

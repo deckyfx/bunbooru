@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 
 import { authErrorMessage, useCurrentUser } from "../lib/auth";
-import { usePlugins, useExtensions, useToggleExtension, type ExtensionDto } from "../lib/plugins";
+import { useExtensions, useToggleExtension, type ExtensionDto } from "../lib/plugins";
 import { useRuntimeConfig, type SettingSource } from "../lib/runtime";
 import { useUpdateUploadLimits, useUploadLimits } from "../lib/settings";
 import {
@@ -23,7 +23,8 @@ import {
 } from "../lib/tags";
 import { CARD_CLASS, INPUT_CLASS } from "../components/card-styles";
 import { TagAliasesCard, TagImplicationsCard } from "../components/admin/tag-gardening";
-import { PLUGIN_ADMIN_SECTIONS } from "../plugins/registry";
+import { IsolatedWidget, useSlotEntries } from "../components/plugin-slot";
+import type { SlotEntry } from "../plugins/slots";
 
 /** Human-readable byte size for the caps hint. */
 function formatBytes(bytes: number): string {
@@ -53,7 +54,8 @@ type Section = { kind: "core"; key: CoreSection } | { kind: "plugin"; id: string
 export function AdminPage() {
   const { data: user, isPending } = useCurrentUser();
   const navigate = useNavigate();
-  const plugins = usePlugins();
+  // Active plugins' admin sections (the "admin" UI slot), in slot order.
+  const pluginTools = useSlotEntries("admin");
   const [section, setSection] = useState<Section>({ kind: "core", key: "extensions" });
 
   useEffect(() => {
@@ -61,9 +63,6 @@ export function AdminPage() {
   }, [isPending, user, navigate]);
 
   if (isPending || user?.role !== "admin") return null;
-
-  // Active plugins that ship an admin UI become their own nav entries.
-  const pluginTools = (plugins.data ?? []).filter((p) => PLUGIN_ADMIN_SECTIONS[p.id]);
 
   const isCurrent = (target: Section): boolean => {
     if (section.kind === "core" && target.kind === "core") return section.key === target.key;
@@ -109,13 +108,13 @@ export function AdminPage() {
                 Plugin tools
               </div>
               <div className="space-y-0.5">
-                {pluginTools.map((p) => (
+                {pluginTools.map((tool) => (
                   <NavButton
-                    key={p.id}
+                    key={toolKey(tool)}
                     icon={Blocks}
-                    label={p.name}
-                    active={isCurrent({ kind: "plugin", id: p.id })}
-                    onClick={() => setSection({ kind: "plugin", id: p.id })}
+                    label={tool.title}
+                    active={isCurrent({ kind: "plugin", id: toolKey(tool) })}
+                    onClick={() => setSection({ kind: "plugin", id: toolKey(tool) })}
                   />
                 ))}
               </div>
@@ -136,7 +135,7 @@ export function AdminPage() {
         ) : null}
         {section.kind === "core" && section.key === "runtime" ? <RuntimeConfigSection /> : null}
         {section.kind === "plugin" ? (
-          <PluginToolSection id={section.id} active={pluginTools.some((p) => p.id === section.id)} />
+          <PluginToolSection tool={pluginTools.find((tool) => toolKey(tool) === section.id)} />
         ) : null}
       </div>
     </div>
@@ -170,10 +169,15 @@ function NavButton({
   );
 }
 
-/** Render an active plugin's admin UI (or a note if it was just deactivated). */
-function PluginToolSection({ id, active }: { id: string; active: boolean }) {
-  const Section = PLUGIN_ADMIN_SECTIONS[id];
-  if (!active || !Section) {
+/** An admin slot entry's key: `<pluginId>:<id>`, unique across plugins. */
+const toolKey = (tool: SlotEntry<"admin">) => `${tool.pluginId}:${tool.id}`;
+
+/**
+ * Render an active plugin's admin section, isolated so one broken plugin can't
+ * take the console down (or a note if the plugin was just deactivated).
+ */
+function PluginToolSection({ tool }: { tool: SlotEntry<"admin"> | undefined }) {
+  if (!tool) {
     return (
       <div className={CARD_CLASS}>
         <p className="text-[13px] text-muted">
@@ -182,7 +186,12 @@ function PluginToolSection({ id, active }: { id: string; active: boolean }) {
       </div>
     );
   }
-  return <Section />;
+  const Section = tool.component;
+  return (
+    <IsolatedWidget label={tool.title}>
+      <Section />
+    </IsolatedWidget>
+  );
 }
 
 /**

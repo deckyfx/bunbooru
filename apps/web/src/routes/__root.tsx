@@ -4,6 +4,7 @@ import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-route
 
 import pkg from "../../package.json";
 import { AccountLinks } from "../components/account-links";
+import { usePluginNavLinks } from "../components/plugin-slot";
 import { SearchBox } from "../components/popover/search-box";
 import { ThemeSwitcher } from "../components/theme-switcher";
 import { VisitorCounter } from "../components/visitor-counter";
@@ -17,13 +18,15 @@ const VERSION = pkg.version;
  * Top-level menu, mirroring Danbooru's primary nav. Only items with a real
  * route navigate; the rest are placeholders until their routes exist.
  */
+/**
+ * Placeholder entries for features that don't exist yet, shown muted. Real
+ * links come first: Posts, then whatever active plugins add (Favorites, Pools).
+ */
 const MENU = [
-  { label: "Posts", to: "/posts" as const },
   { label: "Comments" },
   { label: "Notes" },
   { label: "Artists" },
   { label: "Tags" },
-  { label: "Pools" },
   { label: "Wiki" },
   { label: "Forum" },
   { label: "More »" },
@@ -41,6 +44,7 @@ export function RootLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isHome = pathname === "/";
   const isSetup = pathname === "/setup";
+  const pluginLinks = usePluginNavLinks();
   const setup = useSetupStatus();
 
   // First-run gate. With zero accounts there is nothing to log into and no way to
@@ -88,17 +92,19 @@ export function RootLayout() {
             </Link>
 
             <nav className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              {MENU.map((item) =>
-                "to" in item ? (
-                  <Link key={item.label} to={item.to} className="text-[12px] hover:underline">
-                    {item.label}
-                  </Link>
-                ) : (
-                  <span key={item.label} className="cursor-default text-[12px] text-muted">
-                    {item.label}
-                  </span>
-                ),
-              )}
+              <Link to="/posts" className="text-[12px] hover:underline">
+                Posts
+              </Link>
+              {pluginLinks.map((link) => (
+                <Link key={`${link.pluginId}:${link.label}`} to={link.to} className="text-[12px] hover:underline">
+                  {link.label}
+                </Link>
+              ))}
+              {MENU.map((item) => (
+                <span key={item.label} className="cursor-default text-[12px] text-muted">
+                  {item.label}
+                </span>
+              ))}
             </nav>
 
             <div className="ml-auto flex items-center gap-3">
