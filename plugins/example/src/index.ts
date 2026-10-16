@@ -79,7 +79,7 @@ export const plugin = definePlugin({
   name: "Example",
   version: "0.1.0",
   description: "Reference plugin — a tiny 'pings' table and a couple of demo routes.",
-  capabilities: ["routes", "tables", "admin-pages"],
+  capabilities: ["routes", "tables", "ui-slots"],
   tables: ["example_pings"],
   migrations: {
     // Migrations embedded into the binary (regenerate: `bun run gen:migrations`).
@@ -89,7 +89,6 @@ export const plugin = definePlugin({
   register(ctx) {
     return {
       routes: buildExampleRoutes(ctx),
-      adminPages: [{ id: "pings", title: "Example: Pings" }],
     };
   },
 });

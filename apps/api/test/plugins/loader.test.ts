@@ -10,7 +10,7 @@ import type {
   StorageProvider,
   TagService,
 } from "@bunbooru/core";
-import { createCoreEvents } from "@bunbooru/core";
+import { createCoreEvents, createSearchProviderRegistry } from "@bunbooru/core";
 import { definePlugin, pluginRoutePrefix, type BunbooruPlugin } from "@bunbooru/plugin-sdk";
 import { Elysia } from "elysia";
 
@@ -32,6 +32,7 @@ const core: Core = {
   pluginStateService: {} as Core["pluginStateService"],
   pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
+  searchProviders: createSearchProviderRegistry(),
 };
 
 /** No migrations are declared, so the db handle is never touched. */
@@ -68,7 +69,7 @@ describe("loadPlugins", () => {
     expect(loaded).toHaveLength(1);
     expect(loaded[0]?.id).toBe("demo");
     expect(loaded[0]?.name).toBe("Demo");
-    expect(loaded[0]?.adminPages).toEqual([{ id: "main", title: "Demo" }]);
+    expect(loaded[0]?.searchProviders).toEqual([]);
     expect(loaded[0]?.routes).toBeDefined();
   });
 

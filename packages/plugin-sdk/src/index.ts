@@ -15,6 +15,8 @@ import type {
   EmbeddedMigrations,
   MailProvider,
   OutgoingMail,
+  SearchProvider,
+  SearchTerm,
   SettingsService,
   StatsService,
   StorageProvider,
@@ -36,7 +38,7 @@ import type {
  * mounts the returned {@link PluginRegistration.routes} under
  * `/api/v1/plugins/<id>`.
  */
-export const PLUGIN_SDK_VERSION = "0.7.0" as const;
+export const PLUGIN_SDK_VERSION = "0.8.0" as const;
 
 /** Storage contract re-exported for plugins that register storage providers. */
 export type { StorageProvider };
@@ -44,14 +46,19 @@ export type { StorageProvider };
 /** Mail contract re-exported for plugins that register a mail provider. */
 export type { MailProvider, OutgoingMail };
 
+/** Search contract re-exported for plugins that contribute metatags (`fav:`, `pool:`). */
+export type { SearchProvider, SearchTerm };
+
 /**
  * The integration points a plugin may register through this SDK.
  *
  * This vocabulary is SDK-owned and part of the public contract — intentionally
  * decoupled from internal package identifiers, so refactors inside
  * `core`/`auth`/`events`/`search` never become breaking SDK changes. Not every
- * capability is wired yet; `routes`, `admin-pages`, and `tables` are the ones
- * the current registration API supports.
+ * capability is wired yet. Wired today: `routes`, `tables`, `events`,
+ * `search-providers`, `mail-providers`, `jobs` (a plugin's own worker), and
+ * `ui-slots` / `pages` (the plugin's UI, which lives app-side in
+ * `apps/web/src/plugins`, since `plugins → apps` is forbidden).
  */
 export const SDK_CAPABILITIES = [
   "routes",
@@ -62,8 +69,8 @@ export const SDK_CAPABILITIES = [
   "mail-providers",
   "permissions",
   "jobs",
-  "admin-pages",
-  "navigation-items",
+  "ui-slots",
+  "pages",
   "commands",
 ] as const;
 
@@ -136,18 +143,6 @@ export interface PluginContext {
 }
 
 /**
- * A plugin admin page, surfaced to the web `/admin` console. Metadata only — the
- * UI component is registered app-side, keyed by plugin id. The server enforces
- * its own authorization on the plugin's routes regardless of this listing.
- */
-export interface AdminPage {
-  /** Stable slug, unique within the plugin. */
-  id: string;
-  /** Section/nav label shown in the admin console. */
-  title: string;
-}
-
-/**
  * Where a plugin's generated SQL lives and how its applied migrations are
  * tracked. The host runs these (via Drizzle's migrator) before {@link
  * BunbooruPlugin.register}, so a plugin's tables exist by the time its routes
@@ -168,7 +163,12 @@ export interface PluginMigrations {
   migrationsTable: string;
 }
 
-/** What {@link BunbooruPlugin.register} returns: the plugin's routes + pages. */
+/**
+ * What {@link BunbooruPlugin.register} returns: the plugin's server-side
+ * contributions. Its UI (admin sections, widgets in page slots, its own pages)
+ * is registered app-side, keyed by plugin id, and shown only while the plugin
+ * is active.
+ */
 export interface PluginRegistration {
   /**
    * An Elysia app carrying the plugin's routes. It MUST be constructed with the
@@ -177,8 +177,13 @@ export interface PluginRegistration {
    * {@link AnyElysia} so a plugin's concrete route/prefix generics are accepted.
    */
   routes?: AnyElysia;
-  /** Admin pages this plugin contributes to the web console. */
-  adminPages?: AdminPage[];
+  /**
+   * Search metatags this plugin contributes (`fav:alice`). Registered with
+   * Core's search engine while the plugin is active, removed when it's
+   * deactivated. A key must not collide with a Core metatag or another plugin's;
+   * activation fails if it does.
+   */
+  searchProviders?: SearchProvider[];
   /**
    * A mail transport this plugin supplies. The host installs it on Core's
    * `MailService` as the active provider. At most one enabled plugin may register
@@ -189,8 +194,8 @@ export interface PluginRegistration {
 
 /**
  * The plugin contract. `migrations` is read statically (before `register`) so
- * the host can apply schema changes first; `register` wires routes and admin
- * pages over the injected {@link PluginContext}.
+ * the host can apply schema changes first; `register` wires routes and other
+ * server-side contributions over the injected {@link PluginContext}.
  */
 export interface BunbooruPlugin {
   /** Stable, unique plugin id — also its route prefix segment. */
@@ -205,7 +210,7 @@ export interface BunbooruPlugin {
    */
   description?: string;
   /**
-   * The SDK capabilities this plugin uses (e.g. `["routes", "admin-pages"]`) —
+   * The SDK capabilities this plugin uses (e.g. `["routes", "ui-slots"]`) —
    * surfaced as badges in the management UI. Purely descriptive; the host does
    * not gate on it.
    */
@@ -224,7 +229,7 @@ export interface BunbooruPlugin {
   tables?: readonly string[];
   /** Optional plugin-owned tables + migration tracking. */
   migrations?: PluginMigrations;
-  /** Wire routes/pages over the injected context. May be async. */
+  /** Wire routes and contributions over the injected context. May be async. */
   register(context: PluginContext): PluginRegistration | Promise<PluginRegistration>;
 }
 

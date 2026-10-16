@@ -266,7 +266,7 @@ export const plugin = definePlugin({
   name: "Shimmie Import",
   version: "0.1.0",
   description: "Imports posts, tags, and ratings from a Shimmie2 booru via its API.",
-  capabilities: ["routes", "tables", "admin-pages"],
+  capabilities: ["routes", "tables", "ui-slots"],
   tables: ["shimmie_import_runs", "shimmie_import_items"],
   migrations: {
     // Migrations embedded into the binary (regenerate: `bun run gen:migrations`).
@@ -276,7 +276,6 @@ export const plugin = definePlugin({
   register(ctx) {
     return {
       routes: buildImportRoutes(ctx),
-      adminPages: [{ id: "shimmie-import", title: "Import from Shimmie" }],
     };
   },
 });

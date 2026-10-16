@@ -67,6 +67,8 @@ export interface AssetRepository {
   countUpTo(where: SQL | undefined, cap: number): Promise<number>;
   /** One asset by id, or null. */
   findById(id: number): Promise<Asset | null>;
+  /** The assets with these ids, in no particular order; unknown ids are absent. */
+  findByIds(ids: readonly number[]): Promise<Asset[]>;
   /** One asset by its unique sha256 content key, or null (drives dedupe). */
   findBySha256(sha256: string): Promise<Asset | null>;
   /**
@@ -144,6 +146,14 @@ export function createAssetRepository(db: DB): AssetRepository {
         .as("matches");
       const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(matches);
       return row?.n ?? 0;
+    },
+
+    async findByIds(ids) {
+      if (ids.length === 0) return [];
+      return db
+        .select()
+        .from(assets)
+        .where(inArray(assets.id, [...ids]));
     },
 
     async findById(id) {

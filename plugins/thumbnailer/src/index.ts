@@ -269,7 +269,7 @@ export const plugin = definePlugin({
   name: "Thumbnailer",
   version: "0.1.0",
   description: "Generates WebP thumbnails for uploaded images on the asset.created event.",
-  capabilities: ["routes", "tables", "events", "jobs", "admin-pages"],
+  capabilities: ["routes", "tables", "events", "jobs", "ui-slots"],
   tables: ["thumbnails"],
   migrations: {
     // Migrations embedded into the binary (regenerate: `bun run gen:migrations`).
@@ -295,7 +295,6 @@ export const plugin = definePlugin({
 
     return {
       routes: buildThumbnailerRoutes(ctx),
-      adminPages: [{ id: "thumbnails", title: "Thumbnails" }],
     };
   },
 });

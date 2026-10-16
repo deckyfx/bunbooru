@@ -16,8 +16,6 @@ export interface ExtensionInfo {
   capabilities: SdkCapability[];
   /** The DB tables this plugin owns (from its `tables` declaration / the catalog). */
   tables: string[];
-  /** Admin pages this plugin contributes to the console. */
-  adminPages: { id: string; title: string }[];
   /** Whether the plugin is currently mounted (its routes/pages are served). */
   active: boolean;
   /**
@@ -32,12 +30,14 @@ export interface ExtensionInfo {
   degraded: string | null;
 }
 
-/** Wire shape of `GET /api/v1/plugins` — active plugins only. */
+/**
+ * Wire shape of `GET /api/v1/plugins`: active plugins only. Public, since every
+ * page uses it to decide which plugin UI to show, so it carries only what that
+ * needs. Versions and the rest stay behind the admin-only Extensions endpoint.
+ */
 export interface PluginManifestEntry {
   id: string;
   name: string;
-  version: string;
-  adminPages: { id: string; title: string }[];
 }
 
 /** Raised for an id that isn't a known first-party plugin (→ 404 at the route). */
@@ -261,7 +261,6 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
       description: p.description,
       capabilities: [...p.capabilities],
       tables: [...p.tables],
-      adminPages: p.adminPages,
       active: active.has(p.id),
       degraded: degraded.get(p.id) ?? null,
     };
@@ -295,7 +294,7 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
       const out: PluginManifestEntry[] = [];
       for (const p of loaded) {
         if (active.has(p.id)) {
-          out.push({ id: p.id, name: p.name, version: p.version, adminPages: p.adminPages });
+          out.push({ id: p.id, name: p.name });
         }
       }
       return out;
@@ -388,11 +387,10 @@ export function staticPluginHost(manifest: readonly PluginManifestEntry[] = []):
       entries.map((e) => ({
         id: e.id,
         name: e.name,
-        version: e.version,
+        version: "0.0.0",
         description: null,
         capabilities: [],
         tables: [],
-        adminPages: e.adminPages,
         active: true,
         // The static host performs no transitions, so it can never degrade.
         degraded: null,

@@ -9,7 +9,7 @@ import type {
   StatsService,
   TagService,
 } from "@bunbooru/core";
-import { createCoreEvents } from "@bunbooru/core";
+import { createCoreEvents, createSearchProviderRegistry } from "@bunbooru/core";
 import { Elysia } from "elysia";
 
 import { createPluginHost, PluginDegradedError, UnknownPluginError } from "../../src/plugins/host";
@@ -42,7 +42,7 @@ function betaRoutes() {
 }
 
 const loaded: LoadedPlugin[] = [
-  { id: "alpha", name: "Alpha", version: "1.0.0", description: "First", capabilities: ["routes"], tables: [], adminPages: [] },
+  { id: "alpha", name: "Alpha", version: "1.0.0", description: "First", capabilities: ["routes"], tables: [], searchProviders: [] },
   {
     id: "beta",
     name: "Beta",
@@ -50,7 +50,7 @@ const loaded: LoadedPlugin[] = [
     description: null,
     capabilities: [],
     tables: ["beta_widgets"],
-    adminPages: [{ id: "x", title: "X" }],
+    searchProviders: [],
     routes: betaRoutes(),
   },
 ];
@@ -86,7 +86,7 @@ describe("createPluginHost", () => {
     expect(all.map((e) => e.id)).toEqual(["alpha", "beta"]); // sorted by name
     const beta = all.find((e) => e.id === "beta")!;
     expect(beta.active).toBe(false);
-    expect(beta.adminPages).toEqual([{ id: "x", title: "X" }]);
+    expect(beta.tables).toEqual(["beta_widgets"]);
   });
 
   it("activate/deactivate flip state, persist, and update the manifest", async () => {
@@ -479,6 +479,7 @@ const appCore = {
   pluginStateService: {} as Core["pluginStateService"],
   pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
+  searchProviders: createSearchProviderRegistry(),
 } satisfies Core;
 
 

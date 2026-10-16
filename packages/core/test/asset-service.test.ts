@@ -8,6 +8,7 @@ import {
   createAssetService,
   DEFAULT_PER_PAGE,
   MAX_COUNTED_TOTAL,
+  MAX_GET_MANY,
   MAX_PER_PAGE,
 } from "../src/services/asset-service";
 
@@ -76,6 +77,7 @@ function fakeRepo(initial: Asset[] = []): AssetRepository {
     findPage: async (page) => keysetPage(rows, page),
     countUpTo: async (_where, cap) => Math.min(rows.length, cap + 1),
     findById: async (id) => rows.find((r) => r.id === id) ?? null,
+    findByIds: async (ids) => rows.filter((r) => ids.includes(r.id)),
     findBySha256: async (sha256) => rows.find((r) => r.sha256 === sha256) ?? null,
     findReferencedStorageKeys: async (keys) =>
       new Set(rows.filter((r) => keys.includes(r.storageKey)).map((r) => r.storageKey)),
@@ -415,6 +417,21 @@ describe("createAssetService.gcOrphanedBlobs", () => {
 
     expect(removed).toBe(3);
     expect(stored.size).toBe(0);
+  });
+});
+
+describe("createAssetService.getMany", () => {
+  it("returns assets in the order asked, collapsing duplicates and skipping unknown or invalid ids", async () => {
+    const svc = createAssetService(fakeRepo(rows), fakeStorage().provider);
+    const got = await svc.getMany([5, 2, 999, 5, -1, 1.5, 3]);
+    expect(got.map((a) => a.id)).toEqual([5, 2, 3]);
+    expect(await svc.getMany([])).toEqual([]);
+  });
+
+  it("refuses more ids than one call may resolve", async () => {
+    const svc = createAssetService(fakeRepo(rows), fakeStorage().provider);
+    const tooMany = Array.from({ length: MAX_GET_MANY + 1 }, (_, i) => i + 1);
+    await expect(svc.getMany(tooMany)).rejects.toBeInstanceOf(ValidationError);
   });
 });
 

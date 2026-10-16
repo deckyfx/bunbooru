@@ -26,6 +26,7 @@ import {
 } from "@bunbooru/storage";
 
 import { createCoreEvents, type CoreEvents } from "./events";
+import { createSearchProviderRegistry, type SearchProviderRegistry } from "./search/providers";
 import { createMailService, type MailService } from "./mail/mail-service";
 import { createAssetService, type AssetService } from "./services/asset-service";
 import { createAuthService, type AuthService } from "./services/auth-service";
@@ -70,6 +71,11 @@ export interface Core {
   pluginCatalogService: PluginCatalogService;
   /** Typed pub/sub bus — Core emits domain events (e.g. `asset.created`); plugins subscribe. */
   events: CoreEvents;
+  /**
+   * Plugin-contributed search metatags (`fav:`, `pool:`). The API's plugin host
+   * registers an active plugin's providers and removes them on deactivation.
+   */
+  searchProviders: SearchProviderRegistry;
 }
 
 /** Runtime configuration needed to stand up the Core. */
@@ -126,9 +132,13 @@ export function assembleCore(
   const tagAliasRepository = createTagAliasRepository(db);
   const tagImplicationRepository = createTagImplicationRepository(db);
   // Search rewrites aliased names through the same table tagging uses.
-  const assetService = createAssetService(createAssetRepository(db), storage, events, (names) =>
-    tagAliasRepository.resolve(names),
-  );
+  const searchProviders = createSearchProviderRegistry();
+  // Search rewrites aliased names through the same table tagging uses, and
+  // consults the live plugin metatags (`fav:`, `pool:`).
+  const assetService = createAssetService(createAssetRepository(db), storage, events, {
+    resolveAliases: (names) => tagAliasRepository.resolve(names),
+    providers: searchProviders,
+  });
   const settingsService = createSettingsService(createSettingsRepository(db), {
     defaults: {
       maxUploadBytes: limits.maxUploadBytes,
@@ -182,6 +192,7 @@ export function assembleCore(
     pluginStateService,
     pluginCatalogService,
     events,
+    searchProviders,
   };
 }
 

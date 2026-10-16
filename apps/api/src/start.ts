@@ -4,7 +4,8 @@ import { applyCoreMigrations, createCoreRuntime, createLogMailProvider } from "@
 
 import { envConfig, MAX_REQUEST_BODY_BYTES } from "./env-config";
 import { logger } from "./lib/logger";
-import { createPluginHost, type PluginCapabilityBinding } from "./plugins/host";
+import { mailBinding, searchBinding } from "./plugins/capability-bindings";
+import { createPluginHost } from "./plugins/host";
 import { loadPlugins } from "./plugins/loader";
 import { PLUGIN_REGISTRY } from "./plugins/registry";
 import { createApp } from "./server";
@@ -149,17 +150,10 @@ export async function startApi(options: StartOptions = {}): Promise<void> {
     );
   }
 
-  // The one capability binding today — the mail provider, installed/removed with the
-  // plugin's active state. Future per-plugin capabilities (nav items, UI slots,
-  // search/storage providers) add a binding here, not new logic in the host.
-  const mailCapabilityBinding: PluginCapabilityBinding = {
-    onActivate(plugin) {
-      if (plugin.mailProvider) core.mailService.setProvider(plugin.mailProvider, plugin.id);
-    },
-    onDeactivate(plugin) {
-      if (plugin.mailProvider) core.mailService.clearProvider(plugin.id);
-    },
-  };
+  // Capability bindings: what a plugin supplies to Core (its mail transport,
+  // its search metatags), installed on activate and removed on deactivate.
+  // Future per-plugin capabilities add a binding there, not logic in the host.
+  const capabilityBindings = [mailBinding(core.mailService), searchBinding(core.searchProviders)];
 
   // Record every loaded plugin's owned tables in the catalog in ONE atomic write
   // (so a partial failure can't leave it half-written) — this is how the admin
@@ -172,7 +166,7 @@ export async function startApi(options: StartOptions = {}): Promise<void> {
     pluginState: core.pluginStateService,
     loaded: loadedPlugins,
     seedActiveIds: envConfig.ENABLED_PLUGINS,
-    capabilityBindings: [mailCapabilityBinding],
+    capabilityBindings,
   });
   // init() installs the capabilities of every already-active plugin (e.g. the mail
   // provider) — so the mail flows reflect the persisted active set from boot.
