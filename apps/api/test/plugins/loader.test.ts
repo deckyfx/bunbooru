@@ -33,6 +33,7 @@ const core: Core = {
   pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
   searchProviders: createSearchProviderRegistry(),
+  jobService: {} as Core["jobService"],
 };
 
 /** No migrations are declared, so the db handle is never touched. */

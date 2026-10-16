@@ -32,6 +32,7 @@ const appCore = {
   pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
   searchProviders: createSearchProviderRegistry(),
+  jobService: {} as Core["jobService"],
 } satisfies Core;
 
 /** A plugin context whose stats report a fixed post count and whose auth is

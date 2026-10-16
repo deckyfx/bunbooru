@@ -51,6 +51,13 @@ export {
   type TagImplicationRepository,
 } from "./repositories/tag-implication-repository";
 export {
+  createJobRepository,
+  type JobCount,
+  type JobRepository,
+  type NewJob,
+} from "./repositories/job-repository";
+export { bigintArray, textArray } from "./repositories/sql-arrays";
+export {
   createTagVersionRepository,
   type TagVersion,
   type TagVersionRepository,

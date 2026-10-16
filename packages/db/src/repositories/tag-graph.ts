@@ -1,6 +1,7 @@
-import { sql, type SQL } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 
 import type { DB } from "../client";
+import { bigintArray } from "./sql-arrays";
 
 /** A transaction handle, as Drizzle passes it to `db.transaction`. */
 export type Tx = Parameters<Parameters<DB["transaction"]>[0]>[0];
@@ -16,17 +17,6 @@ const TAG_GARDENING_LOCK = 987_654_322;
 /** Take the gardening lock for the rest of `tx` (released at commit/rollback). */
 export async function lockTagGardening(tx: Tx): Promise<void> {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(${TAG_GARDENING_LOCK})`);
-}
-
-/**
- * Bind integer ids as ONE `bigint[]` parameter. Drizzle expands a JS array
- * interpolated into `sql` into a tuple (`($1, $2)`), which Postgres refuses to
- * cast to an array, so the ids travel as a single array-literal parameter
- * instead: still bound, never spliced into the SQL text.
- */
-export function bigintArray(ids: readonly number[]): SQL {
-  if (!ids.every(Number.isSafeInteger)) throw new TypeError("ids must be integers");
-  return sql`${`{${ids.join(",")}}`}::bigint[]`;
 }
 
 /**

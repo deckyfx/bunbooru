@@ -3,7 +3,8 @@ import { alias } from "drizzle-orm/pg-core";
 
 import type { DB } from "../client";
 import { tagAliases, tagImplications, tags, users, type Tag } from "../schema";
-import { bigintArray, impliedTagIds, lockTagGardening, type Tx } from "./tag-graph";
+import { bigintArray } from "./sql-arrays";
+import { impliedTagIds, lockTagGardening, type Tx } from "./tag-graph";
 
 /** An implication as callers see it: both tags, resolved. */
 export interface TagImplication {
