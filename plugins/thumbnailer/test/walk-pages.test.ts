@@ -34,8 +34,33 @@ describe("walkPages", () => {
       { assets: [1, 2], nextCursor: "p1" },
       { assets: [3], nextCursor: null },
     ]);
-    await walkPages(list, async () => "stop");
+    // The cursor to resume from comes back.
+    expect(await walkPages(list, async () => "stop")).toBe("p1");
     expect(cursors).toEqual([undefined]);
+  });
+
+  it("resumes from a given cursor", async () => {
+    const { list, cursors } = listing([
+      { assets: [1, 2], nextCursor: "p1" },
+      { assets: [3], nextCursor: null },
+    ]);
+    const seen: number[] = [];
+    const resume = await walkPages(
+      list,
+      async (items) => {
+        seen.push(...items);
+        return "continue";
+      },
+      "p1",
+    );
+    expect(seen).toEqual([3]);
+    expect(cursors).toEqual(["p1"]);
+    expect(resume).toBeNull();
+  });
+
+  it("returns null when stopped on the last page (nothing left to resume)", async () => {
+    const { list } = listing([{ assets: [1], nextCursor: null }]);
+    expect(await walkPages(list, async () => "stop")).toBeNull();
   });
 
   it("ends on an empty page even if it carries a cursor", async () => {

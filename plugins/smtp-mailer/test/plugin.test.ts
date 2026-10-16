@@ -48,6 +48,7 @@ function stubContext(log: PluginLogger): PluginContext {
       auth: {} as AuthService,
     },
     events: {} as CoreEvents,
+    jobs: { enqueue: async () => ({ id: 0, created: false }) },
     db: stubDb(),
     storage: {} as StorageProvider,
     auth: { currentUser: async () => null },

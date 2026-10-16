@@ -13,7 +13,6 @@ WORKDIR /app
 COPY package.json bun.lock tsconfig.base.json tsconfig.json ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
-COPY apps/worker/package.json apps/worker/
 COPY packages/core/package.json packages/core/
 COPY packages/db/package.json packages/db/
 COPY packages/auth/package.json packages/auth/

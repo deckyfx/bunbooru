@@ -5,6 +5,7 @@ import {
   createAssetRepository,
   createAuthTokenRepository,
   createDb,
+  createJobRepository,
   createPluginStateRepository,
   createPluginTableRepository,
   createSessionRepository,
@@ -26,6 +27,7 @@ import {
 } from "@bunbooru/storage";
 
 import { createCoreEvents, type CoreEvents } from "./events";
+import { createJobService, type JobService } from "./jobs/job-service";
 import { createSearchProviderRegistry, type SearchProviderRegistry } from "./search/providers";
 import { createMailService, type MailService } from "./mail/mail-service";
 import { createAssetService, type AssetService } from "./services/asset-service";
@@ -76,6 +78,11 @@ export interface Core {
    * registers an active plugin's providers and removes them on deactivation.
    */
   searchProviders: SearchProviderRegistry;
+  /**
+   * The durable job queue: enqueue work and hold the handlers (Core's and active
+   * plugins') that a runner executes, in the API process or a dedicated worker.
+   */
+  jobService: JobService;
 }
 
 /** Runtime configuration needed to stand up the Core. */
@@ -133,6 +140,7 @@ export function assembleCore(
   const tagImplicationRepository = createTagImplicationRepository(db);
   // Search rewrites aliased names through the same table tagging uses.
   const searchProviders = createSearchProviderRegistry();
+  const jobService = createJobService(createJobRepository(db));
   // Search rewrites aliased names through the same table tagging uses, and
   // consults the live plugin metatags (`fav:`, `pool:`).
   const assetService = createAssetService(createAssetRepository(db), storage, events, {
@@ -193,6 +201,7 @@ export function assembleCore(
     pluginCatalogService,
     events,
     searchProviders,
+    jobService,
   };
 }
 

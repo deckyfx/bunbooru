@@ -2,9 +2,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createCoreRuntime, type Core, type DB } from "@bunbooru/core";
+import { applyPluginMigrations, createCoreRuntime, type Core, type DB } from "@bunbooru/core";
 
-import { searchBinding } from "../../src/plugins/capability-bindings";
+import { jobsBinding, searchBinding } from "../../src/plugins/capability-bindings";
 import { createPluginHost } from "../../src/plugins/host";
 import { loadPlugins } from "../../src/plugins/loader";
 import { createApp } from "../../src/server";
@@ -56,12 +56,19 @@ export async function bootLive(pluginIds: string[]): Promise<LiveApi> {
     publicBaseUrl: null,
     requireVerifiedEmailForReset: false,
   });
-  const loaded = await loadPlugins({ core, db, storage, enabledIds: pluginIds });
+  const loaded = await loadPlugins({
+    core,
+    db,
+    storage,
+    enabledIds: pluginIds,
+    // The production (advisory-locked) path, so a test boot exercises it.
+    migrate: (config) => applyPluginMigrations(TEST_DATABASE_URL as string, config),
+  });
   const host = createPluginHost({
     pluginState: core.pluginStateService,
     loaded,
     seedActiveIds: pluginIds,
-    capabilityBindings: [searchBinding(core.searchProviders)],
+    capabilityBindings: [searchBinding(core.searchProviders), jobsBinding(core.jobService)],
   });
   await host.init();
   for (const id of pluginIds) await host.activate(id);

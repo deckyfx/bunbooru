@@ -2,7 +2,8 @@ import { asc, count, eq, inArray, or, sql } from "drizzle-orm";
 
 import type { DB } from "../client";
 import { tagAliases, tagImplications, tags, users, type Tag } from "../schema";
-import { bigintArray, impliedTagIds, lockTagGardening, type Tx } from "./tag-graph";
+import { bigintArray } from "./sql-arrays";
+import { impliedTagIds, lockTagGardening, type Tx } from "./tag-graph";
 
 /** An alias as callers see it: the antecedent NAME and the consequent tag. */
 export interface TagAlias {

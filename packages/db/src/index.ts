@@ -11,9 +11,11 @@ export const DB_PACKAGE = "@bunbooru/db" as const;
 export * from "./schema";
 export { createDb, DB_POOL_MAX_ENV, resolvePoolMax } from "./client";
 export type { DB } from "./client";
+export { isUniqueViolation } from "./pg-errors";
 export {
   applyCoreMigrations,
   applyEmbeddedMigrations,
+  applyPluginMigrations,
   buildSequence,
   planMigrations,
   type EmbeddedMigrationConfig,
@@ -50,6 +52,15 @@ export {
   type TagImplication,
   type TagImplicationRepository,
 } from "./repositories/tag-implication-repository";
+export {
+  createJobRepository,
+  type ClaimedJob,
+  type JobCount,
+  type JobRepository,
+  type JobRetryResult,
+  type NewJob,
+} from "./repositories/job-repository";
+export { bigintArray, textArray } from "./repositories/sql-arrays";
 export {
   createTagVersionRepository,
   type TagVersion,

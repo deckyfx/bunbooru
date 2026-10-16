@@ -33,6 +33,7 @@ const appCore = {
   pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
   searchProviders: createSearchProviderRegistry(),
+  jobService: {} as Core["jobService"],
 } satisfies Core;
 
 const member: User = {
@@ -57,6 +58,7 @@ function contextAs(user: User | null): PluginContext {
       auth: {} as AuthService,
     },
     events: createCoreEvents(),
+    jobs: { enqueue: async () => ({ id: 0, created: false }) },
     db: {} as DB,
     storage: {} as StorageProvider,
     auth: { currentUser: async () => user },

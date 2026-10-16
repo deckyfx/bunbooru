@@ -48,8 +48,11 @@ export interface EmbeddedMigrationConfig {
 const DEFAULT_TABLE = "__drizzle_migrations";
 const DEFAULT_SCHEMA = "drizzle";
 
-/** Fixed advisory-lock key serializing CORE boot migrations across replicas. */
-const CORE_MIGRATION_LOCK_KEY = 4_010_202_507;
+/**
+ * Fixed advisory-lock key serializing boot migrations (core and plugins) across
+ * processes: replicas, and an API beside its job workers.
+ */
+const MIGRATION_LOCK_KEY = 4_010_202_507;
 
 /** sha256 of a migration's raw SQL — matches how Drizzle records `hash`. */
 function hashSql(rawSql: string): string {
@@ -234,7 +237,16 @@ export async function applyCoreMigrations(url: string): Promise<void> {
   if (coreCount === 0) {
     throw new Error("No core migrations were compiled into this build — the database cannot be created.");
   }
-  await withMigrationConnection(url, CORE_MIGRATION_LOCK_KEY, (db) =>
+  await withMigrationConnection(url, MIGRATION_LOCK_KEY, (db) =>
     applyEmbeddedMigrations(db, { embedded: coreEmbedded, label: "core" }),
   );
+}
+
+/**
+ * Apply one plugin's pending migrations under the same advisory lock as
+ * {@link applyCoreMigrations}, so processes booting together (an API and its
+ * workers) never run the same plugin DDL twice.
+ */
+export async function applyPluginMigrations(url: string, config: EmbeddedMigrationConfig): Promise<void> {
+  await withMigrationConnection(url, MIGRATION_LOCK_KEY, (db) => applyEmbeddedMigrations(db, config));
 }

@@ -15,6 +15,10 @@ import type {
   CoreEvents,
   DB,
   EmbeddedMigrations,
+  EnqueueOptions,
+  JobContext,
+  JobHandler,
+  JsonValue,
   MailProvider,
   OutgoingMail,
   SearchProvider,
@@ -40,7 +44,7 @@ import type {
  * mounts the returned {@link PluginRegistration.routes} under
  * `/api/v1/plugins/<id>`.
  */
-export const PLUGIN_SDK_VERSION = "0.8.0" as const;
+export const PLUGIN_SDK_VERSION = "0.9.0" as const;
 
 /** Storage contract re-exported for plugins that register storage providers. */
 export type { StorageProvider };
@@ -50,6 +54,26 @@ export type { MailProvider, OutgoingMail };
 
 /** Search contract re-exported for plugins that contribute metatags (`fav:`, `pool:`). */
 export type { SearchProvider, SearchTerm };
+
+/** Job contract re-exported for plugins that run background work. */
+export type { EnqueueOptions, JobContext, JobHandler, JsonValue };
+
+/**
+ * Queue background work for this plugin's own job handlers (its
+ * {@link PluginRegistration.jobs}). `name` is the plugin-local job name; the
+ * host namespaces it to `<pluginId>:<name>`, so a plugin can only queue its own
+ * kinds. An `idempotencyKey` is namespaced the same way, so plain keys like
+ * `"backfill"` are private to the plugin. The job is durable: it survives
+ * restarts and runs in whichever process runs jobs (the API, or a dedicated
+ * worker).
+ */
+export interface PluginJobs {
+  enqueue(
+    name: string,
+    payload: JsonValue,
+    options?: EnqueueOptions,
+  ): Promise<{ id: number; created: boolean }>;
+}
 
 /**
  * The integration points a plugin may register through this SDK.
@@ -128,6 +152,8 @@ export interface PluginContext {
   services: PluginServices;
   /** Typed domain event bus — subscribe to `asset.created`, etc. */
   events: CoreEvents;
+  /** Queue durable background work for this plugin's job handlers (see {@link PluginJobs}). */
+  jobs: PluginJobs;
   /** Request-scoped auth resolution (see {@link PluginAuth}). */
   auth: PluginAuth;
   /** Drizzle handle for the plugin's OWN tables (see the note above). */
@@ -186,6 +212,13 @@ export interface PluginRegistration {
    * activation fails if it does.
    */
   searchProviders?: SearchProvider[];
+  /**
+   * Background job handlers, keyed by plugin-local name (`thumbnail`), which the
+   * host registers as `<pluginId>:<name>` while the plugin is active. Queue them
+   * with `ctx.jobs.enqueue(name, payload)`. A handler must be idempotent: a
+   * runner that dies mid-job means it runs again.
+   */
+  jobs?: Record<string, JobHandler>;
   /**
    * A mail transport this plugin supplies. The host installs it on Core's
    * `MailService` as the active provider. At most one enabled plugin may register

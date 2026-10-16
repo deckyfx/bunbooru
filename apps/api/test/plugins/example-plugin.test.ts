@@ -32,6 +32,7 @@ const appCore = {
   pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
   searchProviders: createSearchProviderRegistry(),
+  jobService: {} as Core["jobService"],
 } satisfies Core;
 
 /** A plugin context whose stats report a fixed post count and whose auth is
@@ -49,6 +50,7 @@ const anonContext: PluginContext = {
     auth: {} as AuthService,
   },
   events: createCoreEvents(),
+  jobs: { enqueue: async () => ({ id: 0, created: false }) },
   db: {} as DB,
   storage: {} as StorageProvider,
   auth: { currentUser: async () => null },

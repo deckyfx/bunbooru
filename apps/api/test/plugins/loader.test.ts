@@ -33,6 +33,7 @@ const core: Core = {
   pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
   searchProviders: createSearchProviderRegistry(),
+  jobService: {} as Core["jobService"],
 };
 
 /** No migrations are declared, so the db handle is never touched. */
@@ -62,6 +63,41 @@ function registryOf(id: string, factory: () => Promise<PluginModule>) {
 }
 
 describe("loadPlugins", () => {
+  it("namespaces a plugin's job kinds and idempotency keys to its id", async () => {
+    const queued: { kind: string; key: string | undefined }[] = [];
+    const jobsCore: Core = {
+      ...core,
+      jobService: {
+        enqueue: async (kind: string, _payload: unknown, options?: { idempotencyKey?: string }) => {
+          queued.push({ kind, key: options?.idempotencyKey });
+          return { id: queued.length, created: true };
+        },
+      } as unknown as Core["jobService"],
+    };
+    const plugin = definePlugin({
+      id: "demo",
+      name: "Demo",
+      version: "1.0.0",
+      async register(ctx) {
+        await ctx.jobs.enqueue("backfill", null, { idempotencyKey: "backfill" });
+        await ctx.jobs.enqueue("thumbnail", null);
+        return {};
+      },
+    });
+    await loadPlugins({
+      core: jobsCore,
+      db,
+      storage,
+      enabledIds: ["demo"],
+      registry: registryOf("demo", async () => ({ plugin })),
+    });
+    // Two plugins using the key "backfill" never dedupe against each other.
+    expect(queued).toEqual([
+      { kind: "demo:backfill", key: "demo:backfill" },
+      { kind: "demo:thumbnail", key: undefined },
+    ]);
+  });
+
   it("loads an enabled, known plugin with its metadata + routes", async () => {
     const registry = registryOf("demo", async () => ({ plugin: demoPlugin() }));
     const loaded = await loadPlugins({ core, db, storage, enabledIds: ["demo"], registry });

@@ -241,6 +241,7 @@ function stubCore(
     },
     events: createCoreEvents(),
     searchProviders: createSearchProviderRegistry(),
+    jobService: {} as Core["jobService"],
   };
 }
 

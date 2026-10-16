@@ -69,7 +69,6 @@ Background Workers → Event Bus → Plugins → Storage → Search
 apps/
   api/
   web/
-  worker/
 
 packages/
   core/
@@ -90,12 +89,9 @@ docs/
 
 ## api
 
-REST API, authentication, validation, OpenAPI. No business logic.
-
-## worker
-
-Background jobs: thumbnail generation, OCR, AI, metadata extraction, image
-conversion. Never exposes HTTP.
+REST API, authentication, validation, OpenAPI. No business logic. Also the
+composition root, so it hosts the job runner: inline by default, or alone as
+`bunbooru worker` (no HTTP). See Background Jobs.
 
 ## web
 
@@ -267,6 +263,11 @@ Required methods: `store()`, `delete()`, `exists()`, `stream()`, `copy()`,
 
 Future providers should require zero Core changes.
 
+Keys are sharded so no directory (or object-store prefix) grows unbounded.
+Originals are content-addressed: `assets/<aa>/<bb>/<sha256>.<ext>`, by hash
+prefix. Thumbnails: `plugins/thumbnailer/<aa>/<bb>/<id>.webp`, by the id's low
+16 bits. Files are never looked up by listing: each row stores its exact key.
+
 ---
 
 # Search Providers
@@ -334,8 +335,35 @@ Every long-running task becomes a Job (thumbnail, OCR, AI, metadata, virus
 scan, watermark).
 
 Jobs are retryable, resumable, and idempotent. The queue is **Postgres-backed**
-to satisfy these durability guarantees without a Redis requirement; Redis may
-be added later as an optional accelerator only.
+(the `jobs` table) to satisfy these durability guarantees without a Redis
+requirement; Redis may be added later as an optional accelerator only.
+
+```
+enqueue(kind, payload) → jobs row (queued) → runner claims (running, leased)
+  → handler.run → done
+                → throws → queued again after backoff (30s, 1m, 2m … 1h)
+                         → out of attempts → failed (admin console: Retry,
+                           refused while the same idempotency key is pending)
+```
+
+- **Kinds** are `<owner>:<name>`. A plugin registers handlers by local name
+  (`jobs: { thumbnail: { run } }`) and queues with `ctx.jobs.enqueue("thumbnail",
+  payload)`; both are namespaced to `<plugin>:thumbnail`. Handlers are a
+  capability: installed while the plugin is active, removed when it isn't. Jobs
+  whose kind has no handler wait for one.
+- **Claiming** uses `FOR UPDATE SKIP LOCKED`, so any number of runners share one
+  database without claiming the same job. A claim takes a lease (the handler's
+  `timeoutMs`); a runner that dies leaves its job to be claimed again once the
+  lease lapses. Attempts are counted at claim time, so a job that keeps
+  crashing its runner still runs out. Outcomes are fenced by the lease: a
+  runner that overran and lost its job can't complete or re-queue it.
+- **Idempotency keys** dedupe *pending* jobs only (`thumb:42`): once a job
+  finishes, the same key may be queued again.
+- **Where jobs run:** the API runs them by default (`JOBS_RUNNER=inline`,
+  `JOBS_CONCURRENCY`). For heavier loads, set `JOBS_RUNNER=off` and start
+  `bunbooru worker` processes beside it: the same binary with no HTTP, which
+  re-reads the plugin active set every 15s.
+- **Retention:** done jobs are pruned after 7 days, failed ones after 30.
 
 ---
 

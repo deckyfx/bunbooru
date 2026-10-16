@@ -1,6 +1,6 @@
 import { embeddedMigrations } from "./migrations.embedded";
 
-import { eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { Elysia, t } from "elysia";
 
 import {
@@ -9,6 +9,7 @@ import {
   canModerate,
   definePlugin,
   pluginRoutePrefix,
+  type JsonValue,
   type PluginContext,
 } from "@bunbooru/plugin-sdk";
 
@@ -22,12 +23,24 @@ const PLUGIN_ID = "thumbnailer";
 /** Longest side of a generated thumbnail (px). Source is never upscaled. */
 const THUMB_MAX = 300;
 
-/** How many assets one `POST /backfill` attempts (bounds work per request). */
-const BACKFILL_BATCH = 200;
+/** Asset pages (of {@link BACKFILL_PAGE_SIZE}) one backfill job scans before
+ *  handing the rest to the next job in its chain. */
+const BACKFILL_PAGES_PER_JOB = 10;
+const BACKFILL_PAGE_SIZE = 100;
 
-/** Max thumbnails generated concurrently from the event stream (bounds CPU/mem
- *  under a bulk import that emits many `asset.created` events at once). */
-const EVENT_CONCURRENCY = 2;
+/**
+ * Where an asset's thumbnail is stored, sharded two levels deep by the id's low
+ * 16 bits (`<aa>/<bb>/<id>.webp`), so no directory grows past ~150 files per
+ * million assets. Sequential ids spread evenly. Rows keep the key they were
+ * written with, so thumbnails stored flat before this scheme still resolve.
+ */
+export function thumbnailKey(assetId: number): string {
+  const shard = (assetId & 0xffff).toString(16).padStart(4, "0");
+  return `${shard.slice(0, 2)}/${shard.slice(2)}/${assetId}.webp`;
+}
+
+/** The idempotency key of a thumbnail job for `assetId`: one pending job per asset. */
+const thumbKey = (assetId: number): string => `thumb:${assetId}`;
 
 /** Read a stored asset's full bytes for (re-)thumbnailing. */
 async function readAssetBytes(ctx: PluginContext, assetId: number): Promise<Uint8Array | null> {
@@ -70,15 +83,14 @@ async function recordFailure(ctx: PluginContext, assetId: number): Promise<void>
     });
 }
 
-/** The outcome of attempting one asset. */
-type Outcome = "generated" | "failed";
-
 /**
  * Generate + store a thumbnail for one asset and record the outcome. Records a
  * failure row (rather than throwing) when the asset/blob is gone or the bytes
- * can't be decoded, so callers never throw and the backfill can terminate.
+ * can't be decoded: retrying those can't help, and the row stops the backfill
+ * from queueing the asset again. Storage and database faults DO throw, so the
+ * job retries them.
  */
-async function processAsset(ctx: PluginContext, assetId: number): Promise<Outcome> {
+async function processAsset(ctx: PluginContext, assetId: number): Promise<void> {
   const bytes = await readAssetBytes(ctx, assetId);
   let thumb: Awaited<ReturnType<typeof makeThumbnail>> | undefined;
   if (bytes) {
@@ -93,12 +105,11 @@ async function processAsset(ctx: PluginContext, assetId: number): Promise<Outcom
   }
   if (!thumb) {
     await recordFailure(ctx, assetId);
-    return "failed";
+    return;
   }
-  const storageKey = `${assetId}.webp`;
+  const storageKey = thumbnailKey(assetId);
   await ctx.storage.store(storageKey, thumb.bytes);
   await recordSuccess(ctx, assetId, storageKey, thumb.width, thumb.height);
-  return "generated";
 }
 
 /**
@@ -127,73 +138,66 @@ async function counts(ctx: PluginContext): Promise<{ succeeded: number; failed: 
   return rows[0] ?? { succeeded: 0, failed: 0, attempted: 0 };
 }
 
-/**
- * Attempt thumbnails for assets that have no record yet, up to {@link
- * BACKFILL_BATCH} attempts per call. Walks the asset list by cursor (via the Core
- * service — no direct Core-table access), so each page costs the same however
- * far into a large library it is. The batch counts BOTH successes and
- * failures, and `remaining` counts only never-attempted assets, so a permanently
- * failing asset gets a row and the caller's loop terminates.
- */
-async function backfill(
-  ctx: PluginContext,
-): Promise<{ scanned: number; generated: number; failed: number; remaining: number }> {
-  let scanned = 0;
-  let generated = 0;
-  let failed = 0;
-  const perPage = 100;
+/** Whether `assetId` already has a SUCCESSFUL thumbnail. */
+async function hasThumbnail(ctx: PluginContext, assetId: number): Promise<boolean> {
+  const rows = await ctx.db
+    .select({ assetId: thumbnails.assetId })
+    .from(thumbnails)
+    .where(and(eq(thumbnails.assetId, assetId), isNotNull(thumbnails.storageKey)))
+    .limit(1);
+  return rows.length > 0;
+}
 
-  await walkPages(
-    (cursor) => ctx.services.assets.list({ perPage, cursor }),
-    async (assets) => {
-      const alreadyRecorded = await recordedIds(ctx, assets.map((asset) => asset.id));
-      for (const asset of assets) {
-        scanned += 1;
-        if (alreadyRecorded.has(asset.id)) continue;
-        const outcome = await processAsset(ctx, asset.id);
-        if (outcome === "generated") generated += 1;
-        else failed += 1;
-        // Count attempts (not just successes) toward the cap so a page of failures
-        // can't make one request scan the entire asset list.
-        if (generated + failed >= BACKFILL_BATCH) return "stop";
-      }
-      return "continue";
-    },
-  );
+/** The `{ [field]: … }` object a job payload is expected to be, or throw. */
+function payloadObject(payload: JsonValue): { [key: string]: JsonValue } {
+  if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) return payload;
+  throw new Error(`malformed job payload: ${JSON.stringify(payload)}`);
+}
 
-  // "remaining" = never-attempted assets (total − attempted). Failures have rows,
-  // so they're excluded — the UI stops re-invoking instead of looping forever.
-  const total = (await ctx.services.stats.getStats()).posts;
-  const remaining = Math.max(0, total - (await counts(ctx)).attempted);
-  return { scanned, generated, failed, remaining };
+/** The asset id of a `thumbnail` job's payload, or throw. */
+function assetIdOf(payload: JsonValue): number {
+  const { assetId } = payloadObject(payload);
+  if (typeof assetId === "number" && Number.isSafeInteger(assetId) && assetId > 0) return assetId;
+  throw new Error(`malformed thumbnail payload: ${JSON.stringify(payload)}`);
+}
+
+/** The resume cursor of a `backfill` job's payload (null = from the start), or throw. */
+function cursorOf(payload: JsonValue): string | null {
+  const { cursor } = payloadObject(payload);
+  if (cursor === null || typeof cursor === "string") return cursor;
+  throw new Error(`malformed backfill payload: ${JSON.stringify(payload)}`);
 }
 
 /**
- * A fixed-concurrency worker over asset ids, so the `asset.created` fan-out
- * during a bulk import decodes at most {@link EVENT_CONCURRENCY} images at once
- * instead of one per event. Deduplicates ids already queued.
+ * One link of a backfill chain: scan up to {@link BACKFILL_PAGES_PER_JOB} pages
+ * of assets from `cursor`, queue a thumbnail job for each that has no record
+ * yet (success or recorded failure), then queue the next link for the rest.
+ * Walks by cursor through the Core service (no direct Core-table access), so
+ * every link costs the same however far into a large library it is.
  */
-function createBoundedQueue(concurrency: number, worker: (id: number) => Promise<void>) {
-  const queued = new Set<number>();
-  const pending: number[] = [];
-  let active = 0;
-  const pump = (): void => {
-    while (active < concurrency && pending.length > 0) {
-      const id = pending.shift() as number;
-      queued.delete(id);
-      active += 1;
-      worker(id).finally(() => {
-        active -= 1;
-        pump();
-      });
-    }
-  };
-  return (id: number): void => {
-    if (queued.has(id)) return;
-    queued.add(id);
-    pending.push(id);
-    pump();
-  };
+async function backfillFrom(ctx: PluginContext, cursor: string | null): Promise<void> {
+  let pages = 0;
+  let queued = 0;
+  const resume = await walkPages(
+    (at) => ctx.services.assets.list({ perPage: BACKFILL_PAGE_SIZE, cursor: at }),
+    async (assets) => {
+      // One batched lookup per page, not one per asset.
+      const alreadyRecorded = await recordedIds(ctx, assets.map((asset) => asset.id));
+      for (const asset of assets) {
+        if (alreadyRecorded.has(asset.id)) continue;
+        const job = await ctx.jobs.enqueue("thumbnail", { assetId: asset.id }, { idempotencyKey: thumbKey(asset.id) });
+        if (job.created) queued += 1;
+      }
+      pages += 1;
+      return pages >= BACKFILL_PAGES_PER_JOB ? "stop" : "continue";
+    },
+    cursor ?? undefined,
+  );
+  ctx.log.info("thumbnail_backfill_link", { queued, more: resume !== null });
+  // Keyed by its cursor, so a link re-run after a crash doesn't fork the chain.
+  if (resume !== null) {
+    await ctx.jobs.enqueue("backfill", { cursor: resume }, { idempotencyKey: `backfill:${resume}` });
+  }
 }
 
 /**
@@ -239,11 +243,13 @@ export function buildThumbnailerRoutes(ctx: PluginContext) {
         missing: Math.max(0, totalAssets - attempted),
       };
     })
-    // Attempt a bounded batch of missing thumbnails (admin-only). Re-invoke while
-    // `remaining` is non-zero.
+    // Queue thumbnails for every asset without one (admin-only). The work runs
+    // in the background as a chain of jobs; `queued: false` means a backfill
+    // is already starting.
     .post("/backfill", async ({ request }) => {
       await requireAdmin(ctx, request);
-      return backfill(ctx);
+      const job = await ctx.jobs.enqueue("backfill", { cursor: null }, { idempotencyKey: "backfill" });
+      return { queued: job.created };
     });
 }
 
@@ -260,9 +266,10 @@ export type ThumbnailerPluginApp = ReturnType<typeof buildThumbnailerRoutes>;
 /**
  * Thumbnailer plugin — generates a webp thumbnail for every asset via Bun's native
  * image API. Subscribes to `asset.created` (the Event-Rule flow `AssetCreated →
- * Thumbnail`) to thumbnail new/imported uploads automatically (through a bounded
- * work queue), serves them, and offers an admin backfill for pre-existing assets.
- * Second reference plugin; the first to use `ctx.storage` and the event bus.
+ * Thumbnail`) and queues a durable `thumbnail` job per new or imported upload,
+ * so the work survives restarts, retries, and runs at the job runner's bounded
+ * concurrency. Serves the thumbnails, and offers an admin backfill (a chain of
+ * `backfill` jobs) for pre-existing assets.
  */
 export const plugin = definePlugin({
   id: PLUGIN_ID,
@@ -277,24 +284,40 @@ export const plugin = definePlugin({
     migrationsTable: "__drizzle_migrations_thumbnailer",
   },
   register(ctx) {
-    // Bounded worker: a burst of `asset.created` events (e.g. a bulk import) is
-    // drained at a fixed concurrency, not one full-image decode per event.
-    const enqueue = createBoundedQueue(EVENT_CONCURRENCY, async (assetId) => {
+    ctx.events.on("asset.created", async (event) => {
       try {
-        await processAsset(ctx, assetId);
+        await ctx.jobs.enqueue("thumbnail", { assetId: event.id }, { idempotencyKey: thumbKey(event.id) });
       } catch (error) {
-        // processAsset records failures itself; this catches unexpected faults
-        // (e.g. storage/db down) so the worker loop never dies.
-        ctx.log.error("thumbnail_worker_failed", {
-          assetId,
+        // The database is down; the admin backfill picks the asset up later.
+        ctx.log.error("thumbnail_enqueue_failed", {
+          assetId: event.id,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     });
-    ctx.events.on("asset.created", (event) => enqueue(event.id));
 
     return {
       routes: buildThumbnailerRoutes(ctx),
+      jobs: {
+        thumbnail: {
+          // A missing blob or an undecodable image is recorded as a failure
+          // (not thrown), so retries only cover storage and database faults.
+          maxAttempts: 3,
+          timeoutMs: 5 * 60 * 1000,
+          async run(payload) {
+            const assetId = assetIdOf(payload);
+            // Already done (a duplicate backfill chain, or a re-run).
+            if (await hasThumbnail(ctx, assetId)) return;
+            await processAsset(ctx, assetId);
+          },
+        },
+        backfill: {
+          maxAttempts: 3,
+          async run(payload) {
+            await backfillFrom(ctx, cursorOf(payload));
+          },
+        },
+      },
     };
   },
 });

@@ -61,14 +61,6 @@
         "tailwindcss": "^4.3.3",
       },
     },
-    "apps/worker": {
-      "name": "@bunbooru/worker",
-      "version": "0.1.0",
-      "dependencies": {
-        "@bunbooru/core": "workspace:*",
-        "@bunbooru/events": "workspace:*",
-      },
-    },
     "packages/auth": {
       "name": "@bunbooru/auth",
       "version": "0.1.0",
@@ -226,8 +218,6 @@
     "@bunbooru/storage": ["@bunbooru/storage@workspace:packages/storage"],
 
     "@bunbooru/web": ["@bunbooru/web@workspace:apps/web"],
-
-    "@bunbooru/worker": ["@bunbooru/worker@workspace:apps/worker"],
 
     "@clack/core": ["@clack/core@1.5.1", "", { "dependencies": { "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-iHTrHA8MtVuLl2TfZySmcKv1qO2PoyC9Z7pfSDozEuV5vtY3/wcOPKJXlqJ5Oq2Cx5DDGQGAMVx6HZfRRoVEbQ=="],
 

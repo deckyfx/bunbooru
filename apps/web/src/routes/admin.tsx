@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ComponentType, type FormEvent } from 
 import { useNavigate } from "@tanstack/react-router";
 import {
   Blocks,
+  ListChecks,
   Loader2,
   Power,
   PowerOff,
@@ -22,6 +23,7 @@ import {
   type TagCategory,
 } from "../lib/tags";
 import { CARD_CLASS, INPUT_CLASS } from "../components/card-styles";
+import { JobsSection } from "../components/admin/jobs";
 import { TagAliasesCard, TagImplicationsCard } from "../components/admin/tag-gardening";
 import { IsolatedWidget, useSlotEntries } from "../components/plugin-slot";
 import type { SlotEntry } from "../plugins/slots";
@@ -41,13 +43,14 @@ function formatBytes(bytes: number): string {
 
 
 /** A built-in (non-plugin) console section. */
-type CoreSection = "settings" | "taxonomy" | "extensions" | "runtime";
+type CoreSection = "settings" | "taxonomy" | "extensions" | "jobs" | "runtime";
 /** The selected nav target — a core section or a specific plugin's tools. */
 type Section = { kind: "core"; key: CoreSection } | { kind: "plugin"; id: string };
 
 /**
  * Superadmin console: a sidebar-navigated set of sections — runtime settings, tag
- * taxonomy, extension (plugin) management, and each active plugin's own tools.
+ * taxonomy, extension (plugin) management, the job queue, and each active
+ * plugin's own tools.
  * Admin-only — redirects non-admins home once auth resolves (the server also
  * enforces this on every route).
  */
@@ -95,6 +98,12 @@ export function AdminPage() {
               onClick={() => setSection({ kind: "core", key: "taxonomy" })}
             />
             <NavButton
+              icon={ListChecks}
+              label="Jobs"
+              active={isCurrent({ kind: "core", key: "jobs" })}
+              onClick={() => setSection({ kind: "core", key: "jobs" })}
+            />
+            <NavButton
               icon={ServerCog}
               label="Runtime"
               active={isCurrent({ kind: "core", key: "runtime" })}
@@ -133,6 +142,7 @@ export function AdminPage() {
             <TagImplicationsCard />
           </div>
         ) : null}
+        {section.kind === "core" && section.key === "jobs" ? <JobsSection /> : null}
         {section.kind === "core" && section.key === "runtime" ? <RuntimeConfigSection /> : null}
         {section.kind === "plugin" ? (
           <PluginToolSection tool={pluginTools.find((tool) => toolKey(tool) === section.id)} />

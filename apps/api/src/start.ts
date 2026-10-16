@@ -1,10 +1,16 @@
 import type { HTMLBundle } from "bun";
 
-import { applyCoreMigrations, createCoreRuntime, createLogMailProvider } from "@bunbooru/core";
+import {
+  applyCoreMigrations,
+  applyPluginMigrations,
+  createCoreRuntime,
+  createJobRunner,
+  createLogMailProvider,
+} from "@bunbooru/core";
 
 import { envConfig, MAX_REQUEST_BODY_BYTES } from "./env-config";
 import { logger } from "./lib/logger";
-import { mailBinding, searchBinding } from "./plugins/capability-bindings";
+import { jobsBinding, mailBinding, searchBinding } from "./plugins/capability-bindings";
 import { createPluginHost } from "./plugins/host";
 import { loadPlugins } from "./plugins/loader";
 import { PLUGIN_REGISTRY } from "./plugins/registry";
@@ -20,11 +26,23 @@ export interface StartOptions {
    * production (the binary serves the embedded build) and in API-only dev.
    */
   devWeb?: HTMLBundle;
+  /**
+   * `worker` (`bunbooru worker`): run background jobs only, with no HTTP
+   * server, beside an API started with `JOBS_RUNNER=off`. Default `server`.
+   */
+  mode?: "server" | "worker";
 }
 
 // Never reclaim a blob written within this window — its row insert may simply
 // not have landed yet (the store→insert gap is milliseconds, so 1h is ample).
 const ORPHAN_GC_GRACE_MS = 60 * 60 * 1000;
+
+// Finished jobs are pruned hourly (cheap: an indexed delete).
+const JOB_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+
+// How often a worker re-reads which plugins are active, so an admin's
+// activate/deactivate in the API reaches its job handlers.
+const WORKER_PLUGIN_REFRESH_MS = 15_000;
 
 /**
  * Drive an idempotent background sweep every `intervalMs` (`<= 0` disables it).
@@ -65,12 +83,14 @@ function startSweep(
  * Boot the API: assemble Core from runtime config, apply migrations, load the
  * plugins over the SAME db handle (running their migrations, then `register`),
  * build the HTTP app, mount plugin and web routes, listen, and start the
- * background sweeps. Installs SIGTERM/SIGINT handlers for a clean shutdown.
- * Called by `index.ts` (normal start, and the production binary) and by
- * `scripts/dev.ts` (one-port development).
+ * background sweeps and the job runner. In `worker` mode, everything up to the
+ * plugins, then only the job runner. Installs SIGTERM/SIGINT handlers for a
+ * clean shutdown. Called by `index.ts` (normal start, `worker`, and the
+ * production binary) and by `scripts/dev.ts` (one-port development).
  */
 export async function startApi(options: StartOptions = {}): Promise<void> {
   const isProduction = envConfig.NODE_ENV === "production";
+  const isWorker = options.mode === "worker";
 
   // Public base URL for links in outgoing mail. In dev it defaults to localhost so
   // reset/verify are testable with zero config; in production it must be set
@@ -120,6 +140,8 @@ export async function startApi(options: StartOptions = {}): Promise<void> {
     db,
     storage,
     enabledIds: Object.keys(PLUGIN_REGISTRY),
+    // Under the same advisory lock as the core migrations above.
+    migrate: (config) => applyPluginMigrations(envConfig.DATABASE_URL, config),
   });
 
   // A plugin's mail transport is a CAPABILITY that follows its active state — the
@@ -151,9 +173,14 @@ export async function startApi(options: StartOptions = {}): Promise<void> {
   }
 
   // Capability bindings: what a plugin supplies to Core (its mail transport,
-  // its search metatags), installed on activate and removed on deactivate.
-  // Future per-plugin capabilities add a binding there, not logic in the host.
-  const capabilityBindings = [mailBinding(core.mailService), searchBinding(core.searchProviders)];
+  // its search metatags, its job handlers), installed on activate and removed
+  // on deactivate. Future per-plugin capabilities add a binding there, not
+  // logic in the host.
+  const capabilityBindings = [
+    mailBinding(core.mailService),
+    searchBinding(core.searchProviders),
+    jobsBinding(core.jobService),
+  ];
 
   // Record every loaded plugin's owned tables in the catalog in ONE atomic write
   // (so a partial failure can't leave it half-written) — this is how the admin
@@ -171,6 +198,31 @@ export async function startApi(options: StartOptions = {}): Promise<void> {
   // init() installs the capabilities of every already-active plugin (e.g. the mail
   // provider) — so the mail flows reflect the persisted active set from boot.
   await pluginHost.init();
+
+  // The job runner: in this process by default, or in a dedicated worker
+  // (`JOBS_RUNNER=off` here). Several runners may share the database; claims
+  // never overlap.
+  const runner =
+    isWorker || envConfig.JOBS_RUNNER === "inline"
+      ? createJobRunner(core.jobService, logger, { concurrency: envConfig.JOBS_CONCURRENCY })
+      : null;
+  runner?.start();
+  const jobPrune = runner
+    ? startSweep(JOB_PRUNE_INTERVAL_MS, "job_prune", () => core.jobService.prune())
+    : undefined;
+
+  if (isWorker) {
+    // Deliberately NOT unref'd: with no server listening, this timer is what
+    // keeps the worker process alive.
+    const refresh = setInterval(() => {
+      pluginHost.refresh().catch((error: unknown) => {
+        logger.error("plugin_refresh_failed", { error: error instanceof Error ? error.message : String(error) });
+      });
+    }, WORKER_PLUGIN_REFRESH_MS);
+    logger.info("worker_started", { concurrency: envConfig.JOBS_CONCURRENCY });
+    installShutdown("worker", [refresh, jobPrune], runner, async () => {});
+    return;
+  }
 
   const app = createApp({ core, host: pluginHost, storage, publicBaseUrl });
 
@@ -242,17 +294,33 @@ export async function startApi(options: StartOptions = {}): Promise<void> {
     startSweep(envConfig.SESSION_GC_INTERVAL_MS, "auth_token_gc", () =>
       core.authService.gcExpiredTokens(new Date()),
     ),
-  ].filter((t): t is ReturnType<typeof setInterval> => t !== undefined);
+    jobPrune,
+  ];
+  installShutdown("server", sweepTimers, runner, stopServer);
+}
 
-  /** Stop the server cleanly so `docker stop` (SIGTERM) drains in-flight requests. */
+type Timer = ReturnType<typeof setInterval>;
+
+/**
+ * Stop cleanly on SIGTERM/SIGINT, so `docker stop` drains in-flight requests:
+ * clear the timers, stop the HTTP server (`stop`), then let running jobs
+ * finish (bounded by the runner's grace period) before exiting.
+ */
+function installShutdown(
+  label: "server" | "worker",
+  timers: readonly (Timer | undefined)[],
+  runner: { stop(): Promise<void> } | null,
+  stop: () => Promise<void>,
+): void {
   const shutdown = async (): Promise<void> => {
-    logger.info("server_stopping", {});
-    for (const timer of sweepTimers) clearInterval(timer);
+    logger.info(`${label}_stopping`, {});
+    for (const timer of timers) if (timer !== undefined) clearInterval(timer);
     try {
-      await stopServer();
+      await stop();
+      await runner?.stop();
       process.exit(0);
     } catch (error) {
-      logger.error("server_stop_failed", {
+      logger.error(`${label}_stop_failed`, {
         error: error instanceof Error ? error.message : String(error),
       });
       process.exit(1);

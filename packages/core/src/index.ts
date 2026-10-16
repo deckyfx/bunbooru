@@ -46,6 +46,7 @@ export type { DB } from "@bunbooru/db";
 export {
   applyCoreMigrations,
   applyEmbeddedMigrations,
+  applyPluginMigrations,
   type EmbeddedMigrationConfig,
   type EmbeddedMigrations,
 } from "@bunbooru/db";
@@ -103,6 +104,21 @@ export {
   type TagService,
   type TagServiceDeps,
 } from "./services/tag-service";
+// Durable job queue — the service (enqueue + handlers) and the runner that executes it.
+export {
+  createJobService,
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_TIMEOUT_MS,
+  JOB_RETENTION,
+  JobKindConflictError,
+  type EnqueueOptions,
+  type JobContext,
+  type JobFailure,
+  type JobHandler,
+  type JobService,
+} from "./jobs/job-service";
+export { createJobRunner, retryDelayMs, type JobLogger, type JobRunner, type JobRunnerOptions } from "./jobs/job-runner";
+export type { JobCount, JsonValue } from "@bunbooru/db";
 // Plugin search metatags (`fav:`, `pool:`) — the registry the API's plugin host fills.
 export {
   CORE_METATAG_KEYS,

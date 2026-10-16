@@ -15,6 +15,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
@@ -468,6 +469,63 @@ export const authTokens = pgTable(
   ],
 );
 
+/** Any JSON value: what a job's payload may hold. */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+/** A job's lifecycle: waiting, claimed by a runner, finished, or out of attempts. */
+export type JobStatus = "queued" | "running" | "done" | "failed";
+
+/**
+ * The durable job queue. A runner claims due rows with `FOR UPDATE SKIP LOCKED`
+ * (several runners never take the same job), leases them until `lockedUntil`
+ * (a crashed runner's job becomes claimable again once the lease lapses), and
+ * records the outcome: `done`, or a retry at a backed-off `runAt`, or `failed`
+ * once `maxAttempts` is spent. `attempts` counts claims, so a crash mid-run
+ * still uses up an attempt.
+ *
+ * `kind` is namespaced by owner (`thumbnailer:thumbnail`). `idempotencyKey`, if
+ * set, is unique among PENDING jobs only (queued or running): the same work
+ * can't be queued twice at once, but can be queued again after it finishes.
+ * Status is text with a CHECK, not a Postgres enum, so a future status is a
+ * plain constraint change rather than an `ALTER TYPE` migration.
+ */
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").$type<JsonValue>().notNull(),
+    status: text("status").$type<JobStatus>().notNull().default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    runAt: timestamp("run_at", { withTimezone: true }).notNull().defaultNow(),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    lastError: text("last_error"),
+    idempotencyKey: text("idempotency_key"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (table) => [
+    check("jobs_status_valid", sql`${table.status} in ('queued', 'running', 'done', 'failed')`),
+    check("jobs_attempts_nonneg", sql`${table.attempts} >= 0`),
+    check("jobs_max_attempts_positive", sql`${table.maxAttempts} >= 1`),
+    // The claim scans due work by status and time.
+    index("jobs_claim_idx").on(table.status, table.runAt),
+    // Admin stats and per-kind claims.
+    index("jobs_kind_status_idx").on(table.kind, table.status),
+    uniqueIndex("jobs_idempotency_pending_idx")
+      .on(table.idempotencyKey)
+      .where(sql`${table.status} in ('queued', 'running')`),
+  ],
+);
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 
@@ -513,3 +571,5 @@ export type Rating = (typeof ratingEnum.enumValues)[number];
 export type TagCategory = (typeof tagCategoryEnum.enumValues)[number];
 export type UserRole = (typeof userRoleEnum.enumValues)[number];
 export type AuthTokenPurpose = (typeof authTokenPurposeEnum.enumValues)[number];
+
+export type Job = typeof jobs.$inferSelect;
