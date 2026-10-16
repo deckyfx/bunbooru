@@ -38,11 +38,14 @@ A modern, extensible Booru engine built with Bun.
 
 ### Optional Plugins
 
+Built: **Favorites**, **Pools**, **Thumbnails**, **Shimmie2 import**,
+**SMTP mail**. Switched on and off at runtime under Admin → Extensions.
+
+Planned:
+
 - Comments
 - Notes
 - Wiki
-- Pools
-- Favorites
 - AI Tagging
 - OCR
 - Translation
@@ -66,6 +69,8 @@ tag term (`kitty` finds posts tagged `cat`).
 | `user:alice` | uploaded by `alice` |
 | `md5:<digest>` | the post with that file hash |
 | `order:` | sort: `id`, `id_desc` (default), `date`, `date_asc`, `views`, `views_asc`, `size`, `size_asc`, `tagcount`, `tagcount_asc`, `random` |
+| `fav:alice` | favorited by `alice` (Favorites plugin) |
+| `pool:12`, `pool:my_comic` | in that pool, by id or name (Pools plugin) |
 
 Comparisons are `>`, `>=`, `<`, `<=`, or a range `lo..hi` (either end may be
 left open). A term that can't be understood, such as an unknown key or a

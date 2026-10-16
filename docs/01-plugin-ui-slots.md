@@ -1,6 +1,34 @@
 # Plugin UI Slots — Design Plan
 
-**Status:** draft, not implemented. Revisit before building.
+**Status:** implemented (branch `feat/plugin-ui-slots`), with the deviations
+below. The rest of this document is the original draft, kept for its reasoning.
+
+## As built
+
+- **UI metadata lives app-side, not in the manifest.** The draft had plugins
+  declare `UiContribution`s to the server and ship them in `GET /plugins`.
+  Since the UI is compiled into the app anyway, `apps/web/src/plugins/registry.tsx`
+  holds each widget's title, order and visibility next to its component, and
+  the server only says which plugins are active. That removed the SDK's
+  `adminPages` (a parallel mechanism) instead of adding one.
+- **Slots:** `admin` and `post-detail-aside`, in a closed union
+  (`plugins/slots.ts`). The others wait for a real consumer (§11 Phase 4).
+- **Pages** (the draft's §7 left them out): plugin-owned routes such as
+  `/favorites`, `/pools`, `/pools/:id`, declared in `router.tsx` through
+  `pluginRoute()` so links stay typed, rendered through `<PluginPage>`
+  (not-found while the plugin is inactive).
+- **Menu links**: plain data (label + route), not widgets; this answers open
+  question 3.
+- **Isolation** (§4): every widget and page has its own error boundary and a
+  Suspense boundary with no fallback (nothing shifts while it loads). The web
+  build now code-splits, so each lazy widget is its own chunk (§6).
+- **Manifest** (§5, open question 2): `GET /api/v1/plugins` stays public but
+  carries only `{ id, name }`; versions moved behind the admin Extensions
+  endpoint.
+- **First consumers:** favorites and pools rather than trending tags. Both
+  also needed **search providers** (`fav:`, `pool:`), now an SDK capability
+  (`PluginRegistration.searchProviders`).
+- SDK `0.8.0`.
 
 Generalizes the web app's admin-only plugin registry into **named UI slots**, so
 plugins can contribute widgets to public and member-facing surfaces (sidebar

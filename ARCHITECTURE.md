@@ -217,14 +217,34 @@ plugins/
     index.ts   entry point — registers routes, tables, events via plugin-sdk
 ```
 
-- On/off is controlled by central config (a list of enabled plugins). A
-  disabled plugin is simply never registered — Core contains no branching
-  logic for it.
-- Turning a feature on = enable it in config and restart. No marketplace, no
-  manifests to resolve, no network.
+- On/off is switched **at runtime** from Admin → Extensions; the state lives
+  in Core's `plugin_states` table (`ENABLED_PLUGINS` only seeds it on first
+  boot). Every known plugin is loaded and its routes mounted at startup; an
+  inactive one's routes 404 and its capabilities (mail transport, search
+  metatags) are uninstalled, with no restart.
+- No marketplace, no manifests to resolve, no network.
 - Because features build and ship together with Core, they share one
   `plugin-sdk` version. Integration is a compile-time contract, not a runtime
   compatibility negotiation.
+
+## Plugin UI
+
+A plugin's backend lives in its package; its UI lives in the web app, since
+`plugins → apps` is forbidden (a plugin can't import the Eden client, router
+or styles). `apps/web/src/plugins/registry.tsx` lists, per plugin:
+
+- **Slot widgets**: named places on a page (`admin`, `post-detail-aside`), a
+  closed union, each with the props the app supplies there;
+- **Pages**: plugin-owned routes (`/favorites`, `/pools/:id`), declared in
+  `router.tsx` so links stay typed;
+- **Menu links** in the header and home page.
+
+Each renders only while its plugin is active (`GET /api/v1/plugins`). Every
+widget and page is lazy-loaded (its own chunk) and isolated by its own error
+and Suspense boundary, so one broken plugin can't take a page down. Visibility
+(anonymous / member / moderator) is a UX hint; the plugin's routes enforce
+their own authorization. Slots are added when a real widget needs one. See
+[docs/01-plugin-ui-slots.md](./docs/01-plugin-ui-slots.md).
 
 ---
 
@@ -253,15 +273,23 @@ Future providers should require zero Core changes.
 
 Search is extensible.
 
-Core registers: `tag:`, `rating:`, `width:`, `height:`, `score:`.
+Core handles tags and its own metatags: `rating:`, `id:`, `width:`,
+`height:`, `size:`, `views:`, `tagcount:`, `date:`, `user:`, `md5:`, plus
+`order:`.
 
-Plugins may register: `comment:`, `note:`, `favorite:`, `ocr:`, `embedding:`.
+A plugin contributes metatags through `PluginRegistration.searchProviders`;
+today `fav:` (favorites) and `pool:` (pools). A provider compiles one term to
+a SQL condition over the plugin's OWN tables, correlated to the post being
+matched through `asset.id`:
 
 ```
-comment:"hello" → CommentPlugin → SQL fragment
+fav:alice → favorites plugin → exists (select 1 from favorites_posts f
+                                        where f.asset_id = <asset.id> and f.user_id = $1)
 ```
 
-Core remains unaware of comments.
+Core composes it with every other term (AND, OR, negation) and stays unaware
+of favorites. Providers are registered while their plugin is active, and a key
+that collides with Core's or another plugin's fails that plugin's activation.
 
 ---
 
