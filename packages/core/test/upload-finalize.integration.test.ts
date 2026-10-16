@@ -25,8 +25,8 @@ function memoryRepo(): AssetRepository {
   const rows: Asset[] = [];
   let nextId = 1;
   return {
-    findMany: async () => [],
-    count: async () => 0,
+    findPage: async () => [],
+    countUpTo: async () => 0,
     findById: async (id) => rows.find((r) => r.id === id) ?? null,
     findBySha256: async (sha256) => rows.find((r) => r.sha256 === sha256) ?? null,
     findReferencedStorageKeys: async (keys) =>
@@ -44,6 +44,7 @@ function memoryRepo(): AssetRepository {
         rating: input.rating ?? "unrated",
         source: input.source ?? null,
         viewCount: 0,
+        tagCount: 0,
         uploaderId: input.uploaderId ?? null,
         createdAt: new Date(0),
         updatedAt: new Date(0),

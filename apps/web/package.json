@@ -18,7 +18,7 @@
     "@elysiajs/eden": "^1.4.9",
     "@floating-ui/react": "^0.27.20",
     "@tanstack/react-query": "^5.104.2",
-    "@tanstack/react-router": "^1.170.44",
+    "@tanstack/react-router": "1.170.16",
     "lucide-react": "^1.57.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

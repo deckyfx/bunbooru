@@ -41,6 +41,7 @@ const sampleAsset: Asset = {
   rating: "unrated",
   source: null,
   viewCount: 0,
+  tagCount: 0,
   uploaderId: null,
   createdAt: new Date(0),
   updatedAt: new Date(0),

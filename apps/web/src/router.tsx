@@ -30,10 +30,16 @@ const postsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/posts",
   component: PostsPage,
-  // `q` is the booru search query (tags/metatags) the gallery filters by.
-  validateSearch: (search: Record<string, unknown>): { q?: string } => {
+  // `q` is the booru search query (tags/metatags) the gallery filters by;
+  // `cursor` is the keyset position (an opaque token from the API), kept in the
+  // URL so back/forward, refresh and shared links land on the same page.
+  validateSearch: (search: Record<string, unknown>): { q?: string; cursor?: string } => {
     const q = typeof search.q === "string" ? search.q.trim() : "";
-    return q ? { q } : {};
+    const cursor =
+      typeof search.cursor === "string" && /^[A-Za-z0-9_-]{1,512}$/.test(search.cursor)
+        ? search.cursor
+        : "";
+    return { ...(q ? { q } : {}), ...(cursor ? { cursor } : {}) };
   },
 });
 

@@ -122,6 +122,10 @@ export const assets = pgTable(
     // stats service (debounced via `post_views`), so the gallery/detail pages
     // read it without aggregating.
     viewCount: bigint("view_count", { mode: "number" }).notNull().default(0),
+    // Denormalized number of tags on the post, maintained by an asset_tags
+    // trigger (like tags.post_count), so `tagcount:` filters and `order:tagcount`
+    // sorts read a column instead of counting the join per row.
+    tagCount: integer("tag_count").notNull().default(0),
     uploaderId: bigint("uploader_id", { mode: "number" }).references(() => users.id, {
       onDelete: "set null",
     }),
@@ -129,6 +133,17 @@ export const assets = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    // Keyset pagination: each sort order walks (column, id), so each gets a
+    // composite index. `order:views` deliberately has none: view_count changes on
+    // every counted view, and an index on it would turn those cheap in-place
+    // (HOT) updates into index writes. It sorts the matching rows instead.
+    index("assets_created_at_id_idx").on(table.createdAt, table.id),
+    index("assets_size_bytes_id_idx").on(table.sizeBytes, table.id),
+    index("assets_tag_count_id_idx").on(table.tagCount, table.id),
+    // Exact-match search filters: `md5:` and `user:`.
+    index("assets_md5_idx").on(table.md5),
+    index("assets_uploader_id_idx").on(table.uploaderId),
+    check("assets_tag_count_nonneg", sql`${table.tagCount} >= 0`),
     check("assets_width_nonneg", sql`${table.width} >= 0`),
     check("assets_height_nonneg", sql`${table.height} >= 0`),
     check("assets_size_bytes_nonneg", sql`${table.sizeBytes} >= 0`),

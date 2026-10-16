@@ -21,7 +21,7 @@ import {
   useSetTagCategory,
   type TagCategory,
 } from "../lib/tags";
-import { CARD_CLASS, INPUT_CLASS } from "../components/admin/styles";
+import { CARD_CLASS, INPUT_CLASS } from "../components/card-styles";
 import { TagAliasesCard, TagImplicationsCard } from "../components/admin/tag-gardening";
 import { PLUGIN_ADMIN_SECTIONS } from "../plugins/registry";
 

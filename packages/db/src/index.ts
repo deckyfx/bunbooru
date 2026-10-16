@@ -21,8 +21,11 @@ export {
 } from "./migrator";
 export {
   createAssetRepository,
+  type AssetKeyset,
+  type AssetOrder,
   type AssetPage,
   type AssetRepository,
+  type AssetSortKey,
   type AssetUpdate,
 } from "./repositories/asset-repository";
 export {

@@ -1,10 +1,15 @@
 import { describe, expect, it } from "bun:test";
 
-import type { Asset, AssetRepository, NewAsset } from "@bunbooru/db";
+import type { Asset, AssetPage, AssetRepository, NewAsset } from "@bunbooru/db";
 import type { StorageProvider } from "@bunbooru/storage";
 
-import { UnsupportedMediaError } from "../src/errors";
-import { createAssetService, DEFAULT_PER_PAGE, MAX_PER_PAGE } from "../src/services/asset-service";
+import { UnsupportedMediaError, ValidationError } from "../src/errors";
+import {
+  createAssetService,
+  DEFAULT_PER_PAGE,
+  MAX_COUNTED_TOTAL,
+  MAX_PER_PAGE,
+} from "../src/services/asset-service";
 
 /** A valid 1×1 PNG so `Bun.Image.metadata()` returns real width/height/format. */
 const PNG_1x1 = new Uint8Array(
@@ -28,6 +33,7 @@ function asset(id: number): Asset {
     rating: "questionable",
     source: null,
     viewCount: 0,
+    tagCount: 0,
     uploaderId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
@@ -35,17 +41,40 @@ function asset(id: number): Asset {
 }
 
 /**
- * In-memory repository mirroring the real one's **newest-first** ordering
- * (`order by id desc`), so the pagination assertions validate the same order
- * production returns — without a database.
+ * In-memory keyset page mirroring the real repository: sort by the key with id
+ * as the tiebreak, continue strictly past `after`, and flip both for
+ * `backward`. Ignores `where` (the fake has no SQL).
  */
+function keysetPage(rows: Asset[], { order, limit, after, backward = false }: AssetPage): Asset[] {
+  if (order.kind === "random") return rows.slice(0, limit);
+  const valueOf = (row: Asset) =>
+    order.key === "createdAt" ? row.createdAt.getTime() : row[order.key];
+  const ascending = (order.direction === "asc") !== backward;
+  const sign = ascending ? 1 : -1;
+  const compare = (a: Asset, b: Asset) => sign * (valueOf(a) - valueOf(b) || a.id - b.id);
+  const afterValue =
+    after === undefined
+      ? undefined
+      : typeof after.value === "string"
+        ? Date.parse(after.value)
+        : after.value;
+  return [...rows]
+    .sort(compare)
+    .filter((row) => {
+      if (after === undefined || afterValue === undefined) return true;
+      const delta = valueOf(row) - afterValue || row.id - after.id;
+      return sign * delta > 0;
+    })
+    .slice(0, limit);
+}
+
+/** In-memory repository; listing follows the real keyset contract. */
 function fakeRepo(initial: Asset[] = []): AssetRepository {
   const rows = [...initial];
   let nextId = (rows.at(-1)?.id ?? 0) + 1;
   return {
-    findMany: async ({ limit, offset }) =>
-      [...rows].sort((a, b) => b.id - a.id).slice(offset, offset + limit),
-    count: async () => rows.length,
+    findPage: async (page) => keysetPage(rows, page),
+    countUpTo: async (_where, cap) => Math.min(rows.length, cap + 1),
     findById: async (id) => rows.find((r) => r.id === id) ?? null,
     findBySha256: async (sha256) => rows.find((r) => r.sha256 === sha256) ?? null,
     findReferencedStorageKeys: async (keys) =>
@@ -63,6 +92,7 @@ function fakeRepo(initial: Asset[] = []): AssetRepository {
         rating: input.rating ?? "unrated",
         source: input.source ?? null,
         viewCount: 0,
+        tagCount: 0,
         uploaderId: input.uploaderId ?? null,
         createdAt: new Date(0),
         updatedAt: new Date(0),
@@ -140,42 +170,119 @@ const rows = Array.from({ length: 25 }, (_, i) => asset(i + 1));
 
 describe("createAssetService.list", () => {
   const service = () => createAssetService(fakeRepo(rows), fakeStorage().provider);
+  const ids = (page: { assets: Asset[] }) => page.assets.map((a) => a.id);
 
-  it("defaults to page 1 and DEFAULT_PER_PAGE (newest-first)", async () => {
-    const result = await service().list();
-    expect(result.page).toBe(1);
-    expect(result.perPage).toBe(DEFAULT_PER_PAGE);
-    expect(result.assets).toHaveLength(DEFAULT_PER_PAGE);
-    expect(result.assets[0]?.id).toBe(25); // highest id first
+  it("serves the first page newest-first, with a next cursor and no previous", async () => {
+    const result = await service().list({ perPage: 10 });
+    expect(ids(result)).toEqual([25, 24, 23, 22, 21, 20, 19, 18, 17, 16]);
+    expect(result.perPage).toBe(10);
     expect(result.total).toBe(25);
-    expect(result.pageCount).toBe(2);
+    expect(result.totalCapped).toBe(false);
+    expect(result.nextCursor).not.toBeNull();
+    expect(result.prevCursor).toBeNull();
   });
 
-  it("applies offset for later pages", async () => {
-    const result = await service().list({ page: 2 });
-    expect(result.page).toBe(2);
+  it("walks forward to the end, then back to a full first page", async () => {
+    const svc = service();
+    const first = await svc.list({ perPage: 10 });
+    const second = await svc.list({ perPage: 10, cursor: first.nextCursor! });
+    expect(ids(second)).toEqual([15, 14, 13, 12, 11, 10, 9, 8, 7, 6]);
+    expect(second.prevCursor).not.toBeNull();
+
+    const third = await svc.list({ perPage: 10, cursor: second.nextCursor! });
+    expect(ids(third)).toEqual([5, 4, 3, 2, 1]);
+    expect(third.nextCursor).toBeNull(); // last page
+
+    const backToSecond = await svc.list({ perPage: 10, cursor: third.prevCursor! });
+    expect(ids(backToSecond)).toEqual(ids(second));
+    const backToFirst = await svc.list({ perPage: 10, cursor: backToSecond.prevCursor! });
+    expect(ids(backToFirst)).toEqual(ids(first));
+    expect(backToFirst.prevCursor).toBeNull();
+  });
+
+  it("serves a full first page when walking back from a page near the start", async () => {
+    const svc = service();
+    // Start the second page 3 rows in: going back leaves only 3 newer rows.
+    const short = await svc.list({ perPage: 3 });
+    const next = await svc.list({ perPage: 10, cursor: short.nextCursor! });
+    const back = await svc.list({ perPage: 10, cursor: next.prevCursor! });
+    expect(ids(back)).toEqual([25, 24, 23, 22, 21, 20, 19, 18, 17, 16]);
+    expect(back.prevCursor).toBeNull();
+  });
+
+  it("honours order: from the query, and refuses a cursor from another order", async () => {
+    const svc = service();
+    const oldest = await svc.list({ perPage: 5, query: "order:id" });
+    expect(ids(oldest)).toEqual([1, 2, 3, 4, 5]);
+    const newest = await svc.list({ perPage: 5 });
+    await expect(svc.list({ perPage: 5, query: "order:id", cursor: newest.nextCursor! })).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+  });
+
+  it("rejects a malformed cursor without running any query", async () => {
+    const repo = fakeRepo(rows);
+    let queries = 0;
+    const counting: AssetRepository = {
+      ...repo,
+      findPage: async (page) => {
+        queries += 1;
+        return repo.findPage(page);
+      },
+      countUpTo: async (where, cap) => {
+        queries += 1;
+        return repo.countUpTo(where, cap);
+      },
+    };
+    const svc = createAssetService(counting, fakeStorage().provider);
+    await expect(svc.list({ cursor: "nonsense" })).rejects.toBeInstanceOf(ValidationError);
+    expect(queries).toBe(0);
+  });
+
+  it("surfaces the page error when both queries fail, leaving no unhandled rejection", async () => {
+    // A database outage fails both. The count's rejection must not escape as
+    // unhandled (which would crash the process); bun test flags it if it does.
+    const failing: AssetRepository = {
+      ...fakeRepo(rows),
+      findPage: async () => {
+        throw new Error("page query failed");
+      },
+      countUpTo: async () => {
+        throw new Error("count query failed");
+      },
+    };
+    const svc = createAssetService(failing, fakeStorage().provider);
+    await expect(svc.list()).rejects.toThrow("page query failed");
+    await Bun.sleep(5); // let any stray rejection surface before the test ends
+  });
+
+  it("random order has no cursors", async () => {
+    const result = await service().list({ perPage: 5, query: "order:random" });
     expect(result.assets).toHaveLength(5);
-    expect(result.assets[0]?.id).toBe(5); // ids 5..1 on the last page
+    expect(result.nextCursor).toBeNull();
+    expect(result.prevCursor).toBeNull();
   });
 
-  it("clamps perPage to MAX_PER_PAGE", async () => {
-    const result = await service().list({ perPage: 500 });
-    expect(result.perPage).toBe(MAX_PER_PAGE);
+  it("caps the total and says so", async () => {
+    const many = Array.from({ length: MAX_COUNTED_TOTAL + 5 }, (_, i) => asset(i + 1));
+    const result = await createAssetService(fakeRepo(many), fakeStorage().provider).list({ perPage: 1 });
+    expect(result.total).toBe(MAX_COUNTED_TOTAL);
+    expect(result.totalCapped).toBe(true);
   });
 
-  it("falls back to defaults for non-positive or non-finite input", async () => {
+  it("clamps perPage to MAX_PER_PAGE and falls back to the default for bad input", async () => {
+    expect((await service().list({ perPage: 500 })).perPage).toBe(MAX_PER_PAGE);
     for (const bad of [0, -3, Number.NaN, Number.POSITIVE_INFINITY]) {
-      const result = await service().list({ page: bad, perPage: bad });
-      expect(result.page).toBe(1);
-      expect(result.perPage).toBe(DEFAULT_PER_PAGE);
+      expect((await service().list({ perPage: bad })).perPage).toBe(DEFAULT_PER_PAGE);
     }
   });
 
-  it("reports an empty page with pageCount 0", async () => {
+  it("reports an empty listing with no cursors", async () => {
     const result = await createAssetService(fakeRepo([]), fakeStorage().provider).list();
     expect(result.assets).toEqual([]);
     expect(result.total).toBe(0);
-    expect(result.pageCount).toBe(0);
+    expect(result.nextCursor).toBeNull();
+    expect(result.prevCursor).toBeNull();
   });
 });
 

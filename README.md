@@ -49,6 +49,28 @@ A modern, extensible Booru engine built with Bun.
 - Similar Image Search
 - Embeddings
 
+## Search Syntax
+
+Terms are separated by spaces and all must match. Tag aliases apply to every
+tag term (`kitty` finds posts tagged `cat`).
+
+| Term | Meaning |
+|---|---|
+| `cat solo` | tagged both `cat` and `solo` |
+| `-monochrome` | not tagged `monochrome` |
+| `~cat ~dog` | tagged `cat` or `dog` |
+| `cat*` | any tag starting with `cat` |
+| `rating:safe` | `safe`, `questionable`, `explicit` or `unrated` |
+| `id:` `width:` `height:` `size:` `views:` `tagcount:` | numbers: `id:42`, `width:>1920`, `tagcount:0`, `size:1000..5000` (bytes) |
+| `date:` | upload date, whole UTC days: `date:2026-10-15`, `date:>=2026-01-01`, `date:2026-01-01..2026-03-31` |
+| `user:alice` | uploaded by `alice` |
+| `md5:<digest>` | the post with that file hash |
+| `order:` | sort: `id`, `id_desc` (default), `date`, `date_asc`, `views`, `views_asc`, `size`, `size_asc`, `tagcount`, `tagcount_asc`, `random` |
+
+Comparisons are `>`, `>=`, `<`, `<=`, or a range `lo..hi` (either end may be
+left open). A term that can't be understood, such as an unknown key or a
+malformed date, is ignored rather than matching nothing.
+
 ## Philosophy
 
 Everything is a plugin.

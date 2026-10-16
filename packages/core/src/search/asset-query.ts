@@ -1,6 +1,20 @@
-import { and, between, eq, gt, gte, lt, lte, not, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  between,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  lt,
+  lte,
+  not,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 
-import { assets, assetTags, tags, type Rating } from "@bunbooru/db";
+import { assets, assetTags, tags, users, type AssetOrder, type Rating } from "@bunbooru/db";
 import {
   collectTagNames,
   optimize,
@@ -9,8 +23,16 @@ import {
   type QueryNode,
 } from "@bunbooru/search";
 
+import { dateRange, DEFAULT_ORDER, parseOrder } from "./terms";
+
 /** Looks up aliases for the given tag names: antecedent → consequent name. */
 export type AliasResolver = (names: string[]) => Promise<ReadonlyMap<string, string>>;
+
+/** A compiled search: which assets match, and in what order. */
+export interface CompiledSearch {
+  where: SQL | undefined;
+  order: AssetOrder;
+}
 
 /**
  * The Search Engine (Core-owned per CLAUDE.md). Compiles a query string into a
@@ -20,19 +42,35 @@ export type AliasResolver = (names: string[]) => Promise<ReadonlyMap<string, str
  *   rating:safe width:>1000 1girl -monochrome
  *     → rating = 'safe' AND width > 1000 AND <tag 1girl> AND NOT <tag monochrome>
  *
- * The full pipeline: parse → fetch the aliases for exactly the tag names the
- * query mentions (one batched lookup) → optimize (resolve aliases, simplify) →
- * build SQL. Metatags map to asset columns; tag terms compile to an `asset_tags`
- * EXISTS subquery. Without a resolver, aliases are simply not applied.
+ * The full pipeline: parse → take out `order:` → fetch the aliases for exactly
+ * the tag names the query mentions (one batched lookup) → optimize (resolve
+ * aliases, simplify) → build SQL. Metatags map to asset columns; tag terms
+ * compile to an `asset_tags` EXISTS subquery. Without a resolver, aliases are
+ * simply not applied.
+ *
+ * `order:` sorts rather than filters, so it's lifted out before optimizing,
+ * while the top of the parsed tree is still the plain AND of the query's terms.
+ * Only a positive, top-level one counts, and the last one wins (`order:views
+ * order:size` sorts by size); one inside `-…` or a `~` group is ignored.
  */
 export async function compileAssetSearch(
   query: string,
   resolveAliases?: AliasResolver,
-): Promise<SQL | undefined> {
+): Promise<CompiledSearch> {
   const ast = parse(query);
-  const names = collectTagNames(ast);
+  let order = DEFAULT_ORDER;
+  const filters: QueryNode[] = [];
+  for (const child of ast.children) {
+    if (child.type === "metatag" && child.key === "order") {
+      order = (child.op === "eq" && parseOrder(child.value)) || order;
+    } else {
+      filters.push(child);
+    }
+  }
+  const remaining: QueryNode = { type: "and", children: filters };
+  const names = collectTagNames(remaining);
   const aliases = resolveAliases && names.length > 0 ? await resolveAliases(names) : undefined;
-  return buildNode(optimize(ast, { aliases }));
+  return { where: buildNode(optimize(remaining, { aliases })), order };
 }
 
 const RATINGS = new Set<Rating>(["safe", "questionable", "explicit", "unrated"]);
@@ -40,10 +78,16 @@ const isRating = (value: string): value is Rating => RATINGS.has(value as Rating
 
 /** Metatag keys that map to a numeric asset column. */
 const NUMERIC_COLUMNS = {
+  id: assets.id,
   width: assets.width,
   height: assets.height,
   size: assets.sizeBytes,
+  views: assets.viewCount,
+  tagcount: assets.tagCount,
 } as const;
+
+/** A canonical md5 digest, as stored (lowercase hex). */
+const MD5_RE = /^[0-9a-f]{32}$/;
 type NumericColumn = (typeof NUMERIC_COLUMNS)[keyof typeof NUMERIC_COLUMNS];
 
 function buildNode(node: QueryNode): SQL | undefined {
@@ -77,10 +121,50 @@ function tagCondition(name: string): SQL {
   return sql`exists (select 1 from ${assetTags} inner join ${tags} on ${assetTags.tagId} = ${tags.id} where ${assetTags.assetId} = ${assets.id} and ${match})`;
 }
 
+/**
+ * One metatag as a condition. A term that can't be understood (unknown key,
+ * malformed value, operator that doesn't apply) compiles to nothing and is
+ * ignored, like an unknown key always has been. A well-formed term that simply
+ * matches no rows (`user:nobody`) is a real condition that matches nothing.
+ */
 function metatagCondition(node: MetatagNode): SQL | undefined {
-  if (node.key === "rating") {
-    // Only equality is meaningful for an enum; an invalid value matches nothing.
-    return node.op === "eq" && isRating(node.value) ? eq(assets.rating, node.value) : undefined;
+  if (node.value.trim() === "") return undefined;
+
+  switch (node.key) {
+    case "rating":
+      // Only equality is meaningful for an enum.
+      return node.op === "eq" && isRating(node.value) ? eq(assets.rating, node.value) : undefined;
+    case "md5": {
+      const digest = node.value.toLowerCase();
+      return node.op === "eq" && MD5_RE.test(digest) ? eq(assets.md5, digest) : undefined;
+    }
+    case "user":
+      // Compared as lower(username): that's what users_username_lower_idx
+      // indexes, and it holds even if a write path ever stored mixed case. An
+      // unknown user matches no posts. The explicit NOT NULL keeps `-user:alice`
+      // honest: a bare `NOT IN` is NULL (not true) for a post with no uploader,
+      // which would silently drop it.
+      return node.op === "eq"
+        ? and(
+            isNotNull(assets.uploaderId),
+            inArray(
+              assets.uploaderId,
+              sql`(select ${users.id} from ${users} where lower(${users.username}) = ${node.value.toLowerCase()})`,
+            ),
+          )
+        : undefined;
+    case "date": {
+      const range = dateRange(node.op, node.value);
+      if (!range) return undefined;
+      return and(
+        range.from ? gte(assets.createdAt, range.from) : undefined,
+        range.until ? lt(assets.createdAt, range.until) : undefined,
+      );
+    }
+    case "order":
+      // Lifted out by compileAssetSearch when it applies; anywhere else (negated,
+      // inside an OR group) it has no meaning as a filter.
+      return undefined;
   }
 
   const column = NUMERIC_COLUMNS[node.key as keyof typeof NUMERIC_COLUMNS];

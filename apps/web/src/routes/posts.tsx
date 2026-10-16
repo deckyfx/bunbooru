@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
+import { type CSSProperties, type ReactNode } from "react";
 
 import { Link, useSearch } from "@tanstack/react-router";
 import { ImageOff } from "lucide-react";
@@ -20,12 +20,10 @@ const COLUMN_CHOICES = Array.from(
   (_, i) => MIN_COLUMNS + i,
 );
 
-/** A window of page numbers centred on the current page. */
-function pageWindow(current: number, total: number, span = 5): number[] {
-  if (total < 1) return [];
-  const end = Math.min(total, Math.max(current + 2, span));
-  const start = Math.max(1, end - span + 1);
-  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+/** "1 post", "1,234 posts", or "10,000+ posts" when the server stopped counting. */
+function formatTotal(total: number, capped: boolean): string {
+  const n = total.toLocaleString();
+  return capped ? `${n}+ posts` : `${n} post${total === 1 ? "" : "s"}`;
 }
 
 export function PostsPage() {
@@ -34,20 +32,12 @@ export function PostsPage() {
   const boardMode = useGalleryStore((s) => s.boardMode);
   const setBoardMode = useGalleryStore((s) => s.setBoardMode);
 
-  // Booru search query from the URL (`/posts?q=…`), set by clicking a tag or the
-  // search box. Filtering happens server-side; reset to page 1 when it changes —
-  // during render (not via an effect) so the query doesn't first fire with the
-  // stale page and waste a fetch.
-  const { q } = useSearch({ from: "/posts" });
-  const [page, setPage] = useState(1);
-  const [prevQ, setPrevQ] = useState(q);
-  if (q !== prevQ) {
-    setPrevQ(q);
-    setPage(1);
-  }
-  const { data, isLoading, isError, refetch } = useAssetsPage(page, q);
+  // Booru search query and keyset position from the URL (`/posts?q=…&cursor=…`).
+  // Clicking a tag or searching navigates without a cursor, so a new query
+  // always starts on its first page; filtering and paging happen server-side.
+  const { q, cursor } = useSearch({ from: "/posts" });
+  const { data, isLoading, isError, refetch } = useAssetsPage(q, cursor);
   const classic = boardMode === "classic";
-  const pageCount = data?.pageCount ?? 0;
   // Tags appearing across the current page's posts (booru-style sidebar).
   const pageTags = usePageTags(data?.assets.map((asset) => asset.id) ?? []);
   // Use the thumbnailer plugin's thumbnails when it's enabled; otherwise the grid
@@ -55,13 +45,6 @@ export function PostsPage() {
   // a thumbnail 404s (not generated yet), and to a placeholder if that also fails.
   const { data: plugins, isLoading: pluginsLoading } = usePlugins();
   const hasThumbnailer = plugins?.some((p) => p.id === "thumbnailer") ?? false;
-
-  // If the total shrinks (e.g. deletions) so the current page no longer exists,
-  // snap back to the last valid page — otherwise we'd render "No posts yet" for
-  // an out-of-range page with no active pagination item.
-  useEffect(() => {
-    if (pageCount > 0 && page > pageCount) setPage(pageCount);
-  }, [page, pageCount]);
 
   // Classic = uniform square grid; fluid = masonry (mixed aspect ratios).
   const gridStyle: CSSProperties = classic
@@ -98,7 +81,9 @@ export function PostsPage() {
       <section className="min-w-0 flex-1">
         <nav className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line pb-2 text-[12px]">
           <span className="font-bold">Posts</span>
-          {data ? <span className="text-muted">{data.total} total</span> : null}
+          {data ? (
+            <span className="text-muted">{formatTotal(data.total, data.totalCapped)}</span>
+          ) : null}
 
           <div className="ml-auto flex items-center gap-3">
             <DropdownMenu label="Size">
@@ -144,9 +129,17 @@ export function PostsPage() {
         ) : isError ? (
           <div className="py-12 text-center">
             <p className="mb-2 font-bold">Couldn’t load posts</p>
-            <button type="button" onClick={() => void refetch()} className="hover:underline">
-              Retry
-            </button>
+            <div className="flex justify-center gap-3">
+              <button type="button" onClick={() => void refetch()} className="hover:underline">
+                Retry
+              </button>
+              {/* A stale or hand-edited cursor is refused (400); offer a clean start. */}
+              {cursor ? (
+                <Link to="/posts" search={q ? { q } : {}} className="text-link hover:underline">
+                  Start from the first page
+                </Link>
+              ) : null}
+            </div>
           </div>
         ) : !data || data.assets.length === 0 ? (
           q ? (
@@ -215,36 +208,15 @@ export function PostsPage() {
           </div>
         )}
 
-        {pageCount > 1 ? (
-          <div className="mt-4 flex items-center justify-center gap-1 text-[12px]">
-            <PageButton disabled={page === 1} onClick={() => setPage(1)}>
-              « First
-            </PageButton>
-            <PageButton disabled={page === 1} onClick={() => setPage(page - 1)}>
-              ‹ Prev
-            </PageButton>
-            {pageWindow(page, pageCount).map((p) => (
-              <button
-                key={p}
-                type="button"
-                aria-current={p === page ? "page" : undefined}
-                onClick={() => setPage(p)}
-                className={
-                  p === page
-                    ? "rounded bg-link px-2 py-1 text-white"
-                    : "rounded px-2 py-1 hover:underline"
-                }
-              >
-                {p}
-              </button>
-            ))}
-            <PageButton disabled={page >= pageCount} onClick={() => setPage(page + 1)}>
-              Next ›
-            </PageButton>
-            <PageButton disabled={page >= pageCount} onClick={() => setPage(pageCount)}>
-              Last »
-            </PageButton>
-          </div>
+        {data && (data.prevCursor || data.nextCursor) ? (
+          <nav aria-label="Pages" className="mt-4 flex items-center justify-center gap-2 text-[12px]">
+            <PageLink cursor={data.prevCursor} q={q}>
+              ‹ Newer
+            </PageLink>
+            <PageLink cursor={data.nextCursor} q={q}>
+              Older ›
+            </PageLink>
+          </nav>
         ) : null}
       </section>
     </div>
@@ -274,23 +246,36 @@ function ModeButton({
   );
 }
 
-function PageButton({
-  disabled,
-  onClick,
+/**
+ * A pager link to the page `cursor` points at, keeping the query. Rendered inert
+ * (not a link) when there's nowhere to go that way. "Newer"/"Older" read right
+ * for the default newest-first order; for other `order:`s they mean
+ * "previous"/"next" in that order.
+ */
+function PageLink({
+  cursor,
+  q,
   children,
 }: {
-  disabled?: boolean;
-  onClick: () => void;
+  cursor: string | null;
+  q?: string;
   children: ReactNode;
 }) {
+  const box = "rounded border px-3 py-1";
+  if (!cursor) {
+    return (
+      <span aria-disabled="true" className={`${box} border-line text-muted`}>
+        {children}
+      </span>
+    );
+  }
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className="rounded border border-line px-2 py-1 hover:border-link disabled:cursor-not-allowed disabled:text-muted disabled:hover:border-line"
+    <Link
+      to="/posts"
+      search={{ ...(q ? { q } : {}), cursor }}
+      className={`${box} border-line hover:border-link`}
     >
       {children}
-    </button>
+    </Link>
   );
 }

@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { Link } from "@tanstack/react-router";
 import { BadgeCheck, Loader2, MailCheck, ShieldAlert, Trash2 } from "lucide-react";
 
+import { CARD_CLASS } from "../components/card-styles";
 import { PasswordInput } from "../components/password-input";
 import {
   authErrorMessage,
@@ -47,15 +48,24 @@ export function AccountPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg space-y-6">
+    <div className="space-y-4">
       <h1 className="border-b border-line pb-1 text-base font-bold">Account · {user.username}</h1>
-      {/* Keyed by email so a change-email remounts it: the verify-request
-          mutation state resets, and the new unverified address shows its own
-          "Verify email" button instead of a stale "sent" message. */}
-      <EmailSection key={user.email ?? "no-email"} user={user} />
-      <ChangeEmailSection />
-      <ChangePasswordSection />
-      <ApiKeysSection />
+      {/* Two columns from `lg` up: email on the left, password on the right; API
+          keys span the full width, since the key list benefits most from it.
+          Stacks to one column on narrow screens. */}
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        <div className="space-y-4">
+          {/* Keyed by email so a change-email remounts it: the verify-request
+              mutation state resets, and the new unverified address shows its own
+              "Verify email" button instead of a stale "sent" message. */}
+          <EmailSection key={user.email ?? "no-email"} user={user} />
+          <ChangeEmailSection />
+        </div>
+        <ChangePasswordSection />
+        <div className="lg:col-span-2">
+          <ApiKeysSection />
+        </div>
+      </div>
     </div>
   );
 }
@@ -68,7 +78,7 @@ function EmailSection({ user }: { user: UserDto }) {
   const mailConfigured = authConfig.data?.mailConfigured ?? false;
 
   return (
-    <section className="space-y-2">
+    <section className={`${CARD_CLASS} space-y-2`}>
       <h2 className="font-bold">Email</h2>
       {!user.email ? (
         <p className="text-[12px] text-muted">
@@ -144,7 +154,7 @@ function ChangeEmailSection() {
   }
 
   return (
-    <section className="space-y-3">
+    <section className={`${CARD_CLASS} space-y-3`}>
       <h2 className="font-bold">Change email</h2>
       <p className="text-[12px] text-muted">
         Your email receives password-reset and verification links. A new address must be
@@ -216,7 +226,7 @@ function ChangePasswordSection() {
   }
 
   return (
-    <section className="space-y-3">
+    <section className={`${CARD_CLASS} space-y-3`}>
       <h2 className="font-bold">Change password</h2>
       <p className="text-[12px] text-muted">
         Changing your password signs out every other session. This browser stays logged in.
@@ -294,7 +304,7 @@ function ApiKeysSection() {
   }
 
   return (
-    <section className="space-y-3">
+    <section className={`${CARD_CLASS} space-y-3`}>
       <h2 className="font-bold">API keys</h2>
       <p className="text-[12px] text-muted">
         Use an API key with{" "}

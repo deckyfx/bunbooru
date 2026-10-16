@@ -12,7 +12,7 @@ import {
   useTagImplications,
 } from "../../lib/tag-gardening";
 import { tagTextClass, type TagDto } from "../../lib/tags";
-import { CARD_CLASS, INPUT_CLASS } from "./styles";
+import { CARD_CLASS, INPUT_CLASS } from "../card-styles";
 
 /** "kitty" / "cat" inputs plus submit, shared by both cards. */
 function TagPairForm({
