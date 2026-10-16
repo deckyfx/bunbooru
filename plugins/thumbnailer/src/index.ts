@@ -14,6 +14,7 @@ import {
 
 import { thumbnails } from "./schema";
 import { makeThumbnail } from "./thumbnail";
+import { walkPages } from "./walk-pages";
 
 /** This plugin's stable id — route-prefix segment + migrations-table suffix. */
 const PLUGIN_ID = "thumbnailer";
@@ -140,26 +141,25 @@ async function backfill(
   let scanned = 0;
   let generated = 0;
   let failed = 0;
-  let cursor: string | undefined;
   const perPage = 100;
 
-  outer: for (;;) {
-    const result = await ctx.services.assets.list({ perPage, cursor });
-    if (result.assets.length === 0) break;
-    const alreadyRecorded = await recordedIds(ctx, result.assets.map((asset) => asset.id));
-    for (const asset of result.assets) {
-      scanned += 1;
-      if (alreadyRecorded.has(asset.id)) continue;
-      const outcome = await processAsset(ctx, asset.id);
-      if (outcome === "generated") generated += 1;
-      else failed += 1;
-      // Count attempts (not just successes) toward the cap so a page of failures
-      // can't make one request scan the entire asset list.
-      if (generated + failed >= BACKFILL_BATCH) break outer;
-    }
-    if (result.nextCursor === null) break;
-    cursor = result.nextCursor;
-  }
+  await walkPages(
+    (cursor) => ctx.services.assets.list({ perPage, cursor }),
+    async (assets) => {
+      const alreadyRecorded = await recordedIds(ctx, assets.map((asset) => asset.id));
+      for (const asset of assets) {
+        scanned += 1;
+        if (alreadyRecorded.has(asset.id)) continue;
+        const outcome = await processAsset(ctx, asset.id);
+        if (outcome === "generated") generated += 1;
+        else failed += 1;
+        // Count attempts (not just successes) toward the cap so a page of failures
+        // can't make one request scan the entire asset list.
+        if (generated + failed >= BACKFILL_BATCH) return "stop";
+      }
+      return "continue";
+    },
+  );
 
   // "remaining" = never-attempted assets (total − attempted). Failures have rows,
   // so they're excluded — the UI stops re-invoking instead of looping forever.
