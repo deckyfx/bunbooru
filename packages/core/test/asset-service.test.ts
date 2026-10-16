@@ -220,8 +220,40 @@ describe("createAssetService.list", () => {
     );
   });
 
-  it("rejects a malformed cursor", async () => {
-    await expect(service().list({ cursor: "nonsense" })).rejects.toBeInstanceOf(ValidationError);
+  it("rejects a malformed cursor without running any query", async () => {
+    const repo = fakeRepo(rows);
+    let queries = 0;
+    const counting: AssetRepository = {
+      ...repo,
+      findPage: async (page) => {
+        queries += 1;
+        return repo.findPage(page);
+      },
+      countUpTo: async (where, cap) => {
+        queries += 1;
+        return repo.countUpTo(where, cap);
+      },
+    };
+    const svc = createAssetService(counting, fakeStorage().provider);
+    await expect(svc.list({ cursor: "nonsense" })).rejects.toBeInstanceOf(ValidationError);
+    expect(queries).toBe(0);
+  });
+
+  it("surfaces the page error when both queries fail, leaving no unhandled rejection", async () => {
+    // A database outage fails both. The count's rejection must not escape as
+    // unhandled (which would crash the process); bun test flags it if it does.
+    const failing: AssetRepository = {
+      ...fakeRepo(rows),
+      findPage: async () => {
+        throw new Error("page query failed");
+      },
+      countUpTo: async () => {
+        throw new Error("count query failed");
+      },
+    };
+    const svc = createAssetService(failing, fakeStorage().provider);
+    await expect(svc.list()).rejects.toThrow("page query failed");
+    await Bun.sleep(5); // let any stray rejection surface before the test ends
   });
 
   it("random order has no cursors", async () => {

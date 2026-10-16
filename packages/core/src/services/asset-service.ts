@@ -290,8 +290,21 @@ export function createAssetService(
       const query = options.query?.trim() ?? "";
       const { where, order } = await compileAssetSearch(query, resolveAliases);
 
+      // Validate the cursor before any database work: a refused cursor costs no
+      // queries. (Random order has no cursors, so one is simply ignored there.)
+      const decoded =
+        options.cursor && order.kind === "column" ? decodeCursor(options.cursor, order) : null;
+      if (options.cursor && order.kind === "column" && !decoded) {
+        throw new ValidationError("Invalid or expired page cursor");
+      }
+
       // The count runs alongside the page; capped, so it's bounded either way.
       const countPromise = repository.countUpTo(where, MAX_COUNTED_TOTAL);
+      // If the page query throws first, nothing awaits this promise, and a
+      // rejection nobody observes would take the process down (as it can when
+      // a database outage fails both queries). Mark it handled here; `totals()`
+      // still awaits it and rethrows on the success path.
+      countPromise.catch(() => {});
       const totals = async () => {
         const counted = await countPromise;
         return {
@@ -328,11 +341,9 @@ export function createAssetService(
       };
 
       let page: Pick<AssetListPage, "assets" | "nextCursor" | "prevCursor">;
-      if (!options.cursor) {
+      if (!decoded) {
         page = await forward();
       } else {
-        const decoded = decodeCursor(options.cursor, order);
-        if (!decoded) throw new ValidationError("Invalid or expired page cursor");
         if (decoded.direction === "next") {
           page = await forward(decoded.keyset);
         } else {

@@ -76,10 +76,19 @@ export function decodeCursor(
   if (typeof i !== "number" || !Number.isSafeInteger(i) || i < 1) return null;
   if (d !== "n" && d !== "p") return null;
 
+  let value: number | string;
   if (order.key === "createdAt") {
-    if (typeof v !== "string" || Number.isNaN(Date.parse(v))) return null;
-  } else if (typeof v !== "number" || !Number.isSafeInteger(v)) {
+    if (typeof v !== "string") return null;
+    const ms = Date.parse(v);
+    if (Number.isNaN(ms)) return null;
+    // Canonicalize: Date.parse also accepts forms like "Tue Oct 15 2026" that
+    // Postgres' timestamptz input rejects, which would turn a bad cursor into a
+    // 500 instead of a 400. Every accepted value is now a real ISO timestamp.
+    value = new Date(ms).toISOString();
+  } else if (typeof v === "number" && Number.isSafeInteger(v)) {
+    value = v;
+  } else {
     return null;
   }
-  return { keyset: { value: v, id: i }, direction: d === "n" ? "next" : "prev" };
+  return { keyset: { value, id: i }, direction: d === "n" ? "next" : "prev" };
 }

@@ -76,6 +76,11 @@ describe("asset cursor", () => {
     expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
+  it("canonicalizes a non-ISO date the JS parser accepts but Postgres wouldn't", () => {
+    const token = encodeCursor(order, { value: "Tue Oct 15 2026 00:00:00 GMT+0000", id: 3 }, "next");
+    expect(decodeCursor(token, order)?.keyset.value).toBe("2026-10-15T00:00:00.000Z");
+  });
+
   it("refuses a cursor minted for a different order", () => {
     const token = encodeCursor({ kind: "column", key: "id", direction: "desc" }, { value: 9, id: 9 }, "next");
     expect(decodeCursor(token, order)).toBeNull();
