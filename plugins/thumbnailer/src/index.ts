@@ -28,6 +28,17 @@ const THUMB_MAX = 300;
 const BACKFILL_PAGES_PER_JOB = 10;
 const BACKFILL_PAGE_SIZE = 100;
 
+/**
+ * Where an asset's thumbnail is stored, sharded two levels deep by the id's low
+ * 16 bits (`<aa>/<bb>/<id>.webp`), so no directory grows past ~150 files per
+ * million assets. Sequential ids spread evenly. Rows keep the key they were
+ * written with, so thumbnails stored flat before this scheme still resolve.
+ */
+export function thumbnailKey(assetId: number): string {
+  const shard = (assetId & 0xffff).toString(16).padStart(4, "0");
+  return `${shard.slice(0, 2)}/${shard.slice(2)}/${assetId}.webp`;
+}
+
 /** The idempotency key of a thumbnail job for `assetId`: one pending job per asset. */
 const thumbKey = (assetId: number): string => `thumb:${assetId}`;
 
@@ -96,7 +107,7 @@ async function processAsset(ctx: PluginContext, assetId: number): Promise<void> 
     await recordFailure(ctx, assetId);
     return;
   }
-  const storageKey = `${assetId}.webp`;
+  const storageKey = thumbnailKey(assetId);
   await ctx.storage.store(storageKey, thumb.bytes);
   await recordSuccess(ctx, assetId, storageKey, thumb.width, thumb.height);
 }

@@ -263,6 +263,11 @@ Required methods: `store()`, `delete()`, `exists()`, `stream()`, `copy()`,
 
 Future providers should require zero Core changes.
 
+Keys are sharded so no directory (or object-store prefix) grows unbounded.
+Originals are content-addressed: `assets/<aa>/<bb>/<sha256>.<ext>`, by hash
+prefix. Thumbnails: `plugins/thumbnailer/<aa>/<bb>/<id>.webp`, by the id's low
+16 bits. Files are never looked up by listing: each row stores its exact key.
+
 ---
 
 # Search Providers
