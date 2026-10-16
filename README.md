@@ -139,15 +139,23 @@ bun run services:down      # stop services
 
 ## Development
 
-The API and the web app are separate Bun projects and run as two servers in
-development, so the web app gets hot reload:
+One server, one port, the same shape as production:
 
 ```bash
-bun run dev                # API on :3000 (SERVER_PORT)
-bun run dev:web            # web on :3001 (WEB_PORT), proxies /api/* to the API
+bun run dev                # API + web app on :3000 (SERVER_PORT), with hot reload
 ```
 
-Open the web port; it proxies `/api/*` to the API, so the browser sees one origin.
+`scripts/dev.ts` boots the API and serves the web app's HTML entry from the same
+port; Bun bundles it on the fly. Web changes hot-reload in the browser; server
+changes restart the process. The API and web app remain separate projects: only
+this launcher imports both.
+
+Two separate servers are still available when you want them:
+
+```bash
+bun run dev:api            # API only, on :3000
+bun run dev:web            # web on :3001 (WEB_PORT), proxies /api/* to the API
+```
 
 ## Production: one binary, one port
 

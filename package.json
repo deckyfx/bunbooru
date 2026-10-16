@@ -11,7 +11,8 @@
   "scripts": {
     "typecheck": "bun check && bun check -p apps/web",
     "test": "NODE_ENV=test bun test",
-    "dev": "bun --watch apps/api/src/index.ts",
+    "dev": "bun --watch scripts/dev.ts",
+    "dev:api": "bun --watch apps/api/src/index.ts",
     "dev:web": "bun run --cwd apps/web dev",
     "db:generate": "bun run --cwd packages/db db:generate",
     "gen:migrations": "bun run scripts/embed-migrations.ts",
@@ -37,6 +38,7 @@
   },
   "devDependencies": {
     "@types/bun": "^1.4.3",
+    "bun-plugin-tailwind": "^0.1.2",
     "dependency-cruiser": "^18.6.0",
     "drizzle-kit": "^0.31.11",
     "typescript": "^6.0.3"

@@ -12,6 +12,7 @@
       },
       "devDependencies": {
         "@types/bun": "^1.4.3",
+        "bun-plugin-tailwind": "^0.1.2",
         "dependency-cruiser": "^18.6.0",
         "drizzle-kit": "^0.31.11",
         "typescript": "^6.0.3",
