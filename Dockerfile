@@ -23,6 +23,7 @@ COPY packages/search/package.json packages/search/
 COPY packages/plugin-sdk/package.json packages/plugin-sdk/
 COPY plugins/example/package.json plugins/example/
 COPY plugins/favorites/package.json plugins/favorites/
+COPY plugins/pools/package.json plugins/pools/
 COPY plugins/shimmie-import/package.json plugins/shimmie-import/
 COPY plugins/smtp-mailer/package.json plugins/smtp-mailer/
 COPY plugins/thumbnailer/package.json plugins/thumbnailer/

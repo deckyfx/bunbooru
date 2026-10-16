@@ -5,7 +5,9 @@ import {
   AuthorizationError,
   canModerate,
   canWrite,
+  ConflictError,
   isOwnerOrAdmin,
+  ValidationError,
 } from "@bunbooru/core";
 import type {
   AssetService,
@@ -300,9 +302,18 @@ export function pluginTableName(pluginId: string, name: string): string {
   return full;
 }
 
-// Authorization predicates + auth errors, re-exported so plugin routes gate
-// themselves through the SDK (never importing `@bunbooru/core` directly).
-export { AuthenticationError, AuthorizationError, canModerate, canWrite, isOwnerOrAdmin };
+// Authorization predicates + the domain errors the API maps to statuses
+// (401, 403, 400, 409), re-exported so plugin routes answer in the API's
+// standard error shape through the SDK (never importing `@bunbooru/core`).
+export {
+  AuthenticationError,
+  AuthorizationError,
+  canModerate,
+  canWrite,
+  ConflictError,
+  isOwnerOrAdmin,
+  ValidationError,
+};
 
 // Domain types plugins need in their signatures, re-exported from Core.
 export type {

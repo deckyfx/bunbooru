@@ -52,12 +52,20 @@ export const PLUGIN_UI: PluginUiRegistry = {
       title: "Favorites",
       component: lazy(() => import("./favorites/FavoriteButton").then((m) => ({ default: m.FavoriteButton }))),
     },
+    {
+      pluginId: "pools",
+      id: "nav",
+      title: "Pools",
+      order: 10,
+      component: lazy(() => import("./pools/PoolNav").then((m) => ({ default: m.PoolNav }))),
+    },
   ],
 };
 
 /** Plugin links in the site menus (header and home page), to the plugin's pages. */
 export const PLUGIN_NAV: readonly PluginNavLink[] = [
   { pluginId: "favorites", label: "Favorites", to: "/favorites", visibility: "member" },
+  { pluginId: "pools", label: "Pools", to: "/pools" },
 ];
 
 /**
@@ -67,4 +75,6 @@ export const PLUGIN_NAV: readonly PluginNavLink[] = [
  */
 export const PLUGIN_PAGES = {
   favorites: lazy(() => import("./favorites/FavoritesPage").then((m) => ({ default: m.FavoritesPage }))),
+  pools: lazy(() => import("./pools/PoolsPage").then((m) => ({ default: m.PoolsPage }))),
+  pool: lazy(() => import("./pools/PoolPage").then((m) => ({ default: m.PoolPage }))),
 };

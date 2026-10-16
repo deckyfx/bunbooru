@@ -30,6 +30,7 @@ const PACKAGES = [
   "plugins/smtp-mailer",
   "plugins/shimmie-import",
   "plugins/favorites",
+  "plugins/pools",
 ] as const;
 
 export interface JournalEntry {
