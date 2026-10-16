@@ -42,12 +42,15 @@ describe("JobService handler registry", () => {
 
   it("refuses non-positive limits, changing nothing", () => {
     const jobs = service();
-    for (const bad of [{ timeoutMs: 0 }, { timeoutMs: -1 }, { timeoutMs: Number.NaN }, { maxAttempts: 0 }, { maxAttempts: 1.5 }]) {
+    for (const bad of [{ timeoutMs: 0 }, { timeoutMs: -1 }, { timeoutMs: Number.NaN }, { timeoutMs: 24 * 60 * 60 * 1000 + 1 }, { maxAttempts: 0 }, { maxAttempts: 1.5 }, { maxAttempts: 2_147_483_648 }]) {
       expect(() => jobs.register("a", { "a:ok": handler, "a:bad": { ...handler, ...bad } })).toThrow(RangeError);
     }
     expect(jobs.kinds()).toEqual([]);
-    jobs.register("a", { "a:ok": { ...handler, timeoutMs: 1, maxAttempts: 1 } });
-    expect(jobs.kinds()).toEqual(["a:ok"]);
+    jobs.register("a", {
+      "a:ok": { ...handler, timeoutMs: 1, maxAttempts: 1 },
+      "a:max": { ...handler, timeoutMs: 24 * 60 * 60 * 1000, maxAttempts: 2_147_483_647 },
+    });
+    expect(jobs.kinds()).toEqual(["a:ok", "a:max"]);
   });
 });
 

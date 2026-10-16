@@ -28,6 +28,11 @@ export interface JobHandler {
 export const DEFAULT_MAX_ATTEMPTS = 5;
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
+/** `jobs.max_attempts` is a Postgres `integer`. */
+const MAX_ATTEMPTS_LIMIT = 2_147_483_647;
+/** The longest lease a handler may ask for: one day. */
+const MAX_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** How long finished jobs are kept before {@link JobService.prune} deletes them. */
 export const JOB_RETENTION = { doneMs: 7 * DAY_MS, failedMs: 30 * DAY_MS };
@@ -130,13 +135,21 @@ export function createJobService(repository: JobRepository, now: () => Date = ()
         if (!KIND_RE.test(kind)) throw new JobKindConflictError(`"${kind}" from ${ownerId} is not a valid job kind`);
         // A non-positive lease would expire at claim, letting a second runner
         // start the job mid-run; a zero attempt budget would silently become
-        // the default.
+        // the default. The upper bounds keep both storable: the lease end must
+        // be a valid timestamp, and max_attempts fit its integer column.
         const { timeoutMs, maxAttempts } = handler;
-        if (timeoutMs !== undefined && !(Number.isFinite(timeoutMs) && timeoutMs > 0)) {
-          throw new RangeError(`Job "${kind}" from ${ownerId}: timeoutMs must be a positive number, got ${timeoutMs}`);
+        if (timeoutMs !== undefined && !(Number.isFinite(timeoutMs) && timeoutMs > 0 && timeoutMs <= MAX_TIMEOUT_MS)) {
+          throw new RangeError(
+            `Job "${kind}" from ${ownerId}: timeoutMs must be in (0, ${MAX_TIMEOUT_MS}], got ${timeoutMs}`,
+          );
         }
-        if (maxAttempts !== undefined && !(Number.isSafeInteger(maxAttempts) && maxAttempts >= 1)) {
-          throw new RangeError(`Job "${kind}" from ${ownerId}: maxAttempts must be a positive integer, got ${maxAttempts}`);
+        if (
+          maxAttempts !== undefined &&
+          !(Number.isSafeInteger(maxAttempts) && maxAttempts >= 1 && maxAttempts <= MAX_ATTEMPTS_LIMIT)
+        ) {
+          throw new RangeError(
+            `Job "${kind}" from ${ownerId}: maxAttempts must be an integer in [1, ${MAX_ATTEMPTS_LIMIT}], got ${maxAttempts}`,
+          );
         }
         const existing = byKind.get(kind);
         if (existing && existing.ownerId !== ownerId) {
