@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { createCoreRuntime, type Core, type DB } from "@bunbooru/core";
 
-import { searchBinding } from "../../src/plugins/capability-bindings";
+import { jobsBinding, searchBinding } from "../../src/plugins/capability-bindings";
 import { createPluginHost } from "../../src/plugins/host";
 import { loadPlugins } from "../../src/plugins/loader";
 import { createApp } from "../../src/server";
@@ -61,7 +61,7 @@ export async function bootLive(pluginIds: string[]): Promise<LiveApi> {
     pluginState: core.pluginStateService,
     loaded,
     seedActiveIds: pluginIds,
-    capabilityBindings: [searchBinding(core.searchProviders)],
+    capabilityBindings: [searchBinding(core.searchProviders), jobsBinding(core.jobService)],
   });
   await host.init();
   for (const id of pluginIds) await host.activate(id);

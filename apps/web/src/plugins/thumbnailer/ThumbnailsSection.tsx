@@ -5,24 +5,30 @@ import { unwrap } from "../../lib/api";
 import { authErrorMessage } from "../../lib/auth";
 import { thumbnailerApi } from "./client";
 
+/** How often the counts refresh while a queued backfill is being worked through. */
+const PROGRESS_POLL_MS = 5000;
+
 /**
  * Admin console section for the thumbnailer plugin: shows how many assets have
- * thumbnails and runs the backfill for the rest (one bounded batch per click —
- * re-invoke while `missing`/`remaining` is non-zero).
+ * thumbnails and queues a backfill for the rest, which the job runner works
+ * through in the background (the counts refresh while it does).
  */
 export function ThumbnailsSection() {
   const queryClient = useQueryClient();
-  const status = useQuery({
-    queryKey: ["thumbnailer", "status"],
-    queryFn: async () =>
-      unwrap(await thumbnailerApi.api.v1.plugins.thumbnailer.status.get()),
-  });
   const backfill = useMutation({
     mutationFn: async () =>
       unwrap(await thumbnailerApi.api.v1.plugins.thumbnailer.backfill.post()),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["thumbnailer", "status"] });
     },
+  });
+  const status = useQuery({
+    queryKey: ["thumbnailer", "status"],
+    queryFn: async () =>
+      unwrap(await thumbnailerApi.api.v1.plugins.thumbnailer.status.get()),
+    // Follow a backfill's progress until nothing is missing.
+    refetchInterval: (query) =>
+      backfill.isSuccess && (query.state.data?.missing ?? 0) > 0 ? PROGRESS_POLL_MS : false,
   });
 
   return (
@@ -45,9 +51,9 @@ export function ThumbnailsSection() {
 
       {backfill.data ? (
         <p className="mb-2 text-[12px] text-tag-character">
-          Generated {backfill.data.generated}
-          {backfill.data.failed > 0 ? `, ${backfill.data.failed} failed` : ""}
-          {backfill.data.remaining > 0 ? ` · ${backfill.data.remaining} still remaining` : " · complete"}
+          {backfill.data.queued
+            ? "Backfill queued: thumbnails are generated in the background."
+            : "A backfill is already starting."}
         </p>
       ) : null}
       {backfill.isError ? (
