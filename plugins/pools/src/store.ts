@@ -90,7 +90,11 @@ export async function listPools(
       and(
         escaped ? ilike(pools.name, `%${escaped}%`) : undefined,
         options.before
-          ? sql`(${pools.updatedAt}, ${pools.id}) < (${options.before.updatedAt.toISOString()}::timestamptz, ${options.before.id}::bigint)`
+          ? // `updated_at` is stored to the microsecond, but the cursor carries
+            // milliseconds; comparing against the truncated value would repeat
+            // or skip rows at a page boundary. So bound by the boundary row's
+            // own stored value, falling back to the cursor's if it's gone.
+            sql`(${pools.updatedAt}, ${pools.id}) < (coalesce((select b.updated_at from ${pools} b where b.id = ${options.before.id}::bigint), ${options.before.updatedAt.toISOString()}::timestamptz), ${options.before.id}::bigint)`
           : undefined,
       ),
     )

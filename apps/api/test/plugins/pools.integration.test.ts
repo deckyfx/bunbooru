@@ -135,6 +135,27 @@ describe.skipIf(!TEST_DATABASE_URL)("pools plugin (integration)", () => {
     expect((await live.request("/plugins/pools/pools?cursor=garbage")).status).toBe(400);
   });
 
+  it("pages through more pools than one page holds, without repeats or gaps", async () => {
+    for (let i = 0; i < 35; i++) await create(`pool_${String(i).padStart(2, "0")}`, alice.token);
+    // Put them all inside ONE millisecond, a microsecond apart: exactly where a
+    // cursor carrying milliseconds goes wrong at a page boundary.
+    await live.db.execute(
+      sql`UPDATE pools_pools SET updated_at = timestamptz '2026-01-01 00:00:00+00' + id * interval '1 microsecond'`,
+    );
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    for (let guard = 0; guard < 5; guard++) {
+      const page: { pools: { name: string }[]; nextCursor: string | null } = await json(
+        await live.request(`/plugins/pools/pools${cursor ? `?cursor=${cursor}` : ""}`),
+      );
+      seen.push(...page.pools.map((p) => p.name));
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    expect(seen).toHaveLength(35);
+    expect(new Set(seen).size).toBe(35);
+  });
+
   it("pool:<id> and pool:<name> find a pool's posts and compose with other terms", async () => {
     const pool = await json<{ id: number }>(await create("Comic_A", alice.token));
     for (const id of [posts[0], posts[2]]) await add(pool.id, id, alice.token);
