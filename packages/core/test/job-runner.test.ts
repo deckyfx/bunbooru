@@ -39,6 +39,16 @@ describe("JobService handler registry", () => {
     expect(() => jobs.register("b", { "b:ok": handler, "B:Bad": handler })).toThrow(JobKindConflictError);
     expect(jobs.kinds()).toEqual(["a:x"]);
   });
+
+  it("refuses non-positive limits, changing nothing", () => {
+    const jobs = service();
+    for (const bad of [{ timeoutMs: 0 }, { timeoutMs: -1 }, { timeoutMs: Number.NaN }, { maxAttempts: 0 }, { maxAttempts: 1.5 }]) {
+      expect(() => jobs.register("a", { "a:ok": handler, "a:bad": { ...handler, ...bad } })).toThrow(RangeError);
+    }
+    expect(jobs.kinds()).toEqual([]);
+    jobs.register("a", { "a:ok": { ...handler, timeoutMs: 1, maxAttempts: 1 } });
+    expect(jobs.kinds()).toEqual(["a:ok"]);
+  });
 });
 
 describe.skipIf(!TEST_DATABASE_URL)("job runner (integration)", () => {

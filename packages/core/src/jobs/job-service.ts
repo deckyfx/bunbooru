@@ -126,8 +126,18 @@ export function createJobService(repository: JobRepository, now: () => Date = ()
     },
 
     register(ownerId, handlers) {
-      for (const kind of Object.keys(handlers)) {
+      for (const [kind, handler] of Object.entries(handlers)) {
         if (!KIND_RE.test(kind)) throw new JobKindConflictError(`"${kind}" from ${ownerId} is not a valid job kind`);
+        // A non-positive lease would expire at claim, letting a second runner
+        // start the job mid-run; a zero attempt budget would silently become
+        // the default.
+        const { timeoutMs, maxAttempts } = handler;
+        if (timeoutMs !== undefined && !(Number.isFinite(timeoutMs) && timeoutMs > 0)) {
+          throw new RangeError(`Job "${kind}" from ${ownerId}: timeoutMs must be a positive number, got ${timeoutMs}`);
+        }
+        if (maxAttempts !== undefined && !(Number.isSafeInteger(maxAttempts) && maxAttempts >= 1)) {
+          throw new RangeError(`Job "${kind}" from ${ownerId}: maxAttempts must be a positive integer, got ${maxAttempts}`);
+        }
         const existing = byKind.get(kind);
         if (existing && existing.ownerId !== ownerId) {
           throw new JobKindConflictError(`Job kind "${kind}" from ${ownerId} is already handled by ${existing.ownerId}`);

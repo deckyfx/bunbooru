@@ -34,6 +34,9 @@ export type ClaimedJob = Job & { lockedUntil: Date };
 /** What {@link JobRepository.retry} did. */
 export type JobRetryResult = "retried" | "not-failed" | "already-queued";
 
+/** Insert attempts {@link JobRepository.enqueue} makes against a key whose pending job keeps finishing. */
+const ENQUEUE_ROUNDS = 3;
+
 /** Statuses a pending idempotency key is unique within. */
 const PENDING = sql`${jobs.status} in ('queued', 'running')`;
 
@@ -91,28 +94,34 @@ function heldBy(job: ClaimedJob) {
 export function createJobRepository(db: DB): JobRepository {
   return {
     async enqueue({ kind, payload, idempotencyKey, runAt, maxAttempts }) {
-      const inserted = await db
-        .insert(jobs)
-        .values({
-          kind,
-          // Serialized explicitly: Drizzle would send a JS `null` payload as SQL
-          // NULL (refused by NOT NULL), not as the JSON value `null`.
-          payload: sql`${JSON.stringify(payload)}::jsonb`,
-          idempotencyKey: idempotencyKey ?? null,
-          ...(runAt ? { runAt } : {}),
-          ...(maxAttempts ? { maxAttempts } : {}),
-        })
-        .onConflictDoNothing({ target: jobs.idempotencyKey, where: PENDING })
-        .returning({ id: jobs.id });
-      if (inserted[0]) return { id: inserted[0].id, created: true };
-      // Only an idempotency key can conflict: return the pending job it names.
-      const [existing] = await db
-        .select({ id: jobs.id })
-        .from(jobs)
-        .where(and(eq(jobs.idempotencyKey, idempotencyKey ?? ""), PENDING))
-        .limit(1);
-      if (!existing) throw new Error("Job enqueue conflicted but no pending job holds the key");
-      return { id: existing.id, created: false };
+      // A conflict means a pending job holds the key, but it may finish before
+      // the lookup below sees it (each statement reads the latest committed
+      // state) — then the key is free, so insert again. Bounded: every lost
+      // round needs a pending job created AND finished in between.
+      for (let round = 0; round < ENQUEUE_ROUNDS; round++) {
+        const inserted = await db
+          .insert(jobs)
+          .values({
+            kind,
+            // Serialized explicitly: Drizzle would send a JS `null` payload as SQL
+            // NULL (refused by NOT NULL), not as the JSON value `null`.
+            payload: sql`${JSON.stringify(payload)}::jsonb`,
+            idempotencyKey: idempotencyKey ?? null,
+            ...(runAt ? { runAt } : {}),
+            ...(maxAttempts ? { maxAttempts } : {}),
+          })
+          .onConflictDoNothing({ target: jobs.idempotencyKey, where: PENDING })
+          .returning({ id: jobs.id });
+        if (inserted[0]) return { id: inserted[0].id, created: true };
+        // Only an idempotency key can conflict: return the pending job it names.
+        const [existing] = await db
+          .select({ id: jobs.id })
+          .from(jobs)
+          .where(and(eq(jobs.idempotencyKey, idempotencyKey ?? ""), PENDING))
+          .limit(1);
+        if (existing) return { id: existing.id, created: false };
+      }
+      throw new Error(`Job enqueue for key "${idempotencyKey}" kept racing jobs that finished; giving up`);
     },
 
     async claim({ kinds, limit, leaseMs, now }) {
