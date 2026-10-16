@@ -133,6 +133,9 @@ describe.skipIf(!TEST_DATABASE_URL)("pools plugin (integration)", () => {
     const filtered = await json<{ pools: { name: string }[] }>(await live.request("/plugins/pools/pools?q=pool"));
     expect(filtered.pools.map((p) => p.name).sort()).toEqual(["first_pool", "second_pool"]);
     expect((await live.request("/plugins/pools/pools?cursor=garbage")).status).toBe(400);
+    // Well-formed but out of range: past a Date's maximum, or an unsafe id.
+    expect((await live.request("/plugins/pools/pools?cursor=9999999999999999_1")).status).toBe(400);
+    expect((await live.request("/plugins/pools/pools?cursor=1700000000000_9999999999999999")).status).toBe(400);
   });
 
   it("pages through more pools than one page holds, without repeats or gaps", async () => {

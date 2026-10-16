@@ -53,7 +53,14 @@ function encodeCursor(updatedAt: Date, id: number): string {
 function decodeCursor(cursor: string): { updatedAt: Date; id: number } {
   const match = /^(\d{1,16})_(\d{1,16})$/.exec(cursor);
   if (!match) throw new ValidationError("Invalid page cursor");
-  return { updatedAt: new Date(Number(match[1])), id: Number(match[2]) };
+  // The shape check isn't enough: 16 digits can exceed a Date's range (an
+  // Invalid Date throws in toISOString, a 500) or a safe integer.
+  const updatedAt = new Date(Number(match[1]));
+  const id = Number(match[2]);
+  if (Number.isNaN(updatedAt.getTime()) || !Number.isSafeInteger(id)) {
+    throw new ValidationError("Invalid page cursor");
+  }
+  return { updatedAt, id };
 }
 
 /**

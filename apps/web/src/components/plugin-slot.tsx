@@ -5,11 +5,25 @@ import { usePlugins } from "../lib/plugins";
 import { PLUGIN_NAV, PLUGIN_UI } from "../plugins/registry";
 import { selectEntries, type PluginNavLink, type SlotEntry, type SlotPropsMap, type UiSlot } from "../plugins/slots";
 
-/** The ids of the plugins active on the server (empty until the manifest loads). */
-export function useActivePluginIds(): { ids: ReadonlySet<string>; isLoading: boolean } {
+/**
+ * The ids of the plugins active on the server (empty until the manifest
+ * loads). `isError` distinguishes "couldn't ask" from "not active", so a page
+ * doesn't claim a plugin is unavailable after a transient failure.
+ */
+export function useActivePluginIds(): {
+  ids: ReadonlySet<string>;
+  isLoading: boolean;
+  isError: boolean;
+  retry: () => void;
+} {
   const plugins = usePlugins();
   const ids = useMemo(() => new Set((plugins.data ?? []).map((p) => p.id)), [plugins.data]);
-  return { ids, isLoading: plugins.isLoading };
+  return {
+    ids,
+    isLoading: plugins.isLoading,
+    isError: plugins.isError,
+    retry: () => void plugins.refetch(),
+  };
 }
 
 /** A slot's widgets to render now: active plugins, visible to the viewer, in order. */

@@ -19,8 +19,20 @@ export function PluginPage({
   title: string;
   page: ComponentType;
 }) {
-  const { ids, isLoading } = useActivePluginIds();
+  const { ids, isLoading, isError, retry } = useActivePluginIds();
   if (isLoading) return null;
+  // Couldn't load the plugin list: say so (with a retry) rather than claiming
+  // the plugin doesn't exist.
+  if (isError) {
+    return (
+      <div className="py-16 text-center">
+        <p className="mb-2 font-bold">Couldn’t load this page</p>
+        <button type="button" onClick={retry} className="text-[12px] text-link hover:underline">
+          Retry
+        </button>
+      </div>
+    );
+  }
   if (!ids.has(pluginId)) {
     return (
       <div className="py-16 text-center">
