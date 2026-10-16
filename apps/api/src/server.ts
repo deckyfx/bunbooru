@@ -5,12 +5,15 @@ import {
   canModerate,
   CORE_PACKAGE,
   isOwnerOrAdmin,
+  JOB_RETENTION,
   MAX_PER_PAGE,
   MIN_PASSWORD_LENGTH,
   type ApiKeySummary,
   type Asset,
   type AssetUpdate,
   type Core,
+  type JobCount,
+  type JobFailure,
   type Page,
   type PublicUser,
   type StorageProvider,
@@ -152,6 +155,33 @@ export type TagVersionDto = {
   createdAt: string;
 };
 
+/** Wire shape of a job that ran out of attempts. */
+export type JobFailureDto = {
+  id: number;
+  kind: string;
+  attempts: number;
+  lastError: string | null;
+  finishedAt: string | null;
+};
+
+/**
+ * The admin Jobs overview: jobs per kind and status, the latest failures, where
+ * jobs run (`inline`: this server; `off`: a separate worker process), and how
+ * many days finished jobs are kept.
+ */
+export type JobsOverviewDto = {
+  counts: JobCount[];
+  failures: JobFailureDto[];
+  runner: "inline" | "off";
+  retentionDays: { done: number; failed: number };
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function serializeJobFailure(failure: JobFailure): JobFailureDto {
+  return { ...failure, finishedAt: failure.finishedAt ? failure.finishedAt.toISOString() : null };
+}
+
 /** One page of an admin list, with pagination metadata. */
 export type PageDto<T> = { items: T[]; total: number; page: number; perPage: number; pageCount: number };
 
@@ -264,7 +294,7 @@ function serializeUser(user: PublicUser): UserDto {
   };
 }
 
-/** Asset id path param, shared by the `/assets/:id*` routes. */
+/** Numeric id path param, shared by the `/assets/:id*` routes and other id routes. */
 const idParam = t.Object({
   id: t.Numeric({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER, multipleOf: 1 }),
 });
@@ -1351,7 +1381,8 @@ export function createApp({
           },
           { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }) },
         )
-        // Turn a plugin off (routes/pages hidden; background work stops on restart).
+        // Turn a plugin off (routes/pages and job handlers go at once; its event
+        // listeners stop on restart).
         .post(
           "/admin/extensions/:id/deactivate",
           async ({ params, currentUser }): Promise<ExtensionInfo> => {
@@ -1365,6 +1396,34 @@ export function createApp({
             }
           },
           { params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }) },
+        )
+        // --- Background jobs (admin) ---------------------------------------
+        // Queue health: jobs per kind and status, and the latest failures.
+        .get("/admin/jobs", async ({ currentUser }): Promise<JobsOverviewDto> => {
+          const user = requireUser(currentUser);
+          if (!canModerate(user)) throw new AuthorizationError();
+          const [counts, failures] = await Promise.all([
+            core.jobService.counts(),
+            core.jobService.recentFailures(),
+          ]);
+          return {
+            counts,
+            failures: failures.map(serializeJobFailure),
+            runner: envConfig.JOBS_RUNNER,
+            retentionDays: { done: JOB_RETENTION.doneMs / DAY_MS, failed: JOB_RETENTION.failedMs / DAY_MS },
+          };
+        })
+        // Re-queue a failed job with fresh attempts. 404 unless it's failed.
+        .post(
+          "/admin/jobs/:id/retry",
+          async ({ params, set, currentUser }) => {
+            const user = requireUser(currentUser);
+            if (!canModerate(user)) throw new AuthorizationError();
+            if (!(await core.jobService.retry(params.id))) throw new HttpError(404, "No failed job with that id");
+            set.status = 204;
+            return "";
+          },
+          { params: idParam },
         )
         // --- API keys (own keys only) --------------------------------------
         // Mint a named API key. The raw `bnb_…` token is returned ONCE here.

@@ -17,6 +17,8 @@ export type {
   ApiKeyDto,
   App,
   AssetDto,
+  JobFailureDto,
+  JobsOverviewDto,
   PageDto,
   SetupCheck as SetupCheckDto,
   TagAliasDto,
