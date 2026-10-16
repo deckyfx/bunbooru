@@ -106,13 +106,25 @@ export function createAssetRepository(db: DB): AssetRepository {
       // Walking backward flips the direction, both for the comparison and the
       // ORDER BY, so the rows nearest `after` come first either way.
       const ascending = (order.direction === "asc") !== backward;
-      // Row comparison `(col, id) > (v, id)` keeps ties on the sort column in a
-      // stable order, and both halves of it use the same composite index.
-      const past = after
-        ? ascending
-          ? sql`(${column}, ${assets.id}) > (${after.value}::${sql.raw(cast)}, ${after.id}::bigint)`
-          : sql`(${column}, ${assets.id}) < (${after.value}::${sql.raw(cast)}, ${after.id}::bigint)`
-        : undefined;
+      let past: SQL | undefined;
+      if (after) {
+        // Postgres keeps `created_at` to the MICROsecond, but a cursor carries a
+        // JS Date's MILLIsecond ISO string. Comparing against that truncated
+        // value would repeat the boundary row (ascending) or skip rows inside the
+        // lost fraction (descending). So compare against the boundary row's own
+        // stored value, one primary-key lookup, and fall back to the cursor's
+        // value only if that row has since been deleted.
+        const value = sql`${after.value}::${sql.raw(cast)}`;
+        const bound =
+          order.key === "createdAt"
+            ? sql`coalesce((select ${assets.createdAt} from ${assets} where ${assets.id} = ${after.id}::bigint), ${value})`
+            : value;
+        // Row comparison `(col, id) > (v, id)` keeps ties on the sort column in
+        // a stable order, and both halves of it use the same composite index.
+        past = ascending
+          ? sql`(${column}, ${assets.id}) > (${bound}, ${after.id}::bigint)`
+          : sql`(${column}, ${assets.id}) < (${bound}, ${after.id}::bigint)`;
+      }
       const sortDir = ascending ? asc : desc;
       return db
         .select()

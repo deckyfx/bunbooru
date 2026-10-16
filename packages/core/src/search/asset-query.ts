@@ -139,15 +139,17 @@ function metatagCondition(node: MetatagNode): SQL | undefined {
       return node.op === "eq" && MD5_RE.test(digest) ? eq(assets.md5, digest) : undefined;
     }
     case "user":
-      // Usernames are stored lowercase; an unknown one matches no posts. The
-      // explicit NOT NULL keeps `-user:alice` honest: a bare `NOT IN` is NULL
-      // (not true) for a post with no uploader, which would silently drop it.
+      // Compared as lower(username): that's what users_username_lower_idx
+      // indexes, and it holds even if a write path ever stored mixed case. An
+      // unknown user matches no posts. The explicit NOT NULL keeps `-user:alice`
+      // honest: a bare `NOT IN` is NULL (not true) for a post with no uploader,
+      // which would silently drop it.
       return node.op === "eq"
         ? and(
             isNotNull(assets.uploaderId),
             inArray(
               assets.uploaderId,
-              sql`(select ${users.id} from ${users} where ${users.username} = ${node.value.toLowerCase()})`,
+              sql`(select ${users.id} from ${users} where lower(${users.username}) = ${node.value.toLowerCase()})`,
             ),
           )
         : undefined;

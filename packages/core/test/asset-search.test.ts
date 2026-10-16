@@ -188,9 +188,20 @@ describe.skipIf(!TEST_DATABASE_URL)("Search metatags and order: (integration)", 
     expect(keys(await find("user:BOB"))).toEqual(["k/b"]);
     expect((await find("user:nobody")).total).toBe(0);
     expect(keys(await find("-user:alice"))).toEqual(["k/b"]);
+    // Matched case-insensitively even against a name stored in mixed case (the
+    // auth service lowercases, but the filter mustn't depend on that).
+    const carol = await createUserRepository(db).create({
+      username: "Carol",
+      email: null,
+      passwordHash: "x",
+      role: "member",
+    });
+    await repo.create(asset("carol", { uploaderId: carol.id }));
+    expect(keys(await find("user:carol"))).toEqual(["k/carol"]);
+    expect(keys(await find("user:CAROL"))).toEqual(["k/carol"]);
     // A post with no uploader (deleted account) is "not by alice", too.
     await repo.create(asset("orphan", { uploaderId: null }));
-    expect(keys(await find("-user:alice"))).toEqual(["k/b", "k/orphan"]);
+    expect(keys(await find("-user:alice"))).toEqual(["k/b", "k/carol", "k/orphan"]);
   });
 
   it("date: selects whole UTC days, comparisons and ranges", async () => {

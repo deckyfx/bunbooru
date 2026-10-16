@@ -177,6 +177,42 @@ describe.skipIf(!TEST_DATABASE_URL)("AssetRepository (integration)", () => {
     expect(rest.map((r) => r.storageKey)).toEqual(["key/mid", "key/new"]);
   });
 
+  it("pages by created_at without repeating or skipping rows at microsecond precision", async () => {
+    // Default created_at = now(), stored to the microsecond. Spread them out so
+    // the sub-millisecond parts differ, which a JS Date (milliseconds) loses.
+    for (const key of ["a", "b", "c", "d"]) {
+      await repo.create(seed(key));
+      await db.execute(sql`SELECT pg_sleep(0.0004)`);
+    }
+    const micro = await db.execute<{ n: number | string }>(
+      sql`SELECT count(*) AS n FROM assets WHERE extract(microseconds FROM created_at)::bigint % 1000 <> 0`,
+    );
+    expect(Number([...micro][0]?.n)).toBeGreaterThan(0); // the precision really is there
+
+    for (const direction of ["asc", "desc"] as const) {
+      const order: AssetOrder = { kind: "column", key: "createdAt", direction };
+      const seen: number[] = [];
+      let after: { value: string; id: number } | undefined;
+      for (let guard = 0; guard < 10; guard++) {
+        const page = await repo.findPage({ order, limit: 1, after });
+        if (page.length === 0) break;
+        seen.push(page[0]!.id);
+        after = { value: page[0]!.createdAt.toISOString(), id: page[0]!.id };
+      }
+      expect(seen).toEqual(direction === "asc" ? [1, 2, 3, 4] : [4, 3, 2, 1]);
+
+      // And back again from the far end, one row at a time.
+      const back: number[] = [];
+      for (let guard = 0; guard < 10 && after; guard++) {
+        const page = await repo.findPage({ order, limit: 1, after, backward: true });
+        if (page.length === 0) break;
+        back.push(page[0]!.id);
+        after = { value: page[0]!.createdAt.toISOString(), id: page[0]!.id };
+      }
+      expect(back).toEqual(seen.slice(0, -1).reverse());
+    }
+  });
+
   it("applies the filter together with the keyset", async () => {
     for (const key of ["a", "b", "c", "d"]) {
       await repo.create({ ...seed(key), width: key === "b" ? 1 : 100 });
