@@ -1,4 +1,4 @@
-import type { MailService, SearchProviderRegistry } from "@bunbooru/core";
+import type { JobService, MailService, SearchProviderRegistry } from "@bunbooru/core";
 
 import type { PluginCapabilityBinding } from "./host";
 
@@ -31,6 +31,22 @@ export function searchBinding(providers: SearchProviderRegistry): PluginCapabili
     },
     onDeactivate(plugin) {
       providers.unregister(plugin.id);
+    },
+  };
+}
+
+/**
+ * A plugin's job handlers follow its active state: while it's inactive its
+ * jobs stay queued (nothing claims a kind with no handler) and resume when it
+ * comes back. A kind another owner already handles fails that activation.
+ */
+export function jobsBinding(jobs: JobService): PluginCapabilityBinding {
+  return {
+    onActivate(plugin) {
+      if (Object.keys(plugin.jobs).length > 0) jobs.register(plugin.id, plugin.jobs);
+    },
+    onDeactivate(plugin) {
+      jobs.unregister(plugin.id);
     },
   };
 }

@@ -64,14 +64,9 @@ export function createJobRunner(
       const finalAttempt = job.attempts >= job.maxAttempts;
       const retryAt = finalAttempt ? null : new Date(now().getTime() + retryDelayMs(job.attempts));
       await jobs.repository.fail(job.id, message, retryAt, now());
-      (finalAttempt ? log.error : log.warn)(finalAttempt ? "job_failed" : "job_retry", {
-        id: job.id,
-        kind: job.kind,
-        attempt: job.attempts,
-        maxAttempts: job.maxAttempts,
-        error: message,
-        ...(retryAt ? { retryAt: retryAt.toISOString() } : {}),
-      });
+      const fields = { id: job.id, kind: job.kind, attempt: job.attempts, maxAttempts: job.maxAttempts, error: message };
+      if (retryAt) log.warn("job_retry", { ...fields, retryAt: retryAt.toISOString() });
+      else log.error("job_failed", fields);
     }
   }
 

@@ -28,6 +28,10 @@ export interface JobHandler {
 export const DEFAULT_MAX_ATTEMPTS = 5;
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** How long finished jobs are kept before {@link JobService.prune} deletes them. */
+export const JOB_RETENTION = { doneMs: 7 * DAY_MS, failedMs: 30 * DAY_MS };
+
 /** Options for queueing a job. */
 export interface EnqueueOptions {
   /** Skip queueing if a pending job already has this key (see the jobs table). */
@@ -76,6 +80,11 @@ export interface JobService {
   recentFailures(limit?: number): Promise<JobFailure[]>;
   /** Re-queue a failed job; false if it isn't failed. */
   retry(id: number): Promise<boolean>;
+  /**
+   * Delete finished jobs: done ones older than `doneMs`, failed ones older than
+   * `failedMs` (kept longer, for the admin console). Returns how many went.
+   */
+  prune(retention?: { doneMs: number; failedMs: number }): Promise<number>;
   /** Called after every enqueue (the runner uses it to wake up immediately). */
   onEnqueue(listener: () => void): void;
   /** The repository, for the runner. */
@@ -149,6 +158,11 @@ export function createJobService(repository: JobRepository, now: () => Date = ()
 
     retry(id) {
       return repository.retry(id, now());
+    },
+
+    prune({ doneMs, failedMs } = JOB_RETENTION) {
+      const at = now().getTime();
+      return repository.prune({ doneBefore: new Date(at - doneMs), failedBefore: new Date(at - failedMs) });
     },
 
     onEnqueue(listener) {

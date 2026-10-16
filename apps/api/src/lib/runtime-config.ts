@@ -267,6 +267,24 @@ export function describeRuntimeConfig(input: RuntimeConfigInput): RuntimeSection
       ],
     },
     {
+      title: "Background jobs",
+      settings: [
+        {
+          key: "JOBS_RUNNER",
+          value: envConfig.JOBS_RUNNER,
+          source: sourceOf("JOBS_RUNNER"),
+          secret: false,
+          note: "`inline`: this server runs jobs. `off`: a separate `bunbooru worker` process does.",
+        },
+        {
+          key: "JOBS_CONCURRENCY",
+          value: String(envConfig.JOBS_CONCURRENCY),
+          source: sourceOf("JOBS_CONCURRENCY"),
+          secret: false,
+        },
+      ],
+    },
+    {
       title: "Plugins",
       settings: [
         {

@@ -42,7 +42,7 @@ function betaRoutes() {
 }
 
 const loaded: LoadedPlugin[] = [
-  { id: "alpha", name: "Alpha", version: "1.0.0", description: "First", capabilities: ["routes"], tables: [], searchProviders: [] },
+  { id: "alpha", name: "Alpha", version: "1.0.0", description: "First", capabilities: ["routes"], tables: [], searchProviders: [], jobs: {} },
   {
     id: "beta",
     name: "Beta",
@@ -51,6 +51,7 @@ const loaded: LoadedPlugin[] = [
     capabilities: [],
     tables: ["beta_widgets"],
     searchProviders: [],
+    jobs: {},
     routes: betaRoutes(),
   },
 ];

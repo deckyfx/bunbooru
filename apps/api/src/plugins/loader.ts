@@ -2,6 +2,7 @@ import {
   applyEmbeddedMigrations,
   type Core,
   type DB,
+  type JobHandler,
   type MailProvider,
   type SearchProvider,
   type StorageProvider,
@@ -36,6 +37,8 @@ export interface LoadedPlugin {
   mailProvider?: MailProvider;
   /** Search metatags this plugin contributes (registered on `core.searchProviders` while active). */
   searchProviders: SearchProvider[];
+  /** Job handlers by FULL kind (`<pluginId>:<name>`), registered on `core.jobService` while active. */
+  jobs: Record<string, JobHandler>;
 }
 
 /** Default per-step timeout (ms) — see {@link LoadPluginsOptions.stepTimeoutMs}. */
@@ -108,6 +111,10 @@ function buildContext(id: string, core: Core, db: DB, storage: StorageProvider):
       auth: core.authService,
     },
     events: core.events,
+    // Kinds are namespaced to the plugin, so it can only queue its own.
+    jobs: {
+      enqueue: (name, payload, options) => core.jobService.enqueue(`${id}:${name}`, payload, options),
+    },
     db,
     // Namespaced to `plugins/<id>/` so a plugin can't touch Core or peer keys.
     storage: namespacedStorage(storage, `plugins/${id}`),
@@ -215,11 +222,15 @@ export async function loadPlugins({
       routes: registration.routes,
       mailProvider: registration.mailProvider,
       searchProviders: [...(registration.searchProviders ?? [])],
+      jobs: Object.fromEntries(
+        Object.entries(registration.jobs ?? {}).map(([name, handler]) => [`${plugin.id}:${name}`, handler]),
+      ),
     });
     logger.info("plugin_loaded", {
       id,
       hasRoutes: registration.routes !== undefined,
       searchKeys: (registration.searchProviders ?? []).map((provider) => provider.key),
+      jobs: Object.keys(registration.jobs ?? {}),
     });
   }
 

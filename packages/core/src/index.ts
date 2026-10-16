@@ -108,6 +108,7 @@ export {
   createJobService,
   DEFAULT_MAX_ATTEMPTS,
   DEFAULT_TIMEOUT_MS,
+  JOB_RETENTION,
   JobKindConflictError,
   type EnqueueOptions,
   type JobContext,

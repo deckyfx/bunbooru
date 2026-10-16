@@ -138,8 +138,9 @@ export interface PluginHostOptions {
  * process restart. Backed by `core.pluginStateService` for persistence.
  *
  * NOTE: deactivating hides a plugin's routes and pages immediately, but any
- * background work it started at boot (event listeners, jobs) keeps running until
- * the next restart — surfaced to admins in the management UI.
+ * background work it started at boot (event listeners) keeps running until the
+ * next restart — surfaced to admins in the management UI. Its job handlers DO
+ * follow the active state (the jobs capability binding).
  */
 export interface PluginHost {
   /** Seed the active set (first boot only) then load it into memory. */
@@ -154,6 +155,13 @@ export interface PluginHost {
   activate(id: string): Promise<ExtensionInfo>;
   /** Deactivate `id` and persist. Throws {@link UnknownPluginError} for an unknown id. */
   deactivate(id: string): Promise<ExtensionInfo>;
+  /**
+   * Re-read the persisted active set and follow it in memory (capabilities
+   * installed or removed, nothing written). For a process that doesn't serve the
+   * admin console (the job worker), so activation changes made in the API reach
+   * it. A plugin whose transition fails is logged and left as it was.
+   */
+  refresh(): Promise<void>;
 }
 
 /** Build the runtime {@link PluginHost}. */
@@ -369,6 +377,31 @@ export function createPluginHost(options: PluginHostOptions): PluginHost {
         return describe(p);
       });
     },
+
+    async refresh() {
+      const persisted = new Set(await pluginState.activeIds());
+      for (const p of loaded) {
+        if (persisted.has(p.id) === active.has(p.id)) continue;
+        await serialize(p.id, async () => {
+          const want = persisted.has(p.id);
+          if (degraded.has(p.id) || want === active.has(p.id)) return;
+          try {
+            // Both helpers roll back their own partial work on a throw.
+            if (want) installCapabilities(p);
+            else removeCapabilities(p);
+          } catch (error) {
+            logger.error("plugin_refresh_failed", {
+              id: p.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return;
+          }
+          if (want) active.add(p.id);
+          else active.delete(p.id);
+          logger.info(want ? "plugin_activated" : "plugin_deactivated", { id: p.id, via: "refresh" });
+        });
+      }
+    },
   };
 }
 
@@ -401,5 +434,6 @@ export function staticPluginHost(manifest: readonly PluginManifestEntry[] = []):
     deactivate: async (id) => {
       throw new UnknownPluginError(id);
     },
+    refresh: async () => {},
   };
 }

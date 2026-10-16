@@ -1,15 +1,20 @@
 import { describe, expect, it } from "bun:test";
 import { sql } from "drizzle-orm";
 
-import { createSearchProviderRegistry, type PluginStateService } from "@bunbooru/core";
+import {
+  createJobService,
+  createSearchProviderRegistry,
+  type JobHandler,
+  type PluginStateService,
+} from "@bunbooru/core";
+import type { JobRepository } from "@bunbooru/db";
 
-import { searchBinding } from "../../src/plugins/capability-bindings";
+import { jobsBinding, searchBinding } from "../../src/plugins/capability-bindings";
 import { createPluginHost } from "../../src/plugins/host";
 import type { LoadedPlugin } from "../../src/plugins/loader";
 
-/** In-memory plugin state, every listed plugin starting inactive. */
-function state(): PluginStateService {
-  const rows = new Map<string, boolean>();
+/** In-memory plugin state, every listed plugin starting inactive. Pass `rows` to share it between hosts. */
+function state(rows = new Map<string, boolean>()): PluginStateService {
   return {
     activeIds: async () => new Set([...rows].filter(([, on]) => on).map(([id]) => id)),
     setActive: async (id, active) => {
@@ -27,6 +32,7 @@ const plugin = (id: string, keys: string[]): LoadedPlugin => ({
   capabilities: ["search-providers"],
   tables: [],
   searchProviders: keys.map((key) => ({ key, compile: () => sql`true` })),
+  jobs: {},
 });
 
 describe("search capability binding", () => {
@@ -62,5 +68,78 @@ describe("search capability binding", () => {
     await expect(host.activate("copycat")).rejects.toThrow(/already provided by favorites/);
     expect(host.isActive("copycat")).toBe(false);
     expect(providers.entries()).toEqual([{ key: "fav", ownerId: "favorites" }]);
+  });
+});
+
+/** A plugin providing job handlers, keyed by full kind (as the loader maps them). */
+const jobPlugin = (id: string, kinds: string[]): LoadedPlugin => ({
+  ...plugin(id, []),
+  capabilities: [],
+  jobs: Object.fromEntries(kinds.map((kind): [string, JobHandler] => [kind, { run: async () => {} }])),
+});
+
+// Registration never touches the repository, so an empty stand-in suffices.
+const jobService = () => createJobService({} as JobRepository);
+
+describe("jobs capability binding", () => {
+  it("registers a plugin's handlers on activate and removes them on deactivate", async () => {
+    const jobs = jobService();
+    const host = createPluginHost({
+      pluginState: state(),
+      loaded: [jobPlugin("thumbnailer", ["thumbnailer:thumbnail"])],
+      seedActiveIds: [],
+      capabilityBindings: [jobsBinding(jobs)],
+    });
+    await host.init();
+    expect(jobs.kinds()).toEqual([]);
+
+    await host.activate("thumbnailer");
+    expect(jobs.handler("thumbnailer:thumbnail")).toBeDefined();
+
+    await host.deactivate("thumbnailer");
+    expect(jobs.kinds()).toEqual([]);
+  });
+
+  it("fails activation of a plugin whose kind another plugin handles, leaving it inactive", async () => {
+    const jobs = jobService();
+    const host = createPluginHost({
+      pluginState: state(),
+      loaded: [jobPlugin("thumbnailer", ["thumbnailer:thumbnail"]), jobPlugin("copycat", ["thumbnailer:thumbnail"])],
+      seedActiveIds: [],
+      capabilityBindings: [jobsBinding(jobs)],
+    });
+    await host.init();
+    await host.activate("thumbnailer");
+
+    await expect(host.activate("copycat")).rejects.toThrow(/already handled by thumbnailer/);
+    expect(host.isActive("copycat")).toBe(false);
+    expect(jobs.kinds()).toEqual(["thumbnailer:thumbnail"]);
+  });
+
+  it("follows activation changes another process persisted, on refresh()", async () => {
+    const rows = new Map<string, boolean>();
+    const loaded = [jobPlugin("thumbnailer", ["thumbnailer:thumbnail"])];
+    // The API (which serves the admin console) and a worker, over one database.
+    const api = createPluginHost({ pluginState: state(rows), loaded, seedActiveIds: [] });
+    const workerJobs = jobService();
+    const worker = createPluginHost({
+      pluginState: state(rows),
+      loaded,
+      seedActiveIds: [],
+      capabilityBindings: [jobsBinding(workerJobs)],
+    });
+    await api.init();
+    await worker.init();
+
+    await api.activate("thumbnailer");
+    expect(workerJobs.kinds()).toEqual([]);
+    await worker.refresh();
+    expect(worker.isActive("thumbnailer")).toBe(true);
+    expect(workerJobs.kinds()).toEqual(["thumbnailer:thumbnail"]);
+
+    await api.deactivate("thumbnailer");
+    await worker.refresh();
+    expect(worker.isActive("thumbnailer")).toBe(false);
+    expect(workerJobs.kinds()).toEqual([]);
   });
 });

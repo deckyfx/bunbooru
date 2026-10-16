@@ -2,10 +2,16 @@ import { startApi } from "./start";
 
 /**
  * `@bunbooru/api` — the REST API composition root. Boots the server (see
- * {@link startApi}), and re-exports the wire types the web app's Eden client is
- * typed against.
+ * {@link startApi}), or with a `worker` argument only the background job
+ * runner, and re-exports the wire types the web app's Eden client is typed
+ * against.
  */
-await startApi();
+const [command] = process.argv.slice(2);
+if (command !== undefined && command !== "worker") {
+  console.error(`Unknown command "${command}". Usage: bunbooru [worker]`);
+  process.exit(2);
+}
+await startApi({ mode: command === "worker" ? "worker" : "server" });
 
 export type {
   ApiKeyDto,

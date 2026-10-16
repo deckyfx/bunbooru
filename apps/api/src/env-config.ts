@@ -331,6 +331,29 @@ class EnvConfig {
    * `plugin_states` table is empty. After that the admin console owns activation
    * at runtime and this value is ignored. Empty/unset → nothing active initially.
    */
+  /**
+   * Whether this server process runs background jobs itself. `inline` (the
+   * default) keeps one process doing everything; `off` leaves jobs to a
+   * dedicated worker (`bunbooru worker`), which always runs them.
+   */
+  get JOBS_RUNNER(): "inline" | "off" {
+    const raw = Bun.env.JOBS_RUNNER?.trim().toLowerCase();
+    if (raw === undefined || raw === "" || raw === "inline") return "inline";
+    if (raw === "off") return "off";
+    throw new Error(`JOBS_RUNNER must be "inline" or "off", got "${Bun.env.JOBS_RUNNER}"`);
+  }
+
+  /** How many background jobs one process runs at once (default 2). */
+  get JOBS_CONCURRENCY(): number {
+    const raw = Bun.env.JOBS_CONCURRENCY?.trim();
+    if (raw === undefined || raw === "") return 2;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > 64) {
+      throw new Error(`JOBS_CONCURRENCY must be an integer between 1 and 64, got "${raw}"`);
+    }
+    return n;
+  }
+
   get ENABLED_PLUGINS(): string[] {
     const raw = Bun.env.ENABLED_PLUGINS?.trim();
     if (!raw) return [];
