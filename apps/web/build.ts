@@ -44,6 +44,9 @@ export async function buildWeb(): Promise<WebBuild> {
     outdir: distDir,
     target: "browser",
     minify: true,
+    // Code-split dynamic imports, so each plugin's lazy-loaded UI is its own
+    // chunk, fetched only when shown, instead of riding in the main bundle.
+    splitting: true,
     // Absolute asset URLs. The default is relative (`./chunk-x.js`), which breaks
     // every deep link: on `/posts/12` the browser would request
     // `/posts/chunk-x.js`, and the SPA fallback answers that with HTML.

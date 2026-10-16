@@ -27,6 +27,7 @@ import {
   AuthorizationError,
   ConflictError,
   createCoreEvents,
+  createSearchProviderRegistry,
   RegistrationConflictError,
   UnsupportedMediaError,
   UploadConflictError,
@@ -137,6 +138,7 @@ function stubCore(
     assetService: {
       list: async () => emptyPage,
       getById: async () => null,
+      getMany: async () => [],
       create: async () => ({ asset: sampleAsset, deduped: false }),
       createFromSource: async () => ({ asset: sampleAsset, deduped: false }),
       update: async () => null,
@@ -238,6 +240,7 @@ function stubCore(
       list: async () => [],
     },
     events: createCoreEvents(),
+    searchProviders: createSearchProviderRegistry(),
   };
 }
 

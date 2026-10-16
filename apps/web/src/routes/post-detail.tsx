@@ -4,6 +4,7 @@ import { Link, useParams } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 
 import { AssetImage } from "../components/asset-image";
+import { PluginSlot } from "../components/plugin-slot";
 import { RatingControl, type Rating } from "../components/rating-control";
 import { SearchBox } from "../components/popover/search-box";
 import { PostTagPanel } from "../components/tags/post-tag-panel";
@@ -71,6 +72,10 @@ function PostDetailView({ id }: { id: string }) {
             and editing tags on a non-existent post makes no sense. */}
         {asset ? <PostTagPanel key={asset.id} assetId={asset.id} /> : null}
         {asset ? <TagHistoryPanel key={asset.id} asset={asset} /> : null}
+        {/* Plugin widgets (favorites, pools…), each isolated from the page. */}
+        {asset ? (
+          <PluginSlot key={asset.id} slot="post-detail-aside" props={{ asset }} className="space-y-4" />
+        ) : null}
 
         {asset ? (
           <AssetInfo key={asset.id} asset={asset} />

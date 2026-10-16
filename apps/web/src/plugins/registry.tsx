@@ -1,22 +1,80 @@
-import type { ComponentType } from "react";
+import { lazy } from "react";
 
-import { ExampleSection } from "./example/ExampleSection";
-import { ShimmieImportSection } from "./shimmie-import/ShimmieImportSection";
-import { SmtpMailerSection } from "./smtp-mailer/SmtpMailerSection";
-import { ThumbnailsSection } from "./thumbnailer/ThumbnailsSection";
+import type { PluginNavLink, PluginUiRegistry } from "./slots";
 
 /**
- * Web admin UI for plugins, keyed by plugin id.
+ * Every plugin's web UI, by slot. A plugin's backend (routes, tables) lives in
+ * its own package, but its UI lives here in the app: a plugin can't import the
+ * app's Eden client, router, or styles (`plugins → apps` is forbidden). An
+ * entry renders only while its plugin is active (`GET /api/v1/plugins`), so an
+ * enabled plugin with no entry in this build simply shows nothing.
  *
- * A plugin's backend (routes, tables) lives in its own package, but its admin
- * UI lives here in the app — a plugin can't import the app's Eden client, router,
- * or styles (`plugins → apps` is forbidden). The admin console renders the
- * section for each enabled plugin (from `GET /api/v1/plugins`) that has an entry
- * here; an enabled plugin without one simply has no admin UI in this build.
+ * Widgets are lazy-loaded: a deployment running two plugins doesn't ship the
+ * UI of the others in its main bundle.
  */
-export const PLUGIN_ADMIN_SECTIONS: Record<string, ComponentType> = {
-  example: ExampleSection,
-  thumbnailer: ThumbnailsSection,
-  "shimmie-import": ShimmieImportSection,
-  "smtp-mailer": SmtpMailerSection,
+export const PLUGIN_UI: PluginUiRegistry = {
+  admin: [
+    {
+      pluginId: "example",
+      id: "pings",
+      title: "Example: Pings",
+      component: lazy(() => import("./example/ExampleSection").then((m) => ({ default: m.ExampleSection }))),
+    },
+    {
+      pluginId: "shimmie-import",
+      id: "import",
+      title: "Import from Shimmie",
+      component: lazy(() =>
+        import("./shimmie-import/ShimmieImportSection").then((m) => ({ default: m.ShimmieImportSection })),
+      ),
+    },
+    {
+      pluginId: "smtp-mailer",
+      id: "settings",
+      title: "Email (SMTP)",
+      component: lazy(() =>
+        import("./smtp-mailer/SmtpMailerSection").then((m) => ({ default: m.SmtpMailerSection })),
+      ),
+    },
+    {
+      pluginId: "thumbnailer",
+      id: "thumbnails",
+      title: "Thumbnails",
+      component: lazy(() =>
+        import("./thumbnailer/ThumbnailsSection").then((m) => ({ default: m.ThumbnailsSection })),
+      ),
+    },
+  ],
+  "post-detail-aside": [
+    {
+      pluginId: "favorites",
+      id: "button",
+      title: "Favorites",
+      component: lazy(() => import("./favorites/FavoriteButton").then((m) => ({ default: m.FavoriteButton }))),
+    },
+    {
+      pluginId: "pools",
+      id: "nav",
+      title: "Pools",
+      order: 10,
+      component: lazy(() => import("./pools/PoolNav").then((m) => ({ default: m.PoolNav }))),
+    },
+  ],
+};
+
+/** Plugin links in the site menus (header and home page), to the plugin's pages. */
+export const PLUGIN_NAV: readonly PluginNavLink[] = [
+  { pluginId: "favorites", label: "Favorites", to: "/favorites", visibility: "member" },
+  { pluginId: "pools", label: "Pools", to: "/pools" },
+];
+
+/**
+ * Plugin-owned pages, lazy-loaded like the widgets. Their routes are declared
+ * in `router.tsx` (so links to them stay typed), each wrapped in a
+ * `PluginPage` that shows not-found while the plugin is inactive.
+ */
+export const PLUGIN_PAGES = {
+  favorites: lazy(() => import("./favorites/FavoritesPage").then((m) => ({ default: m.FavoritesPage }))),
+  pools: lazy(() => import("./pools/PoolsPage").then((m) => ({ default: m.PoolsPage }))),
+  pool: lazy(() => import("./pools/PoolPage").then((m) => ({ default: m.PoolPage }))),
 };

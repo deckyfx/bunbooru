@@ -10,7 +10,7 @@ import type {
   StorageProvider,
   TagService,
 } from "@bunbooru/core";
-import { createCoreEvents } from "@bunbooru/core";
+import { createCoreEvents, createSearchProviderRegistry } from "@bunbooru/core";
 import { buildExampleRoutes } from "@bunbooru/plugin-example";
 import type { PluginContext } from "@bunbooru/plugin-sdk";
 
@@ -31,6 +31,7 @@ const appCore = {
   pluginStateService: {} as Core["pluginStateService"],
   pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
+  searchProviders: createSearchProviderRegistry(),
 } satisfies Core;
 
 /** A plugin context whose stats report a fixed post count and whose auth is
@@ -95,17 +96,10 @@ describe("plugin manifest", () => {
     expect(await res.json()).toEqual([]);
   });
 
-  it("GET /api/v1/plugins lists provided plugin metadata", async () => {
-    const app = createApp({
-      core: appCore,
-      plugins: [
-        { id: "example", name: "Example", version: "0.1.0", adminPages: [{ id: "pings", title: "Example: Pings" }] },
-      ],
-    });
+  it("GET /api/v1/plugins lists active plugins with only public metadata (no versions)", async () => {
+    const app = createApp({ core: appCore, plugins: [{ id: "example", name: "Example" }] });
     const res = await app.handle(new Request("http://localhost/api/v1/plugins"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([
-      { id: "example", name: "Example", version: "0.1.0", adminPages: [{ id: "pings", title: "Example: Pings" }] },
-    ]);
+    expect(await res.json()).toEqual([{ id: "example", name: "Example" }]);
   });
 });

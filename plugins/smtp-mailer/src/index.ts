@@ -151,7 +151,7 @@ export const plugin = definePlugin({
   name: "SMTP Mailer",
   version: "0.2.0",
   description: "Outgoing email via SMTP (nodemailer), configured in the admin UI; retrying outbox.",
-  capabilities: ["routes", "tables", "mail-providers", "jobs", "admin-pages"],
+  capabilities: ["routes", "tables", "mail-providers", "jobs", "ui-slots"],
   tables: ["mail_outbox", "mail_settings"],
   migrations: {
     // Migrations embedded into the binary (regenerate: `bun run gen:migrations`).
@@ -172,7 +172,6 @@ export const plugin = definePlugin({
 
     return {
       routes: buildSmtpMailerRoutes(ctx, { provider, resolver }),
-      adminPages: [{ id: "smtp-mailer", title: "Email (SMTP)" }],
       mailProvider: provider,
     };
   },

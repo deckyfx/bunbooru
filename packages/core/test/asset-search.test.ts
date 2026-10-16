@@ -13,6 +13,7 @@ import {
 } from "@bunbooru/db";
 import type { StorageProvider } from "@bunbooru/storage";
 
+import { createSearchProviderRegistry, type SearchProvider } from "../src/search/providers";
 import { createAssetService, type AssetService } from "../src/services/asset-service";
 
 /**
@@ -269,9 +270,9 @@ describe.skipIf(!TEST_DATABASE_URL)("Search with aliases (integration)", () => {
   const keys = (p: { assets: Array<{ storageKey: string }> }) =>
     p.assets.map((x) => x.storageKey).sort();
   const aliasAware = () =>
-    createAssetService(repo, noopStorage, undefined, (names) =>
-      createTagAliasRepository(db).resolve(names),
-    );
+    createAssetService(repo, noopStorage, undefined, {
+      resolveAliases: (names) => createTagAliasRepository(db).resolve(names),
+    });
 
   it("finds posts by the alias antecedent, which no post carries any more", async () => {
     expect(keys(await aliasAware().list({ query: "kitty" }))).toEqual(["k/a"]);
@@ -285,5 +286,76 @@ describe.skipIf(!TEST_DATABASE_URL)("Search with aliases (integration)", () => {
 
   it("without a resolver, the antecedent matches nothing (it was migrated away)", async () => {
     expect((await createAssetService(repo, noopStorage).list({ query: "kitty" })).total).toBe(0);
+  });
+});
+
+describe.skipIf(!TEST_DATABASE_URL)("Search with plugin metatags (integration)", () => {
+  let db: DB;
+  let repo: AssetRepository;
+
+  beforeAll(() => {
+    db = createDb(TEST_DATABASE_URL as string);
+    repo = createAssetRepository(db);
+  });
+
+  // Three posts; the fake provider's `pick:N` matches the post whose id is N.
+  beforeEach(async () => {
+    await db.execute(sql`TRUNCATE TABLE assets, asset_tags RESTART IDENTITY CASCADE`);
+    for (const key of ["a", "b", "c"]) await repo.create(asset(key, { rating: key === "c" ? "explicit" : "safe" }));
+  });
+
+  const keys = (p: { assets: Array<{ storageKey: string }> }) => p.assets.map((x) => x.storageKey).sort();
+
+  function serviceWith(compile: SearchProvider["compile"]) {
+    const providers = createSearchProviderRegistry();
+    providers.register("test-plugin", [{ key: "pick", compile }]);
+    return createAssetService(repo, noopStorage, undefined, { providers });
+  }
+  const pick: SearchProvider["compile"] = ({ op, value }, asset) =>
+    op === "eq" && /^\d+$/.test(value) ? sql`${asset.id} = ${Number(value)}` : undefined;
+
+  it("composes a plugin metatag with Core terms, OR groups and negation", async () => {
+    const svc = serviceWith(pick);
+    expect(keys(await svc.list({ query: "pick:2" }))).toEqual(["k/b"]);
+    expect(keys(await svc.list({ query: "~pick:1 ~pick:3" }))).toEqual(["k/a", "k/c"]);
+    expect(keys(await svc.list({ query: "-pick:1" }))).toEqual(["k/b", "k/c"]);
+    expect(keys(await svc.list({ query: "rating:safe -pick:2" }))).toEqual(["k/a"]);
+  });
+
+  it("ignores a term the provider can't understand, like an unknown Core term", async () => {
+    expect((await serviceWith(pick).list({ query: "pick:nope" })).total).toBe(3);
+  });
+
+  it("ignores a blank plugin term without asking the provider, like a blank Core term", async () => {
+    let calls = 0;
+    const svc = serviceWith((term, asset) => {
+      calls += 1;
+      return pick(term, asset);
+    });
+    expect((await svc.list({ query: "pick:" })).total).toBe(3);
+    expect((await svc.list({ query: "-pick:" })).total).toBe(3);
+    expect(calls).toBe(0);
+  });
+
+  it("compiles each distinct term once, even when repeated", async () => {
+    let calls = 0;
+    const svc = serviceWith((term, asset) => {
+      calls += 1;
+      return pick(term, asset);
+    });
+    await svc.list({ query: "pick:2 ~pick:2 ~pick:3 -pick:2" });
+    expect(calls).toBe(2); // pick:2 and pick:3
+  });
+
+  it("ignores the key entirely when no plugin provides it (plugin inactive)", async () => {
+    const svc = createAssetService(repo, noopStorage, undefined, { providers: createSearchProviderRegistry() });
+    expect((await svc.list({ query: "pick:2" })).total).toBe(3);
+  });
+
+  it("fails the search when a provider throws, rather than silently widening it", async () => {
+    const svc = serviceWith(() => {
+      throw new Error("provider broke");
+    });
+    await expect(svc.list({ query: "pick:1" })).rejects.toThrow("provider broke");
   });
 });

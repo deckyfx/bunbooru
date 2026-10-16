@@ -103,6 +103,16 @@ export {
   type TagService,
   type TagServiceDeps,
 } from "./services/tag-service";
+// Plugin search metatags (`fav:`, `pool:`) — the registry the API's plugin host fills.
+export {
+  CORE_METATAG_KEYS,
+  createSearchProviderRegistry,
+  SearchProviderConflictError,
+  type SearchProvider,
+  type SearchProviderLookup,
+  type SearchProviderRegistry,
+  type SearchTerm,
+} from "./search/providers";
 // Tag gardening — aliases + implications (admin-managed; data access in @bunbooru/db).
 export { createTagAliasService, type TagAliasService } from "./services/tag-alias-service";
 export {

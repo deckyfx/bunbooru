@@ -28,6 +28,7 @@ function memoryRepo(): AssetRepository {
     findPage: async () => [],
     countUpTo: async () => 0,
     findById: async (id) => rows.find((r) => r.id === id) ?? null,
+    findByIds: async (ids) => rows.filter((r) => ids.includes(r.id)),
     findBySha256: async (sha256) => rows.find((r) => r.sha256 === sha256) ?? null,
     findReferencedStorageKeys: async (keys) =>
       new Set(rows.filter((r) => keys.includes(r.storageKey)).map((r) => r.storageKey)),

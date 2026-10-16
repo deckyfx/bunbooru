@@ -161,6 +161,7 @@ function fakeAssetService(finalize: AssetService["createFromSource"]): AssetServ
     create: unused as AssetService["create"],
     list: unused as AssetService["list"],
     getById: unused as AssetService["getById"],
+    getMany: unused as AssetService["getMany"],
     update: unused as AssetService["update"],
     neighbors: unused as AssetService["neighbors"],
     openFile: unused as AssetService["openFile"],

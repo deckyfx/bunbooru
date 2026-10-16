@@ -23,10 +23,67 @@ import {
   type QueryNode,
 } from "@bunbooru/search";
 
+import { CORE_METATAG_KEYS, type SearchProviderLookup } from "./providers";
 import { dateRange, DEFAULT_ORDER, parseOrder } from "./terms";
 
 /** Looks up aliases for the given tag names: antecedent → consequent name. */
 export type AliasResolver = (names: string[]) => Promise<ReadonlyMap<string, string>>;
+
+/** What the compiler needs from outside the query: aliases and plugin metatags. */
+export interface SearchContext {
+  resolveAliases?: AliasResolver;
+  /** Plugin-contributed metatags (`fav:`, `pool:`), consulted for non-Core keys. */
+  providers?: SearchProviderLookup;
+}
+
+/** Plugin conditions, compiled ahead of the (synchronous) SQL build, by term. */
+type PluginConditions = ReadonlyMap<string, SQL | undefined>;
+
+/** The identity of a metatag term, for compiling each distinct one once. */
+const termKey = (node: MetatagNode) => `${node.key}\u0000${node.op}\u0000${node.value}`;
+
+/** Every metatag in the tree whose key a plugin provides (not Core's own keys). */
+function pluginMetatags(node: QueryNode, providers: SearchProviderLookup): MetatagNode[] {
+  switch (node.type) {
+    case "and":
+    case "or":
+      return node.children.flatMap((child) => pluginMetatags(child, providers));
+    case "not":
+      return pluginMetatags(node.child, providers);
+    case "metatag":
+      return !CORE_METATAG_KEYS.has(node.key) && providers.get(node.key) ? [node] : [];
+    case "tag":
+      return [];
+  }
+}
+
+/**
+ * Compile the plugin metatags in `tree`, each distinct term once, concurrently.
+ * A provider's condition is correlated to the post being matched through
+ * `assets.id`. A provider that throws fails the search (it isn't silently
+ * dropped, which would quietly widen the results).
+ */
+async function compilePluginTerms(
+  tree: QueryNode,
+  providers: SearchProviderLookup | undefined,
+): Promise<PluginConditions> {
+  if (!providers) return new Map();
+  const terms = new Map(pluginMetatags(tree, providers).map((node) => [termKey(node), node]));
+  const asset = { id: sql`${assets.id}` };
+  const compiled = await Promise.all(
+    [...terms].map(async ([key, node]) => {
+      const provider = providers.get(node.key);
+      // Core's rule for every metatag: a blank value (`fav:` while still typing)
+      // is ignored, not "match nothing". Applied here once for every plugin.
+      const condition =
+        provider && node.value.trim() !== ""
+          ? await provider.compile({ op: node.op, value: node.value }, asset)
+          : undefined;
+      return [key, condition] as const;
+    }),
+  );
+  return new Map(compiled);
+}
 
 /** A compiled search: which assets match, and in what order. */
 export interface CompiledSearch {
@@ -46,7 +103,8 @@ export interface CompiledSearch {
  * the tag names the query mentions (one batched lookup) → optimize (resolve
  * aliases, simplify) → build SQL. Metatags map to asset columns; tag terms
  * compile to an `asset_tags` EXISTS subquery. Without a resolver, aliases are
- * simply not applied.
+ * simply not applied. Metatags a plugin provides (`fav:alice`) compile through
+ * that plugin's search provider and compose like built-in ones.
  *
  * `order:` sorts rather than filters, so it's lifted out before optimizing,
  * while the top of the parsed tree is still the plain AND of the query's terms.
@@ -55,7 +113,7 @@ export interface CompiledSearch {
  */
 export async function compileAssetSearch(
   query: string,
-  resolveAliases?: AliasResolver,
+  { resolveAliases, providers }: SearchContext = {},
 ): Promise<CompiledSearch> {
   const ast = parse(query);
   let order = DEFAULT_ORDER;
@@ -70,7 +128,9 @@ export async function compileAssetSearch(
   const remaining: QueryNode = { type: "and", children: filters };
   const names = collectTagNames(remaining);
   const aliases = resolveAliases && names.length > 0 ? await resolveAliases(names) : undefined;
-  return { where: buildNode(optimize(remaining, { aliases })), order };
+  const optimized = optimize(remaining, { aliases });
+  const plugin = await compilePluginTerms(optimized, providers);
+  return { where: buildNode(optimized, plugin), order };
 }
 
 const RATINGS = new Set<Rating>(["safe", "questionable", "explicit", "unrated"]);
@@ -90,21 +150,22 @@ const NUMERIC_COLUMNS = {
 const MD5_RE = /^[0-9a-f]{32}$/;
 type NumericColumn = (typeof NUMERIC_COLUMNS)[keyof typeof NUMERIC_COLUMNS];
 
-function buildNode(node: QueryNode): SQL | undefined {
+function buildNode(node: QueryNode, plugin: PluginConditions): SQL | undefined {
   switch (node.type) {
     case "and":
       // Drizzle's and/or drop undefined args, so unknown/empty terms just vanish.
-      return and(...node.children.map(buildNode));
+      return and(...node.children.map((child) => buildNode(child, plugin)));
     case "or":
-      return or(...node.children.map(buildNode));
+      return or(...node.children.map((child) => buildNode(child, plugin)));
     case "not": {
-      const child = buildNode(node.child);
+      const child = buildNode(node.child, plugin);
       return child ? not(child) : undefined;
     }
     case "tag":
       return tagCondition(node.name);
     case "metatag":
-      return metatagCondition(node);
+      // A plugin term was compiled up front; Core keys never reach providers.
+      return plugin.has(termKey(node)) ? plugin.get(termKey(node)) : metatagCondition(node);
   }
 }
 

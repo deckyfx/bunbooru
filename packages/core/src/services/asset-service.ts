@@ -4,7 +4,10 @@ import type { StorageProvider, StoredObject } from "@bunbooru/storage";
 import { UnsupportedMediaError, ValidationError } from "../errors";
 import type { CoreEvents } from "../events";
 import { decodeCursor, encodeCursor } from "../search/asset-cursor";
-import { compileAssetSearch, type AliasResolver } from "../search/asset-query";
+import { compileAssetSearch, type SearchContext } from "../search/asset-query";
+
+/** Most ids {@link AssetService.getMany} resolves in one call (bounds one query). */
+export const MAX_GET_MANY = 500;
 
 /** Default and ceiling page sizes — the ceiling bounds the cost of one query. */
 export const DEFAULT_PER_PAGE = 20;
@@ -119,6 +122,13 @@ export interface AssetService {
   list(options?: ListAssetsOptions): Promise<AssetListPage>;
   /** One asset by id, or null. */
   getById(id: number): Promise<Asset | null>;
+  /**
+   * The assets for `ids` in ONE query, returned in the order the ids were given
+   * (duplicates collapsed, unknown or invalid ids skipped). Lets a plugin that
+   * keeps its own ordering (a pool) render it without one lookup per post.
+   * Throws `ValidationError` beyond {@link MAX_GET_MANY} ids.
+   */
+  getMany(ids: readonly number[]): Promise<Asset[]>;
   /** Ingest an in-memory upload: dedupe by content hash, else store + persist. */
   create(input: CreateAssetInput): Promise<CreateAssetResult>;
   /**
@@ -169,7 +179,7 @@ export function createAssetService(
   repository: AssetRepository,
   storage: StorageProvider,
   events?: CoreEvents,
-  resolveAliases?: AliasResolver,
+  search: SearchContext = {},
 ): AssetService {
   /**
    * The shared ingest pipeline: hash → dedupe → sniff → store → insert → emit,
@@ -288,7 +298,7 @@ export function createAssetService(
       const perPage = Math.min(toPositiveInt(options.perPage, DEFAULT_PER_PAGE), MAX_PER_PAGE);
       // Trim first so surrounding whitespace is normalized away, not fed to the parser.
       const query = options.query?.trim() ?? "";
-      const { where, order } = await compileAssetSearch(query, resolveAliases);
+      const { where, order } = await compileAssetSearch(query, search);
 
       // Validate the cursor before any database work: a refused cursor costs no
       // queries. (Random order has no cursors, so one is simply ignored there.)
@@ -373,6 +383,15 @@ export function createAssetService(
 
     getById(id) {
       return repository.findById(id);
+    },
+
+    async getMany(ids) {
+      const wanted = [...new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0))];
+      if (wanted.length > MAX_GET_MANY) {
+        throw new ValidationError(`At most ${MAX_GET_MANY} assets can be fetched at once`);
+      }
+      const byId = new Map((await repository.findByIds(wanted)).map((asset) => [asset.id, asset]));
+      return wanted.map((id) => byId.get(id)).filter((asset): asset is Asset => asset !== undefined);
     },
 
     create({ bytes, rating, source, uploaderId }) {

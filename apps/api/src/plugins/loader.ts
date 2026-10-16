@@ -3,10 +3,10 @@ import {
   type Core,
   type DB,
   type MailProvider,
+  type SearchProvider,
   type StorageProvider,
 } from "@bunbooru/core";
 import type {
-  AdminPage,
   BunbooruPlugin,
   PluginContext,
   PluginRegistration,
@@ -30,11 +30,12 @@ export interface LoadedPlugin {
   capabilities: SdkCapability[];
   /** The actual DB table names this plugin owns (its declared `tables`), for the catalog. */
   tables: string[];
-  adminPages: AdminPage[];
   /** The plugin's Elysia app (prefixed by `pluginRoutePrefix`), if it has routes. */
   routes?: AnyElysia;
   /** The mail transport this plugin supplies, if any (installed on `core.mailService`). */
   mailProvider?: MailProvider;
+  /** Search metatags this plugin contributes (registered on `core.searchProviders` while active). */
+  searchProviders: SearchProvider[];
 }
 
 /** Default per-step timeout (ms) — see {@link LoadPluginsOptions.stepTimeoutMs}. */
@@ -211,14 +212,14 @@ export async function loadPlugins({
       capabilities: [...(plugin.capabilities ?? [])],
       // Actual table names the plugin declares — recorded verbatim in the catalog.
       tables: [...(plugin.tables ?? [])],
-      adminPages: registration.adminPages ?? [],
       routes: registration.routes,
       mailProvider: registration.mailProvider,
+      searchProviders: [...(registration.searchProviders ?? [])],
     });
     logger.info("plugin_loaded", {
       id,
       hasRoutes: registration.routes !== undefined,
-      adminPages: (registration.adminPages ?? []).length,
+      searchKeys: (registration.searchProviders ?? []).map((provider) => provider.key),
     });
   }
 

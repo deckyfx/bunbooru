@@ -75,7 +75,6 @@ describe("smtp-mailer register (log-only, over a stub context)", () => {
     const registration = await plugin.register(stubContext(fakeLogger()));
     expect(registration.mailProvider).toBeDefined();
     expect(registration.routes).toBeDefined();
-    expect(registration.adminPages).toEqual([{ id: "smtp-mailer", title: "Email (SMTP)" }]);
   });
 
   it("installs a provider that delivers in log-only mode (no SMTP host configured)", async () => {
