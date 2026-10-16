@@ -128,8 +128,9 @@ async function counts(ctx: PluginContext): Promise<{ succeeded: number; failed: 
 
 /**
  * Attempt thumbnails for assets that have no record yet, up to {@link
- * BACKFILL_BATCH} attempts per call. Pages through the asset list (via the Core
- * service — no direct Core-table access). The batch counts BOTH successes and
+ * BACKFILL_BATCH} attempts per call. Walks the asset list by cursor (via the Core
+ * service — no direct Core-table access), so each page costs the same however
+ * far into a large library it is. The batch counts BOTH successes and
  * failures, and `remaining` counts only never-attempted assets, so a permanently
  * failing asset gets a row and the caller's loop terminates.
  */
@@ -139,11 +140,11 @@ async function backfill(
   let scanned = 0;
   let generated = 0;
   let failed = 0;
-  let page = 1;
+  let cursor: string | undefined;
   const perPage = 100;
 
   outer: for (;;) {
-    const result = await ctx.services.assets.list({ page, perPage });
+    const result = await ctx.services.assets.list({ perPage, cursor });
     if (result.assets.length === 0) break;
     const alreadyRecorded = await recordedIds(ctx, result.assets.map((asset) => asset.id));
     for (const asset of result.assets) {
@@ -156,8 +157,8 @@ async function backfill(
       // can't make one request scan the entire asset list.
       if (generated + failed >= BACKFILL_BATCH) break outer;
     }
-    if (page >= result.pageCount) break;
-    page += 1;
+    if (result.nextCursor === null) break;
+    cursor = result.nextCursor;
   }
 
   // "remaining" = never-attempted assets (total − attempted). Failures have rows,

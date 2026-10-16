@@ -1,7 +1,17 @@
 import { beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { sql } from "drizzle-orm";
 
-import { createAssetRepository, createDb, type AssetRepository, type DB } from "../src/index";
+import {
+  createAssetRepository,
+  createDb,
+  createTagRepository,
+  type AssetOrder,
+  type AssetRepository,
+  type DB,
+} from "../src/index";
+
+/** The default browse order: newest (highest id) first. */
+const NEWEST: AssetOrder = { kind: "column", key: "id", direction: "desc" };
 
 /**
  * Integration tests — they hit a real Postgres (migrations must already be
@@ -28,8 +38,8 @@ describe.skipIf(!TEST_DATABASE_URL)("AssetRepository (integration)", () => {
   });
 
   it("starts empty", async () => {
-    expect(await repo.count()).toBe(0);
-    expect(await repo.findMany({ limit: 10, offset: 0 })).toEqual([]);
+    expect(await repo.countUpTo(undefined, 100)).toBe(0);
+    expect(await repo.findPage({ order: NEWEST, limit: 10 })).toEqual([]);
   });
 
   it("creates an asset and reads it back", async () => {
@@ -49,7 +59,7 @@ describe.skipIf(!TEST_DATABASE_URL)("AssetRepository (integration)", () => {
     expect(created.md5).toMatch(/^[0-9a-f]{32}$/);
     expect(created.rating).toBe("safe");
     expect(created.createdAt).toBeInstanceOf(Date);
-    expect(await repo.count()).toBe(1);
+    expect(await repo.countUpTo(undefined, 100)).toBe(1);
   });
 
   it("defaults rating and nullable columns", async () => {
@@ -111,24 +121,98 @@ describe.skipIf(!TEST_DATABASE_URL)("AssetRepository (integration)", () => {
     await repo.create(seed("first"));
     await repo.create(seed("second"));
 
-    const rows = await repo.findMany({ limit: 10, offset: 0 });
+    const rows = await repo.findPage({ order: NEWEST, limit: 10 });
     expect(rows.map((r) => r.storageKey)).toEqual(["key/second", "key/first"]);
   });
 
-  it("honours limit and offset", async () => {
-    await repo.create(seed("a"));
-    await repo.create(seed("b"));
-    await repo.create(seed("c"));
+  it("continues past a keyset, forward and backward", async () => {
+    for (const key of ["a", "b", "c", "d"]) await repo.create(seed(key));
+    const keys = (rows: { storageKey: string }[]) => rows.map((r) => r.storageKey);
 
-    const firstPage = await repo.findMany({ limit: 2, offset: 0 });
-    const secondPage = await repo.findMany({ limit: 2, offset: 2 });
+    const first = await repo.findPage({ order: NEWEST, limit: 2 });
+    expect(keys(first)).toEqual(["key/d", "key/c"]);
+    const last = first.at(-1)!;
+    const second = await repo.findPage({ order: NEWEST, limit: 2, after: { value: last.id, id: last.id } });
+    expect(keys(second)).toEqual(["key/b", "key/a"]);
 
-    expect(firstPage).toHaveLength(2);
-    expect(secondPage).toHaveLength(1);
-    // Newest-first (a, b, c inserted → c, b, a): exact rows catch offset bugs
-    // that a mere "pages differ" check would miss.
-    expect(firstPage.map((r) => r.storageKey)).toEqual(["key/c", "key/b"]);
-    expect(secondPage.map((r) => r.storageKey)).toEqual(["key/a"]);
+    // Backward from the second page's first row: the nearest newer rows first.
+    const top = second[0]!;
+    const back = await repo.findPage({
+      order: NEWEST,
+      limit: 2,
+      after: { value: top.id, id: top.id },
+      backward: true,
+    });
+    expect(keys(back)).toEqual(["key/c", "key/d"]);
+  });
+
+  it("breaks ties on the sort column by id, so no row is skipped or repeated", async () => {
+    // Four posts of the same size: only the id tiebreak orders them.
+    for (const key of ["a", "b", "c", "d"]) await repo.create({ ...seed(key), sizeBytes: 500 });
+    const order: AssetOrder = { kind: "column", key: "sizeBytes", direction: "desc" };
+
+    const seen: string[] = [];
+    let after: { value: number | string; id: number } | undefined;
+    for (;;) {
+      const page = await repo.findPage({ order, limit: 3, after });
+      if (page.length === 0) break;
+      seen.push(...page.map((r) => r.storageKey));
+      const tail = page.at(-1)!;
+      after = { value: tail.sizeBytes, id: tail.id };
+    }
+    expect(seen).toEqual(["key/d", "key/c", "key/b", "key/a"]);
+  });
+
+  it("pages by a timestamp keyset (ISO string) in either direction", async () => {
+    const at = (iso: string) => new Date(iso);
+    await repo.create({ ...seed("old"), createdAt: at("2020-01-01T00:00:00.000Z") });
+    await repo.create({ ...seed("mid"), createdAt: at("2022-06-15T12:00:00.000Z") });
+    await repo.create({ ...seed("new"), createdAt: at("2024-12-31T23:59:59.000Z") });
+    const oldestFirst: AssetOrder = { kind: "column", key: "createdAt", direction: "asc" };
+
+    const first = await repo.findPage({ order: oldestFirst, limit: 1 });
+    expect(first.map((r) => r.storageKey)).toEqual(["key/old"]);
+    const cursor = { value: first[0]!.createdAt.toISOString(), id: first[0]!.id };
+    const rest = await repo.findPage({ order: oldestFirst, limit: 5, after: cursor });
+    expect(rest.map((r) => r.storageKey)).toEqual(["key/mid", "key/new"]);
+  });
+
+  it("applies the filter together with the keyset", async () => {
+    for (const key of ["a", "b", "c", "d"]) {
+      await repo.create({ ...seed(key), width: key === "b" ? 1 : 100 });
+    }
+    const wide = sql`${sql.identifier("width")} > 50`;
+    const first = await repo.findPage({ where: wide, order: NEWEST, limit: 1 });
+    expect(first.map((r) => r.storageKey)).toEqual(["key/d"]);
+    const after = { value: first[0]!.id, id: first[0]!.id };
+    const rest = await repo.findPage({ where: wide, order: NEWEST, limit: 5, after });
+    expect(rest.map((r) => r.storageKey)).toEqual(["key/c", "key/a"]); // "b" filtered out
+  });
+
+  it("random order returns matching rows without a keyset", async () => {
+    for (const key of ["a", "b", "c"]) await repo.create(seed(key));
+    const rows = await repo.findPage({ order: { kind: "random" }, limit: 10 });
+    expect(rows.map((r) => r.storageKey).sort()).toEqual(["key/a", "key/b", "key/c"]);
+  });
+
+  it("countUpTo stops at cap + 1", async () => {
+    for (const key of ["a", "b", "c", "d", "e"]) await repo.create(seed(key));
+    expect(await repo.countUpTo(undefined, 10)).toBe(5);
+    expect(await repo.countUpTo(undefined, 3)).toBe(4); // "more than 3"
+    expect(await repo.countUpTo(sql`false`, 3)).toBe(0);
+  });
+
+  it("keeps tag_count in step with the post's tags (trigger)", async () => {
+    const tags = createTagRepository(db);
+    await db.execute(sql`TRUNCATE TABLE tags RESTART IDENTITY CASCADE`);
+    const asset = await repo.create(seed("tagged"));
+    const rows = await tags.getOrCreateByNames(["a", "b", "c"]);
+    const ids = rows.map((t) => t.id);
+
+    await tags.setAssetTags(asset.id, ids, null);
+    expect((await repo.findById(asset.id))?.tagCount).toBe(3);
+    await tags.setAssetTags(asset.id, ids.slice(0, 1), null);
+    expect((await repo.findById(asset.id))?.tagCount).toBe(1);
   });
 
   it("neighbors returns adjacent ids in the newest-first browse order", async () => {

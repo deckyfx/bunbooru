@@ -50,6 +50,7 @@ const sampleAsset: Asset = {
   rating: "safe",
   source: null,
   viewCount: 0,
+  tagCount: 3,
   // Owned by the default authenticated user (sampleUser.id below) so the
   // owner-or-admin edit routes admit it under AUTH_HEADER.
   uploaderId: 7,
@@ -57,7 +58,14 @@ const sampleAsset: Asset = {
   updatedAt: new Date("2026-01-02T00:00:00.000Z"),
 };
 
-const emptyPage: AssetListPage = { assets: [], total: 0, page: 1, perPage: 20, pageCount: 0 };
+const emptyPage: AssetListPage = {
+  assets: [],
+  total: 0,
+  totalCapped: false,
+  perPage: 20,
+  nextCursor: null,
+  prevCursor: null,
+};
 
 /** A fixed tag row for asserting wire serialization. */
 const sampleTag: Tag = {
@@ -329,7 +337,7 @@ describe("error handling", () => {
 
 describe("GET /api/v1/assets", () => {
   it("returns a page and serializes timestamps as ISO strings", async () => {
-    const page: AssetListPage = { assets: [sampleAsset], total: 1, page: 1, perPage: 20, pageCount: 1 };
+    const page: AssetListPage = { ...emptyPage, assets: [sampleAsset], total: 1, nextCursor: "abc" };
     const res = await buildApp(stubCore({ list: async () => page })).handle(
       new Request("http://localhost/api/v1/assets"),
     );
@@ -340,12 +348,13 @@ describe("GET /api/v1/assets", () => {
       assets: Array<{ id: number; createdAt: unknown; updatedAt: unknown }>;
     };
     expect(body.total).toBe(1);
+    expect((body as unknown as { nextCursor: string }).nextCursor).toBe("abc");
     expect(body.assets[0]?.id).toBe(1);
     expect(body.assets[0]?.createdAt).toBe("2026-01-01T00:00:00.000Z");
     expect(body.assets[0]?.updatedAt).toBe("2026-01-02T00:00:00.000Z");
   });
 
-  it("coerces and forwards page/per_page to the service", async () => {
+  it("coerces and forwards per_page and the cursor to the service", async () => {
     let received: ListAssetsOptions | undefined;
     const res = await buildApp(
       stubCore({
@@ -354,10 +363,10 @@ describe("GET /api/v1/assets", () => {
           return emptyPage;
         },
       }),
-    ).handle(new Request("http://localhost/api/v1/assets?page=2&per_page=5"));
+    ).handle(new Request("http://localhost/api/v1/assets?per_page=5&cursor=eyJvIjoiaWQ6ZGVzYyJ9"));
 
     expect(res.status).toBe(200);
-    expect(received).toEqual({ page: 2, perPage: 5 });
+    expect(received).toEqual({ perPage: 5, cursor: "eyJvIjoiaWQ6ZGVzYyJ9" });
   });
 
   it("forwards the q search query to the service", async () => {
@@ -375,14 +384,24 @@ describe("GET /api/v1/assets", () => {
     expect(received?.query).toBe("rating:safe 1girl");
   });
 
-  it("rejects an out-of-range page with 422", async () => {
-    const res = await request("/api/v1/assets?page=0");
-    expect(res.status).toBe(422);
+  it("rejects an out-of-range or fractional per_page with 422", async () => {
+    expect((await request("/api/v1/assets?per_page=0")).status).toBe(422);
+    expect((await request("/api/v1/assets?per_page=1.5")).status).toBe(422);
   });
 
-  it("rejects a fractional page with 422", async () => {
-    const res = await request("/api/v1/assets?page=1.5");
-    expect(res.status).toBe(422);
+  it("rejects a cursor with characters outside base64url with 422", async () => {
+    expect((await request("/api/v1/assets?cursor=a%2Bb%2Fc%3D")).status).toBe(422);
+  });
+
+  it("maps a cursor the service refuses (wrong order, garbage) to 400", async () => {
+    const res = await buildApp(
+      stubCore({
+        list: async () => {
+          throw new ValidationError("Invalid or expired page cursor");
+        },
+      }),
+    ).handle(new Request("http://localhost/api/v1/assets?cursor=abc"));
+    expect(res.status).toBe(400);
   });
 });
 

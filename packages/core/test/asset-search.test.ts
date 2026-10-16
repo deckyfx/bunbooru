@@ -6,6 +6,7 @@ import {
   createDb,
   createTagAliasRepository,
   createTagRepository,
+  createUserRepository,
   type AssetRepository,
   type DB,
   type NewAsset,
@@ -117,11 +118,112 @@ describe.skipIf(!TEST_DATABASE_URL)("Search execution (integration)", () => {
     expect((await service.list({ query: "1girl" })).total).toBe(0);
   });
 
-  it("reflects the filter in pagination metadata", async () => {
+  it("reflects the filter in pagination metadata, and pages through it", async () => {
     const r = await service.list({ query: "rating:safe", perPage: 1 });
     expect(r.total).toBe(2);
-    expect(r.pageCount).toBe(2);
     expect(r.assets).toHaveLength(1);
+    const next = await service.list({ query: "rating:safe", perPage: 1, cursor: r.nextCursor! });
+    expect(next.assets).toHaveLength(1);
+    expect(next.nextCursor).toBeNull();
+    expect(keys(r).concat(keys(next)).sort()).toEqual(["k/a", "k/c"]);
+  });
+});
+
+describe.skipIf(!TEST_DATABASE_URL)("Search metatags and order: (integration)", () => {
+  let db: DB;
+  let repo: AssetRepository;
+  let service: AssetService;
+
+  beforeAll(() => {
+    db = createDb(TEST_DATABASE_URL as string);
+    repo = createAssetRepository(db);
+    service = createAssetService(repo, noopStorage);
+  });
+
+  // a: alice, 2024-01-10, 3 KB, 1 tag, 9 views
+  // b: bob,   2025-06-01, 1 KB, 3 tags, 2 views
+  // c: alice, 2026-10-15, 2 KB, 0 tags, 5 views
+  beforeEach(async () => {
+    await db.execute(
+      sql`TRUNCATE TABLE assets, asset_tags, tags, users RESTART IDENTITY CASCADE`,
+    );
+    const users = createUserRepository(db);
+    const alice = await users.create({ username: "alice", email: null, passwordHash: "x", role: "member" });
+    const bob = await users.create({ username: "bob", email: null, passwordHash: "x", role: "member" });
+    const at = (iso: string) => new Date(`${iso}T12:00:00.000Z`);
+    const a = await repo.create(asset("a", { uploaderId: alice.id, createdAt: at("2024-01-10"), sizeBytes: 3000 }));
+    const b = await repo.create(asset("b", { uploaderId: bob.id, createdAt: at("2025-06-01"), sizeBytes: 1000 }));
+    await repo.create(asset("c", { uploaderId: alice.id, createdAt: at("2026-10-15"), sizeBytes: 2000 }));
+    const tags = createTagRepository(db);
+    const rows = await tags.getOrCreateByNames(["x", "y", "z"]);
+    await tags.setAssetTags(a.id, [rows[0]!.id], null);
+    await tags.setAssetTags(b.id, rows.map((t) => t.id), null);
+    for (const [key, views] of [["k/a", 9], ["k/b", 2], ["k/c", 5]] as const) {
+      await db.execute(sql`UPDATE assets SET view_count = ${views} WHERE storage_key = ${key}`);
+    }
+  });
+
+  const keys = (p: { assets: Array<{ storageKey: string }> }) =>
+    p.assets.map((x) => x.storageKey).sort();
+  const ordered = (p: { assets: Array<{ storageKey: string }> }) => p.assets.map((x) => x.storageKey);
+  const find = (query: string) => service.list({ query });
+
+  it("id:, views:, tagcount: compare numerically", async () => {
+    expect(keys(await find("id:2"))).toEqual(["k/b"]);
+    expect(keys(await find("id:>=2"))).toEqual(["k/b", "k/c"]);
+    expect(keys(await find("views:>4"))).toEqual(["k/a", "k/c"]);
+    expect(keys(await find("tagcount:0"))).toEqual(["k/c"]);
+    expect(keys(await find("tagcount:1..3"))).toEqual(["k/a", "k/b"]);
+  });
+
+  it("md5: matches the exact digest, case-insensitively; a malformed one is ignored", async () => {
+    const md5 = hex("md5", "b");
+    expect(keys(await find(`md5:${md5}`))).toEqual(["k/b"]);
+    expect(keys(await find(`md5:${md5.toUpperCase()}`))).toEqual(["k/b"]);
+    expect((await find("md5:nothex")).total).toBe(3); // ignored, not "match nothing"
+  });
+
+  it("user: filters by uploader; an unknown user matches nothing", async () => {
+    expect(keys(await find("user:alice"))).toEqual(["k/a", "k/c"]);
+    expect(keys(await find("user:BOB"))).toEqual(["k/b"]);
+    expect((await find("user:nobody")).total).toBe(0);
+    expect(keys(await find("-user:alice"))).toEqual(["k/b"]);
+    // A post with no uploader (deleted account) is "not by alice", too.
+    await repo.create(asset("orphan", { uploaderId: null }));
+    expect(keys(await find("-user:alice"))).toEqual(["k/b", "k/orphan"]);
+  });
+
+  it("date: selects whole UTC days, comparisons and ranges", async () => {
+    expect(keys(await find("date:2025-06-01"))).toEqual(["k/b"]);
+    expect(keys(await find("date:>2025-06-01"))).toEqual(["k/c"]);
+    expect(keys(await find("date:<=2025-06-01"))).toEqual(["k/a", "k/b"]);
+    expect(keys(await find("date:2024-01-01..2025-12-31"))).toEqual(["k/a", "k/b"]);
+    expect((await find("date:2026-02-30")).total).toBe(3); // impossible date → ignored
+  });
+
+  it("order: sorts by the named key, either way", async () => {
+    expect(ordered(await find("order:size"))).toEqual(["k/a", "k/c", "k/b"]);
+    expect(ordered(await find("order:size_asc"))).toEqual(["k/b", "k/c", "k/a"]);
+    expect(ordered(await find("order:views"))).toEqual(["k/a", "k/c", "k/b"]);
+    expect(ordered(await find("order:tagcount"))).toEqual(["k/b", "k/a", "k/c"]);
+    expect(ordered(await find("order:date_asc"))).toEqual(["k/a", "k/b", "k/c"]);
+    expect(ordered(await find("order:id"))).toEqual(["k/a", "k/b", "k/c"]);
+  });
+
+  it("order: combines with filters, and only a positive top-level one counts", async () => {
+    expect(ordered(await find("user:alice order:size_asc"))).toEqual(["k/c", "k/a"]);
+    // Negated or inside an OR group: not a sort, not a filter.
+    expect(ordered(await find("-order:size_asc"))).toEqual(["k/c", "k/b", "k/a"]);
+    expect(ordered(await find("order:views order:size_asc"))).toEqual(["k/b", "k/c", "k/a"]); // last wins
+  });
+
+  it("pages through a non-id order with cursors", async () => {
+    const first = await service.list({ query: "order:size", perPage: 2 });
+    expect(ordered(first)).toEqual(["k/a", "k/c"]);
+    const second = await service.list({ query: "order:size", perPage: 2, cursor: first.nextCursor! });
+    expect(ordered(second)).toEqual(["k/b"]);
+    const back = await service.list({ query: "order:size", perPage: 2, cursor: second.prevCursor! });
+    expect(ordered(back)).toEqual(["k/a", "k/c"]);
   });
 });
 

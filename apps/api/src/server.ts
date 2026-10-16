@@ -787,27 +787,23 @@ export function createApp({
           "/assets",
           async ({ query }) => {
             const page = await core.assetService.list({
-              page: query.page,
               perPage: query.per_page,
               query: query.q,
+              cursor: query.cursor,
             });
             return { ...page, assets: page.assets.map(serializeAsset) };
           },
           {
             query: t.Object({
-              // Booru search query (tags + metatags); Core compiles it to SQL.
+              // Booru search query (tags + metatags, including `order:`); Core
+              // compiles it to SQL.
               q: t.Optional(t.String({ maxLength: 1024 })),
+              // Keyset paging: a previous page's `nextCursor`/`prevCursor`. Opaque
+              // and URL-safe; Core validates its contents (400 when it doesn't
+              // fit the query's order). Bounded so it can't carry a payload.
+              cursor: t.Optional(t.String({ maxLength: 512, pattern: "^[A-Za-z0-9_-]+$" })),
               // Integer-only (`multipleOf: 1`): reject fractional page sizes at
-              // the boundary so offset/limit math is never ambiguous. The upper
-              // bound keeps (page-1)*perPage within MAX_SAFE_INTEGER so a huge
-              // page can't overflow the offset into a 5xx (the service caps too).
-              page: t.Optional(
-                t.Numeric({
-                  minimum: 1,
-                  maximum: Math.floor(Number.MAX_SAFE_INTEGER / MAX_PER_PAGE) + 1,
-                  multipleOf: 1,
-                }),
-              ),
+              // the boundary so the limit is never ambiguous.
               per_page: t.Optional(
                 t.Numeric({ minimum: 1, maximum: MAX_PER_PAGE, multipleOf: 1 }),
               ),

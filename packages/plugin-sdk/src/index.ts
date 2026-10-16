@@ -36,7 +36,7 @@ import type {
  * mounts the returned {@link PluginRegistration.routes} under
  * `/api/v1/plugins/<id>`.
  */
-export const PLUGIN_SDK_VERSION = "0.6.0" as const;
+export const PLUGIN_SDK_VERSION = "0.7.0" as const;
 
 /** Storage contract re-exported for plugins that register storage providers. */
 export type { StorageProvider };

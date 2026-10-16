@@ -1,18 +1,51 @@
-import { asc, desc, eq, gt, inArray, lt, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, sql, type SQL } from "drizzle-orm";
 
 import { assets, type Asset, type NewAsset } from "../schema";
 import type { DB } from "../client";
 
+/** The asset columns a listing can be sorted by (each paired with `id`). */
+export type AssetSortKey = "id" | "createdAt" | "viewCount" | "sizeBytes" | "tagCount";
+
+/** How a listing is ordered: by a column (ties broken by id), or shuffled. */
+export type AssetOrder =
+  | { kind: "column"; key: AssetSortKey; direction: "asc" | "desc" }
+  | { kind: "random" };
+
 /**
- * Cursor-free page request: `limit` rows starting at `offset`, optionally
- * narrowed by a prebuilt `where` condition (the Search Engine in `@bunbooru/core`
- * compiles a query AST into this — `db` never parses text).
+ * A keyset position: the sort column's value and the id of a row, the page
+ * continues strictly past it. `value` is an ISO timestamp for `createdAt`, a
+ * number for every other key.
+ */
+export interface AssetKeyset {
+  value: number | string;
+  id: number;
+}
+
+/**
+ * One keyset page request. The Search Engine in `@bunbooru/core` compiles the
+ * query into `where` and `order` (`db` never parses text).
  */
 export interface AssetPage {
-  limit: number;
-  offset: number;
   where?: SQL;
+  order: AssetOrder;
+  limit: number;
+  /** Continue past this row; omitted for the first page. Ignored for random order. */
+  after?: AssetKeyset;
+  /**
+   * Walk TOWARD the start instead (the previous page): rows come back nearest
+   * to `after` first. The caller reverses them for display.
+   */
+  backward?: boolean;
 }
+
+/** Each sort key's column and the SQL type its keyset value is bound as. */
+const SORT_COLUMNS = {
+  id: { column: assets.id, cast: "bigint" },
+  createdAt: { column: assets.createdAt, cast: "timestamptz" },
+  viewCount: { column: assets.viewCount, cast: "bigint" },
+  sizeBytes: { column: assets.sizeBytes, cast: "bigint" },
+  tagCount: { column: assets.tagCount, cast: "integer" },
+} as const;
 
 /**
  * Data access for {@link Asset} rows — the only place asset SQL lives (per
@@ -21,10 +54,17 @@ export interface AssetPage {
  * can't leak SQL upward.
  */
 export interface AssetRepository {
-  /** Newest-first page of assets, optionally filtered by `page.where`. */
-  findMany(page: AssetPage): Promise<Asset[]>;
-  /** Total assets, optionally filtered by the same `where` (for pagination). */
-  count(where?: SQL): Promise<number>;
+  /**
+   * One keyset page of assets in `page.order`, filtered by `page.where`. Cost is
+   * independent of how deep the page is (no OFFSET scan).
+   */
+  findPage(page: AssetPage): Promise<Asset[]>;
+  /**
+   * How many assets match `where`, counting no further than `cap + 1`: the
+   * scan stops there, so the cost is bounded however many rows match. A result
+   * above `cap` means "more than cap".
+   */
+  countUpTo(where: SQL | undefined, cap: number): Promise<number>;
   /** One asset by id, or null. */
   findById(id: number): Promise<Asset | null>;
   /** One asset by its unique sha256 content key, or null (drives dedupe). */
@@ -57,21 +97,41 @@ export type AssetUpdate = Partial<Pick<NewAsset, "rating" | "source">>;
  */
 export function createAssetRepository(db: DB): AssetRepository {
   return {
-    findMany({ limit, offset, where }) {
-      // .where(undefined) is a no-op in Drizzle, so an unfiltered page just omits it.
+    findPage({ where, order, limit, after, backward = false }) {
+      if (order.kind === "random") {
+        // No keyset for a shuffle: one page of random matches.
+        return db.select().from(assets).where(where).orderBy(sql`random()`).limit(limit);
+      }
+      const { column, cast } = SORT_COLUMNS[order.key];
+      // Walking backward flips the direction, both for the comparison and the
+      // ORDER BY, so the rows nearest `after` come first either way.
+      const ascending = (order.direction === "asc") !== backward;
+      // Row comparison `(col, id) > (v, id)` keeps ties on the sort column in a
+      // stable order, and both halves of it use the same composite index.
+      const past = after
+        ? ascending
+          ? sql`(${column}, ${assets.id}) > (${after.value}::${sql.raw(cast)}, ${after.id}::bigint)`
+          : sql`(${column}, ${assets.id}) < (${after.value}::${sql.raw(cast)}, ${after.id}::bigint)`
+        : undefined;
+      const sortDir = ascending ? asc : desc;
       return db
         .select()
         .from(assets)
-        .where(where)
-        .orderBy(desc(assets.id))
-        .limit(limit)
-        .offset(offset);
+        .where(and(where, past))
+        .orderBy(sortDir(column), sortDir(assets.id))
+        .limit(limit);
     },
 
-    count(where) {
-      // $count returns a JS number (not int32-capped) and accepts an optional
-      // filter so the total matches the same `where` as the page.
-      return db.$count(assets, where);
+    async countUpTo(where, cap) {
+      // Count a LIMITed subquery, so the scan stops after cap + 1 matches.
+      const matches = db
+        .select({ one: sql`1` })
+        .from(assets)
+        .where(where)
+        .limit(cap + 1)
+        .as("matches");
+      const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(matches);
+      return row?.n ?? 0;
     },
 
     async findById(id) {

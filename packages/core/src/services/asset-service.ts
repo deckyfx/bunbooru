@@ -1,13 +1,19 @@
 import type { Asset, AssetRepository, AssetUpdate, NewAsset } from "@bunbooru/db";
 import type { StorageProvider, StoredObject } from "@bunbooru/storage";
 
-import { UnsupportedMediaError } from "../errors";
+import { UnsupportedMediaError, ValidationError } from "../errors";
 import type { CoreEvents } from "../events";
+import { decodeCursor, encodeCursor } from "../search/asset-cursor";
 import { compileAssetSearch, type AliasResolver } from "../search/asset-query";
 
 /** Default and ceiling page sizes — the ceiling bounds the cost of one query. */
 export const DEFAULT_PER_PAGE = 20;
 export const MAX_PER_PAGE = 100;
+/**
+ * Totals are counted no further than this: beyond it the listing reports
+ * "10,000+", so the count costs a bounded scan however many posts match.
+ */
+export const MAX_COUNTED_TOTAL = 10_000;
 
 /** Decompression-bomb guard: reject images whose pixel count exceeds this. */
 const MAX_PIXELS = 100_000_000; // ~100 MP
@@ -35,25 +41,31 @@ const EXT_BY_FORMAT: Partial<Record<string, string>> = {
   gif: "gif",
 };
 
-/** A page of assets plus the metadata a client needs to render pagination. */
+/** A keyset page of assets plus what a client needs to move from it. */
 export interface AssetListPage {
   assets: Asset[];
-  /** Total assets across all pages. */
+  /** Matching assets, counted up to {@link MAX_COUNTED_TOTAL}. */
   total: number;
-  /** 1-based page number actually served (after clamping). */
-  page: number;
+  /** True when more than {@link MAX_COUNTED_TOTAL} match (`total` is then the cap). */
+  totalCapped: boolean;
   /** Page size actually served (after clamping). */
   perPage: number;
-  /** Total number of pages for `total` at `perPage` (0 when empty). */
-  pageCount: number;
+  /** Continue toward later results; null on the last page (and for `order:random`). */
+  nextCursor: string | null;
+  /** Go back toward the first page; null on the first page (and for `order:random`). */
+  prevCursor: string | null;
 }
 
 /** Optional, possibly out-of-range paging input from the transport layer. */
 export interface ListAssetsOptions {
-  page?: number;
   perPage?: number;
-  /** Booru query string (tags + metatags); compiled to a SQL filter. */
+  /** Booru query string (tags + metatags, incl. `order:`); compiled to SQL. */
   query?: string;
+  /**
+   * An opaque cursor from a previous page's `nextCursor`/`prevCursor`; omit for
+   * the first page. Only valid with the same `order:` it was minted under.
+   */
+  cursor?: string;
 }
 
 /** Optional metadata a client may set on ingest — shared by both create paths. */
@@ -274,31 +286,78 @@ export function createAssetService(
   return {
     async list(options = {}) {
       const perPage = Math.min(toPositiveInt(options.perPage, DEFAULT_PER_PAGE), MAX_PER_PAGE);
-      // Cap page so (page - 1) * perPage can't exceed MAX_SAFE_INTEGER and turn
-      // the offset into a rounded/Infinity value — protects non-HTTP callers too.
-      const maxPage = Math.floor(Number.MAX_SAFE_INTEGER / perPage) + 1;
-      const page = Math.min(toPositiveInt(options.page, 1), maxPage);
-      const offset = (page - 1) * perPage;
+      // Trim first so surrounding whitespace is normalized away, not fed to the parser.
+      const query = options.query?.trim() ?? "";
+      const { where, order } = await compileAssetSearch(query, resolveAliases);
 
-      // Compile the query string to a SQL filter once; the count must use the
-      // same filter so pagination metadata matches the page. Trim first so
-      // surrounding whitespace is normalized away, not fed to the parser.
-      const query = options.query?.trim();
-      const where = query ? await compileAssetSearch(query, resolveAliases) : undefined;
-
-      // Count and page in parallel — they're independent reads.
-      const [list, total] = await Promise.all([
-        repository.findMany({ limit: perPage, offset, where }),
-        repository.count(where),
-      ]);
-
-      return {
-        assets: list,
-        total,
-        page,
-        perPage,
-        pageCount: Math.ceil(total / perPage),
+      // The count runs alongside the page; capped, so it's bounded either way.
+      const countPromise = repository.countUpTo(where, MAX_COUNTED_TOTAL);
+      const totals = async () => {
+        const counted = await countPromise;
+        return {
+          total: Math.min(counted, MAX_COUNTED_TOTAL),
+          totalCapped: counted > MAX_COUNTED_TOTAL,
+        };
       };
+
+      if (order.kind === "random") {
+        const rows = await repository.findPage({ where, order, limit: perPage });
+        return { assets: rows, ...(await totals()), perPage, nextCursor: null, prevCursor: null };
+      }
+
+      const keysetOf = (row: Asset) => ({
+        value: order.key === "createdAt" ? row.createdAt.toISOString() : row[order.key],
+        id: row.id,
+      });
+      const cursorAt = (row: Asset, direction: "next" | "prev") =>
+        encodeCursor(order, keysetOf(row), direction);
+
+      // Ask for one row more than a page: its presence is how we know another
+      // page exists that way, without a count.
+      const forward = async (after?: ReturnType<typeof keysetOf>) => {
+        const rows = await repository.findPage({ where, order, limit: perPage + 1, after });
+        const hasMore = rows.length > perPage;
+        const page = hasMore ? rows.slice(0, perPage) : rows;
+        const last = page.at(-1);
+        const first = page[0];
+        return {
+          assets: page,
+          nextCursor: hasMore && last ? cursorAt(last, "next") : null,
+          prevCursor: after && first ? cursorAt(first, "prev") : null,
+        };
+      };
+
+      let page: Pick<AssetListPage, "assets" | "nextCursor" | "prevCursor">;
+      if (!options.cursor) {
+        page = await forward();
+      } else {
+        const decoded = decodeCursor(options.cursor, order);
+        if (!decoded) throw new ValidationError("Invalid or expired page cursor");
+        if (decoded.direction === "next") {
+          page = await forward(decoded.keyset);
+        } else {
+          const rows = await repository.findPage({
+            where,
+            order,
+            limit: perPage + 1,
+            after: decoded.keyset,
+            backward: true,
+          });
+          if (rows.length <= perPage) {
+            // Walked back to the start: serve the real first page, so it's
+            // always a full page rather than whatever was left over.
+            page = await forward();
+          } else {
+            const kept = rows.slice(0, perPage).reverse();
+            page = {
+              assets: kept,
+              nextCursor: cursorAt(kept.at(-1)!, "next"),
+              prevCursor: cursorAt(kept[0]!, "prev"),
+            };
+          }
+        }
+      }
+      return { ...page, ...(await totals()), perPage };
     },
 
     getById(id) {
