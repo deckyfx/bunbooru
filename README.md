@@ -183,7 +183,8 @@ bun run docker:build       # the same binary in a distroless image (port 3000)
 ## Background jobs
 
 Long or retryable work (thumbnails, imports) goes through a durable job queue in
-Postgres: jobs survive restarts, retry with backoff, and never run twice at once.
+Postgres: jobs survive restarts, retry with backoff, and each runs on one runner
+at a time (unless it overruns its lease, when another runner may take it over).
 By default the server runs them itself. To move them to a separate process, run
 the API with `JOBS_RUNNER=off` and start a worker beside it, over the same
 database and storage:
@@ -191,6 +192,7 @@ database and storage:
 ```bash
 bun run worker             # dev: the job runner alone, no HTTP
 ./bunbooru worker          # the production binary, likewise
+docker run … <image> worker  # the Docker image (the binary is its entrypoint)
 ```
 
 Several workers may run at once. `JOBS_CONCURRENCY` (default 2) sets how many

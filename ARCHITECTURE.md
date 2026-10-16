@@ -337,7 +337,8 @@ requirement; Redis may be added later as an optional accelerator only.
 enqueue(kind, payload) → jobs row (queued) → runner claims (running, leased)
   → handler.run → done
                 → throws → queued again after backoff (30s, 1m, 2m … 1h)
-                         → out of attempts → failed (admin console: Retry)
+                         → out of attempts → failed (admin console: Retry,
+                           refused while the same idempotency key is pending)
 ```
 
 - **Kinds** are `<owner>:<name>`. A plugin registers handlers by local name
@@ -349,7 +350,8 @@ enqueue(kind, payload) → jobs row (queued) → runner claims (running, leased)
   database without claiming the same job. A claim takes a lease (the handler's
   `timeoutMs`); a runner that dies leaves its job to be claimed again once the
   lease lapses. Attempts are counted at claim time, so a job that keeps
-  crashing its runner still runs out.
+  crashing its runner still runs out. Outcomes are fenced by the lease: a
+  runner that overran and lost its job can't complete or re-queue it.
 - **Idempotency keys** dedupe *pending* jobs only (`thumb:42`): once a job
   finishes, the same key may be queued again.
 - **Where jobs run:** the API runs them by default (`JOBS_RUNNER=inline`,

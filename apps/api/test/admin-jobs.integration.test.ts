@@ -25,16 +25,23 @@ describe.skipIf(!TEST_DATABASE_URL)("admin jobs routes (integration)", () => {
   /** Queue a job and run it out of attempts. */
   async function failedJob(kind: string): Promise<number> {
     const repo = live.core.jobService.repository;
-    const { id } = await repo.enqueue({ kind, payload: {}, runAt: new Date(), maxAttempts: 1 });
-    await repo.claim({ kinds: [kind], limit: 1, leaseMs: 60_000, now: new Date() });
-    await repo.fail(id, "boom", null, new Date());
-    return id;
+    await repo.enqueue({ kind, payload: {}, runAt: new Date(), maxAttempts: 1, idempotencyKey: `${kind}#1` });
+    const [claimed] = await repo.claim({ kinds: [kind], limit: 1, leaseMs: 60_000, now: new Date() });
+    await repo.fail(claimed!, "boom", null, new Date());
+    return claimed!.id;
   }
 
   it("is admin-only", async () => {
     expect((await live.request("/admin/jobs")).status).toBe(401);
     expect((await live.request("/admin/jobs", { token: member.token })).status).toBe(403);
     expect((await live.request("/admin/jobs/1/retry", { method: "POST", token: member.token })).status).toBe(403);
+  });
+
+  it("refuses a retry while the same work is queued again", async () => {
+    const failed = await failedJob("test:broken");
+    await live.core.jobService.enqueue("test:broken", {}, { idempotencyKey: "test:broken#1" });
+    const retry = await live.request(`/admin/jobs/${failed}/retry`, { method: "POST", token: admin.token });
+    expect(retry.status).toBe(409);
   });
 
   it("reports counts and failures, and retries a failed job", async () => {

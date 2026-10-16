@@ -38,7 +38,7 @@ describe.skipIf(!TEST_DATABASE_URL)("JobRepository (integration)", () => {
     expect(claimed[0]).toMatchObject({ status: "running", attempts: 1 });
     expect(await claimAt(10)).toEqual([]); // already leased
 
-    await jobs.complete(claimed[0]!.id, at(11));
+    await jobs.complete(claimed[0]!, at(11));
     const counts = await jobs.counts();
     expect(counts).toContainEqual({ kind: "k:a", status: "done", count: 1 });
     expect(counts).toContainEqual({ kind: "k:a", status: "queued", count: 1 });
@@ -51,7 +51,7 @@ describe.skipIf(!TEST_DATABASE_URL)("JobRepository (integration)", () => {
     expect(again).toEqual({ id: first.id, created: false });
 
     const [claimed] = await claimAt(1);
-    await jobs.complete(claimed!.id, at(2));
+    await jobs.complete(claimed!, at(2));
     const later = await jobs.enqueue({ kind: "k:a", payload: 1, idempotencyKey: "thumb:7" });
     expect(later.created).toBe(true); // done, so the same work may run again
     expect(later.id).not.toBe(first.id);
@@ -76,11 +76,11 @@ describe.skipIf(!TEST_DATABASE_URL)("JobRepository (integration)", () => {
   it("retries a failure at the given time, then fails it for good", async () => {
     await jobs.enqueue({ kind: "k:a", payload: 1, runAt: at(0), maxAttempts: 2 });
     const [first] = await claimAt(0);
-    await jobs.fail(first!.id, "boom", at(30), at(1));
+    await jobs.fail(first!, "boom", at(30), at(1));
     expect(await claimAt(10)).toEqual([]); // backing off
     const [second] = await claimAt(30);
     expect(second).toMatchObject({ attempts: 2, lastError: "boom" });
-    await jobs.fail(second!.id, "boom again", null, at(31));
+    await jobs.fail(second!, "boom again", null, at(31));
 
     const [failure] = await jobs.recentFailures(10);
     expect(failure).toMatchObject({ status: "failed", lastError: "boom again", attempts: 2 });
@@ -98,7 +98,7 @@ describe.skipIf(!TEST_DATABASE_URL)("JobRepository (integration)", () => {
   it("releases a claimed job without spending its attempt", async () => {
     await jobs.enqueue({ kind: "k:a", payload: 1, runAt: at(0) });
     const [claimed] = await claimAt(0);
-    await jobs.release(claimed!.id, at(1));
+    await jobs.release(claimed!, at(1));
     const [again] = await claimAt(2);
     expect(again?.attempts).toBe(1);
   });
@@ -106,15 +106,40 @@ describe.skipIf(!TEST_DATABASE_URL)("JobRepository (integration)", () => {
   it("retries a failed job with fresh attempts, and prunes old finished jobs", async () => {
     await jobs.enqueue({ kind: "k:a", payload: 1, runAt: at(0), maxAttempts: 1 });
     const [claimed] = await claimAt(0);
-    await jobs.fail(claimed!.id, "boom", null, at(1));
-    expect(await jobs.retry(claimed!.id, at(2))).toBe(true);
-    expect(await jobs.retry(claimed!.id, at(2))).toBe(false); // no longer failed
+    await jobs.fail(claimed!, "boom", null, at(1));
+    expect(await jobs.retry(claimed!.id, at(2))).toBe("retried");
+    expect(await jobs.retry(claimed!.id, at(2))).toBe("not-failed"); // no longer failed
     const [rerun] = await claimAt(3);
     expect(rerun?.attempts).toBe(1);
-    await jobs.complete(rerun!.id, at(4));
+    await jobs.complete(rerun!, at(4));
 
     expect(await jobs.prune({ doneBefore: at(4), failedBefore: at(4) })).toBe(0);
     expect(await jobs.prune({ doneBefore: at(5), failedBefore: at(5) })).toBe(1);
+  });
+
+  it("drops the outcome of a runner whose lease was taken over", async () => {
+    await jobs.enqueue({ kind: "k:a", payload: 1, runAt: at(0) });
+    const [stale] = await claimAt(0); // overruns its 60s lease…
+    const [current] = await claimAt(61); // …so another runner takes the job
+    // The first runner's late outcomes match nothing: no double completion, and
+    // above all no re-queue of a job that is running elsewhere.
+    expect(await jobs.fail(stale!, "late", at(100), at(62))).toBe(false);
+    expect(await jobs.complete(stale!, at(62))).toBe(false);
+    expect(await jobs.release(stale!, at(62))).toBe(false);
+    expect(await claimAt(63)).toEqual([]);
+
+    expect(await jobs.complete(current!, at(64))).toBe(true);
+    expect(await jobs.counts()).toEqual([{ kind: "k:a", status: "done", count: 1 }]);
+  });
+
+  it("refuses to retry a failed job whose key is pending again", async () => {
+    await jobs.enqueue({ kind: "k:a", payload: 1, idempotencyKey: "thumb:7", runAt: at(0), maxAttempts: 1 });
+    const [claimed] = await claimAt(0);
+    await jobs.fail(claimed!, "boom", null, at(1));
+    await jobs.enqueue({ kind: "k:a", payload: 1, idempotencyKey: "thumb:7", runAt: at(2) }); // queued again
+
+    expect(await jobs.retry(claimed!.id, at(3))).toBe("already-queued");
+    expect((await jobs.recentFailures(1))[0]?.id).toBe(claimed!.id); // left failed
   });
 
   it("binds a text[] parameter, escaping quotes, commas and backslashes", async () => {

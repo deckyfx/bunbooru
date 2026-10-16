@@ -1,3 +1,5 @@
+import type { ClaimedJob } from "@bunbooru/db";
+
 import { DEFAULT_TIMEOUT_MS, type JobService } from "./job-service";
 
 /** Structured logging the runner reports through. */
@@ -46,24 +48,29 @@ export function createJobRunner(
   let rerun = false;
   const active = new Set<Promise<void>>();
 
-  async function execute(job: Awaited<ReturnType<JobService["repository"]["claim"]>>[number]): Promise<void> {
+  /** A lost lease: the job overran and another runner took it, so this outcome is dropped. */
+  function leaseLost(job: ClaimedJob): void {
+    log.warn("job_lease_lost", { id: job.id, kind: job.kind, attempt: job.attempts });
+  }
+
+  async function execute(job: ClaimedJob): Promise<void> {
     const handler = jobs.handler(job.kind);
     if (!handler) {
       // Unregistered between claim and run (its plugin was deactivated): hand it
       // back untouched so it runs once the handler returns.
-      await jobs.repository.release(job.id, now());
+      if (!(await jobs.repository.release(job, now()))) leaseLost(job);
       return;
     }
     const started = performance.now();
     try {
       await handler.run(job.payload, { id: job.id, attempt: job.attempts, maxAttempts: job.maxAttempts });
-      await jobs.repository.complete(job.id, now());
+      if (!(await jobs.repository.complete(job, now()))) return leaseLost(job);
       log.info("job_done", { id: job.id, kind: job.kind, attempt: job.attempts, ms: Math.round(performance.now() - started) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const finalAttempt = job.attempts >= job.maxAttempts;
       const retryAt = finalAttempt ? null : new Date(now().getTime() + retryDelayMs(job.attempts));
-      await jobs.repository.fail(job.id, message, retryAt, now());
+      if (!(await jobs.repository.fail(job, message, retryAt, now()))) return leaseLost(job);
       const fields = { id: job.id, kind: job.kind, attempt: job.attempts, maxAttempts: job.maxAttempts, error: message };
       if (retryAt) log.warn("job_retry", { ...fields, retryAt: retryAt.toISOString() });
       else log.error("job_failed", fields);

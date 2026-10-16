@@ -1413,13 +1413,16 @@ export function createApp({
             retentionDays: { done: JOB_RETENTION.doneMs / DAY_MS, failed: JOB_RETENTION.failedMs / DAY_MS },
           };
         })
-        // Re-queue a failed job with fresh attempts. 404 unless it's failed.
+        // Re-queue a failed job with fresh attempts. 404 unless it's failed;
+        // 409 when the same work has been queued again since.
         .post(
           "/admin/jobs/:id/retry",
           async ({ params, set, currentUser }) => {
             const user = requireUser(currentUser);
             if (!canModerate(user)) throw new AuthorizationError();
-            if (!(await core.jobService.retry(params.id))) throw new HttpError(404, "No failed job with that id");
+            const result = await core.jobService.retry(params.id);
+            if (result === "not-failed") throw new HttpError(404, "No failed job with that id");
+            if (result === "already-queued") throw new HttpError(409, "The same work is already queued");
             set.status = 204;
             return "";
           },

@@ -1,4 +1,4 @@
-import type { Job, JobCount, JobRepository, JsonValue } from "@bunbooru/db";
+import type { Job, JobCount, JobRepository, JobRetryResult, JsonValue } from "@bunbooru/db";
 
 /** What a handler learns about the job it's running. */
 export interface JobContext {
@@ -78,8 +78,11 @@ export interface JobService {
   kinds(): string[];
   counts(): Promise<JobCount[]>;
   recentFailures(limit?: number): Promise<JobFailure[]>;
-  /** Re-queue a failed job; false if it isn't failed. */
-  retry(id: number): Promise<boolean>;
+  /**
+   * Re-queue a failed job with fresh attempts. `not-failed`: no failed job has
+   * that id. `already-queued`: the same work (its idempotency key) is pending.
+   */
+  retry(id: number): Promise<JobRetryResult>;
   /**
    * Delete finished jobs: done ones older than `doneMs`, failed ones older than
    * `failedMs` (kept longer, for the admin console). Returns how many went.

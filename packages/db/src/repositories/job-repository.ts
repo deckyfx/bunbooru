@@ -1,6 +1,7 @@
 import { and, asc, count, desc, eq, lt, sql } from "drizzle-orm";
 
 import type { DB } from "../client";
+import { isUniqueViolation } from "../pg-errors";
 import { jobs, type Job, type JobStatus, type JsonValue } from "../schema";
 import { bigintArray, textArray } from "./sql-arrays";
 
@@ -22,6 +23,17 @@ export interface JobCount {
   count: number;
 }
 
+/**
+ * A job as a runner holds it. `lockedUntil` doubles as the claim's fencing
+ * token: every claim sets it, and a reclaim always sets a later one, so an
+ * outcome written with a stale token (the job overran its lease and another
+ * runner took it) matches nothing.
+ */
+export type ClaimedJob = Job & { lockedUntil: Date };
+
+/** What {@link JobRepository.retry} did. */
+export type JobRetryResult = "retried" | "not-failed" | "already-queued";
+
 /** Statuses a pending idempotency key is unique within. */
 const PENDING = sql`${jobs.status} in ('queued', 'running')`;
 
@@ -38,16 +50,19 @@ export interface JobRepository {
    * with `attempts` incremented. `FOR UPDATE SKIP LOCKED` means concurrent
    * runners claim disjoint sets, without blocking each other.
    */
-  claim(input: { kinds: readonly string[]; limit: number; leaseMs: number; now: Date }): Promise<Job[]>;
-  /** Mark a claimed job finished. */
-  complete(id: number, now: Date): Promise<void>;
+  claim(input: { kinds: readonly string[]; limit: number; leaseMs: number; now: Date }): Promise<ClaimedJob[]>;
+  /**
+   * Mark a claimed job finished. This and the other outcome writes return
+   * false, changing nothing, when the claim is no longer the job's current one.
+   */
+  complete(job: ClaimedJob, now: Date): Promise<boolean>;
   /** Record a failed attempt: retry at `retryAt`, or fail for good when null. */
-  fail(id: number, error: string, retryAt: Date | null, now: Date): Promise<void>;
+  fail(job: ClaimedJob, error: string, retryAt: Date | null, now: Date): Promise<boolean>;
   /**
    * Hand a claimed job back without spending its attempt (e.g. its handler was
    * unregistered between claim and run).
    */
-  release(id: number, now: Date): Promise<void>;
+  release(job: ClaimedJob, now: Date): Promise<boolean>;
   /**
    * Fail running jobs whose lease lapsed with no attempts left: their runner
    * died (or overran) on the final attempt, so nothing will ever finish them.
@@ -58,10 +73,18 @@ export interface JobRepository {
   counts(): Promise<JobCount[]>;
   /** The most recently failed jobs, newest first. */
   recentFailures(limit: number): Promise<Job[]>;
-  /** Re-queue a failed job with a fresh set of attempts; false if it isn't failed. */
-  retry(id: number, now: Date): Promise<boolean>;
+  /**
+   * Re-queue a failed job with a fresh set of attempts. Refused when it isn't
+   * failed, or when a pending job already holds its idempotency key.
+   */
+  retry(id: number, now: Date): Promise<JobRetryResult>;
   /** Delete finished jobs (done before `doneBefore`, failed before `failedBefore`). */
   prune(input: { doneBefore: Date; failedBefore: Date }): Promise<number>;
+}
+
+/** The row `job` names, while its claim is still the current one. */
+function heldBy(job: ClaimedJob) {
+  return and(eq(jobs.id, job.id), eq(jobs.status, "running"), eq(jobs.lockedUntil, job.lockedUntil));
 }
 
 /** Build a {@link JobRepository} over a {@link DB} handle. */
@@ -112,33 +135,40 @@ export function createJobRepository(db: DB): JobRepository {
       `);
       const ids = [...rows].map((row) => Number(row.id));
       if (ids.length === 0) return [];
-      return db
+      const claimed = await db
         .select()
         .from(jobs)
         .where(sql`${jobs.id} = ANY(${bigintArray(ids)})`)
         .orderBy(asc(jobs.runAt), asc(jobs.id));
+      // Every row was just leased by this claim; a row whose lease is already
+      // gone was re-taken in between, so it isn't ours to run.
+      return claimed.filter((job): job is ClaimedJob => job.lockedUntil?.getTime() === leaseEnd.getTime());
     },
 
-    async complete(id, now) {
-      await db
+    async complete(job, now) {
+      const done = await db
         .update(jobs)
         .set({ status: "done", lockedUntil: null, finishedAt: now, updatedAt: now, lastError: null })
-        .where(eq(jobs.id, id));
+        .where(heldBy(job))
+        .returning({ id: jobs.id });
+      return done.length > 0;
     },
 
-    async fail(id, error, retryAt, now) {
-      await db
+    async fail(job, error, retryAt, now) {
+      const failed = await db
         .update(jobs)
         .set(
           retryAt
             ? { status: "queued", runAt: retryAt, lockedUntil: null, lastError: error, updatedAt: now }
             : { status: "failed", lockedUntil: null, lastError: error, updatedAt: now, finishedAt: now },
         )
-        .where(eq(jobs.id, id));
+        .where(heldBy(job))
+        .returning({ id: jobs.id });
+      return failed.length > 0;
     },
 
-    async release(id, now) {
-      await db
+    async release(job, now) {
+      const released = await db
         .update(jobs)
         .set({
           status: "queued",
@@ -146,7 +176,9 @@ export function createJobRepository(db: DB): JobRepository {
           attempts: sql`greatest(${jobs.attempts} - 1, 0)`,
           updatedAt: now,
         })
-        .where(eq(jobs.id, id));
+        .where(heldBy(job))
+        .returning({ id: jobs.id });
+      return released.length > 0;
     },
 
     async failAbandoned(now) {
@@ -189,12 +221,19 @@ export function createJobRepository(db: DB): JobRepository {
     },
 
     async retry(id, now) {
-      const retried = await db
-        .update(jobs)
-        .set({ status: "queued", attempts: 0, runAt: now, finishedAt: null, updatedAt: now })
-        .where(and(eq(jobs.id, id), eq(jobs.status, "failed")))
-        .returning({ id: jobs.id });
-      return retried.length > 0;
+      try {
+        const retried = await db
+          .update(jobs)
+          .set({ status: "queued", attempts: 0, runAt: now, finishedAt: null, updatedAt: now })
+          .where(and(eq(jobs.id, id), eq(jobs.status, "failed")))
+          .returning({ id: jobs.id });
+        return retried.length > 0 ? "retried" : "not-failed";
+      } catch (error) {
+        // The partial unique index: the same work (its idempotency key) has
+        // been queued again since this job failed.
+        if (isUniqueViolation(error)) return "already-queued";
+        throw error;
+      }
     },
 
     async prune({ doneBefore, failedBefore }) {
