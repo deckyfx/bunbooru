@@ -326,6 +326,17 @@ describe.skipIf(!TEST_DATABASE_URL)("Search with plugin metatags (integration)",
     expect((await serviceWith(pick).list({ query: "pick:nope" })).total).toBe(3);
   });
 
+  it("ignores a blank plugin term without asking the provider, like a blank Core term", async () => {
+    let calls = 0;
+    const svc = serviceWith((term, asset) => {
+      calls += 1;
+      return pick(term, asset);
+    });
+    expect((await svc.list({ query: "pick:" })).total).toBe(3);
+    expect((await svc.list({ query: "-pick:" })).total).toBe(3);
+    expect(calls).toBe(0);
+  });
+
   it("compiles each distinct term once, even when repeated", async () => {
     let calls = 0;
     const svc = serviceWith((term, asset) => {

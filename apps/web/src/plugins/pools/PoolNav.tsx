@@ -58,17 +58,33 @@ export function PoolNav({ asset }: SlotPropsMap["post-detail-aside"]) {
           ))}
         </ul>
       ) : null}
-      {user ? <AddToPool assetId={asset.id} inPools={new Set((memberships.data ?? []).map((p) => p.id))} /> : null}
+      {user ? (
+        <AddToPool
+          userId={user.id}
+          assetId={asset.id}
+          inPools={new Set((memberships.data ?? []).map((p) => p.id))}
+        />
+      ) : null}
     </div>
   );
 }
 
 /** Pick one of your pools and add this post to its end. */
-function AddToPool({ assetId, inPools }: { assetId: number; inPools: ReadonlySet<number> }) {
+function AddToPool({
+  userId,
+  assetId,
+  inPools,
+}: {
+  userId: number;
+  assetId: number;
+  inPools: ReadonlySet<number>;
+}) {
   const queryClient = useQueryClient();
   const [choice, setChoice] = useState("");
   const mine = useQuery({
-    queryKey: ["pools", "mine"],
+    // Keyed by viewer: the cache outlives a sign-out, and another account
+    // signing in must not be offered the previous one's pools.
+    queryKey: ["pools", "mine", userId],
     queryFn: async () => unwrap(await pools.mine.get()),
   });
   const add = useMutation({

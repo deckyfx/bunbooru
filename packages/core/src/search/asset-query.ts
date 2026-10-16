@@ -73,7 +73,12 @@ async function compilePluginTerms(
   const compiled = await Promise.all(
     [...terms].map(async ([key, node]) => {
       const provider = providers.get(node.key);
-      const condition = provider ? await provider.compile({ op: node.op, value: node.value }, asset) : undefined;
+      // Core's rule for every metatag: a blank value (`fav:` while still typing)
+      // is ignored, not "match nothing". Applied here once for every plugin.
+      const condition =
+        provider && node.value.trim() !== ""
+          ? await provider.compile({ op: node.op, value: node.value }, asset)
+          : undefined;
       return [key, condition] as const;
     }),
   );
