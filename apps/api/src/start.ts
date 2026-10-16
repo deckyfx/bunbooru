@@ -1,6 +1,12 @@
 import type { HTMLBundle } from "bun";
 
-import { applyCoreMigrations, createCoreRuntime, createJobRunner, createLogMailProvider } from "@bunbooru/core";
+import {
+  applyCoreMigrations,
+  applyPluginMigrations,
+  createCoreRuntime,
+  createJobRunner,
+  createLogMailProvider,
+} from "@bunbooru/core";
 
 import { envConfig, MAX_REQUEST_BODY_BYTES } from "./env-config";
 import { logger } from "./lib/logger";
@@ -134,6 +140,8 @@ export async function startApi(options: StartOptions = {}): Promise<void> {
     db,
     storage,
     enabledIds: Object.keys(PLUGIN_REGISTRY),
+    // Under the same advisory lock as the core migrations above.
+    migrate: (config) => applyPluginMigrations(envConfig.DATABASE_URL, config),
   });
 
   // A plugin's mail transport is a CAPABILITY that follows its active state — the

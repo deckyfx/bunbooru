@@ -62,8 +62,10 @@ export type { EnqueueOptions, JobContext, JobHandler, JsonValue };
  * Queue background work for this plugin's own job handlers (its
  * {@link PluginRegistration.jobs}). `name` is the plugin-local job name; the
  * host namespaces it to `<pluginId>:<name>`, so a plugin can only queue its own
- * kinds. The job is durable: it survives restarts and runs in whichever
- * process runs jobs (the API, or a dedicated worker).
+ * kinds. An `idempotencyKey` is namespaced the same way, so plain keys like
+ * `"backfill"` are private to the plugin. The job is durable: it survives
+ * restarts and runs in whichever process runs jobs (the API, or a dedicated
+ * worker).
  */
 export interface PluginJobs {
   enqueue(

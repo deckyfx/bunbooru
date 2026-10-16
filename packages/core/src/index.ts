@@ -46,6 +46,7 @@ export type { DB } from "@bunbooru/db";
 export {
   applyCoreMigrations,
   applyEmbeddedMigrations,
+  applyPluginMigrations,
   type EmbeddedMigrationConfig,
   type EmbeddedMigrations,
 } from "@bunbooru/db";

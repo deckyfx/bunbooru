@@ -186,8 +186,8 @@ Long or retryable work (thumbnails, imports) goes through a durable job queue in
 Postgres: jobs survive restarts, retry with backoff, and each runs on one runner
 at a time (unless it overruns its lease, when another runner may take it over).
 By default the server runs them itself. To move them to a separate process, run
-the API with `JOBS_RUNNER=off` and start a worker beside it, over the same
-database and storage:
+the API with `JOBS_RUNNER=off` and start a worker beside it, with the same
+environment as the server (it runs the same boot checks):
 
 ```bash
 bun run worker             # dev: the job runner alone, no HTTP

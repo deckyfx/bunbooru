@@ -15,6 +15,7 @@ export { isUniqueViolation } from "./pg-errors";
 export {
   applyCoreMigrations,
   applyEmbeddedMigrations,
+  applyPluginMigrations,
   buildSequence,
   planMigrations,
   type EmbeddedMigrationConfig,

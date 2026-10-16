@@ -2,6 +2,7 @@ import {
   applyEmbeddedMigrations,
   type Core,
   type DB,
+  type EmbeddedMigrationConfig,
   type JobHandler,
   type MailProvider,
   type SearchProvider,
@@ -54,6 +55,12 @@ export interface LoadPluginsOptions {
   storage: StorageProvider;
   /** Plugin ids to load (from `ENABLED_PLUGINS`). */
   enabledIds: string[];
+  /**
+   * Runs one plugin's migrations. Defaults to applying them over `db`; the
+   * server passes the advisory-locked runner (`applyPluginMigrations`) so
+   * processes booting together don't race the same DDL.
+   */
+  migrate?: (config: EmbeddedMigrationConfig) => Promise<void>;
   /** Registry of known plugins (injectable for tests; defaults to the real one). */
   registry?: Record<string, () => Promise<PluginModule>>;
   /**
@@ -111,9 +118,15 @@ function buildContext(id: string, core: Core, db: DB, storage: StorageProvider):
       auth: core.authService,
     },
     events: core.events,
-    // Kinds are namespaced to the plugin, so it can only queue its own.
+    // Kinds AND idempotency keys are namespaced to the plugin, so it can only
+    // queue its own kinds, and two plugins' keys (say "backfill") never dedupe
+    // against each other.
     jobs: {
-      enqueue: (name, payload, options) => core.jobService.enqueue(`${id}:${name}`, payload, options),
+      enqueue: (name, payload, options = {}) =>
+        core.jobService.enqueue(`${id}:${name}`, payload, {
+          ...options,
+          ...(options.idempotencyKey !== undefined ? { idempotencyKey: `${id}:${options.idempotencyKey}` } : {}),
+        }),
     },
     db,
     // Namespaced to `plugins/<id>/` so a plugin can't touch Core or peer keys.
@@ -151,6 +164,7 @@ export async function loadPlugins({
   enabledIds,
   registry = PLUGIN_REGISTRY,
   stepTimeoutMs = DEFAULT_PLUGIN_STEP_TIMEOUT_MS,
+  migrate = (config) => applyEmbeddedMigrations(db, config),
 }: LoadPluginsOptions): Promise<LoadedPlugin[]> {
   const loaded: LoadedPlugin[] = [];
 
@@ -182,7 +196,7 @@ export async function loadPlugins({
     if (plugin.migrations) {
       try {
         await withTimeout(
-          applyEmbeddedMigrations(db, {
+          migrate({
             embedded: plugin.migrations.embedded,
             migrationsTable: plugin.migrations.migrationsTable,
             label: id,

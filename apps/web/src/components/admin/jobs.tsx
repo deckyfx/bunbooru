@@ -36,7 +36,7 @@ export function JobsSection() {
           ? ` Finished jobs are kept for ${overview.data.retentionDays.done} days, failed ones for ${overview.data.retentionDays.failed}.`
           : ""}
         {overview.data?.runner === "off"
-          ? " This server doesn’t run jobs itself: a separate worker process does."
+          ? " This server doesn’t run jobs itself (JOBS_RUNNER=off): queued jobs only run while a separate worker process (bunbooru worker) is up."
           : ""}
       </p>
 
