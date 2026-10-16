@@ -12,6 +12,7 @@
   "dependencies": {
     "@bunbooru/api": "workspace:*",
     "@bunbooru/plugin-example": "workspace:*",
+    "@bunbooru/plugin-favorites": "workspace:*",
     "@bunbooru/plugin-shimmie-import": "workspace:*",
     "@bunbooru/plugin-smtp-mailer": "workspace:*",
     "@bunbooru/plugin-thumbnailer": "workspace:*",

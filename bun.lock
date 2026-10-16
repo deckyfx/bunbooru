@@ -25,6 +25,7 @@
         "@bunbooru/auth": "workspace:*",
         "@bunbooru/core": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
+        "@bunbooru/plugin-favorites": "workspace:*",
         "@bunbooru/plugin-sdk": "workspace:*",
         "@bunbooru/plugin-shimmie-import": "workspace:*",
         "@bunbooru/plugin-smtp-mailer": "workspace:*",
@@ -38,6 +39,7 @@
       "dependencies": {
         "@bunbooru/api": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
+        "@bunbooru/plugin-favorites": "workspace:*",
         "@bunbooru/plugin-shimmie-import": "workspace:*",
         "@bunbooru/plugin-smtp-mailer": "workspace:*",
         "@bunbooru/plugin-thumbnailer": "workspace:*",
@@ -127,6 +129,18 @@
         "drizzle-kit": "^0.31.11",
       },
     },
+    "plugins/favorites": {
+      "name": "@bunbooru/plugin-favorites",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/plugin-sdk": "workspace:*",
+        "drizzle-orm": "^0.45.4",
+        "elysia": "^1.4.30",
+      },
+      "devDependencies": {
+        "drizzle-kit": "^0.31.11",
+      },
+    },
     "plugins/shimmie-import": {
       "name": "@bunbooru/plugin-shimmie-import",
       "version": "0.1.0",
@@ -180,6 +194,8 @@
     "@bunbooru/events": ["@bunbooru/events@workspace:packages/events"],
 
     "@bunbooru/plugin-example": ["@bunbooru/plugin-example@workspace:plugins/example"],
+
+    "@bunbooru/plugin-favorites": ["@bunbooru/plugin-favorites@workspace:plugins/favorites"],
 
     "@bunbooru/plugin-sdk": ["@bunbooru/plugin-sdk@workspace:packages/plugin-sdk"],
 

@@ -45,8 +45,26 @@ export const PLUGIN_UI: PluginUiRegistry = {
       ),
     },
   ],
-  "post-detail-aside": [],
+  "post-detail-aside": [
+    {
+      pluginId: "favorites",
+      id: "button",
+      title: "Favorites",
+      component: lazy(() => import("./favorites/FavoriteButton").then((m) => ({ default: m.FavoriteButton }))),
+    },
+  ],
 };
 
 /** Plugin links in the site menus (header and home page), to the plugin's pages. */
-export const PLUGIN_NAV: readonly PluginNavLink[] = [];
+export const PLUGIN_NAV: readonly PluginNavLink[] = [
+  { pluginId: "favorites", label: "Favorites", to: "/favorites", visibility: "member" },
+];
+
+/**
+ * Plugin-owned pages, lazy-loaded like the widgets. Their routes are declared
+ * in `router.tsx` (so links to them stay typed), each wrapped in a
+ * `PluginPage` that shows not-found while the plugin is inactive.
+ */
+export const PLUGIN_PAGES = {
+  favorites: lazy(() => import("./favorites/FavoritesPage").then((m) => ({ default: m.FavoritesPage }))),
+};
