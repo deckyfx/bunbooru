@@ -64,8 +64,6 @@ export function createJobRunner(
     const started = performance.now();
     try {
       await handler.run(job.payload, { id: job.id, attempt: job.attempts, maxAttempts: job.maxAttempts });
-      if (!(await jobs.repository.complete(job, now()))) return leaseLost(job);
-      log.info("job_done", { id: job.id, kind: job.kind, attempt: job.attempts, ms: Math.round(performance.now() - started) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const finalAttempt = job.attempts >= job.maxAttempts;
@@ -74,7 +72,12 @@ export function createJobRunner(
       const fields = { id: job.id, kind: job.kind, attempt: job.attempts, maxAttempts: job.maxAttempts, error: message };
       if (retryAt) log.warn("job_retry", { ...fields, retryAt: retryAt.toISOString() });
       else log.error("job_failed", fields);
+      return;
     }
+    // Outside the try: a failure to RECORD success isn't the handler failing.
+    // It propagates to `job_record_failed`, and the lapsed lease re-runs the job.
+    if (!(await jobs.repository.complete(job, now()))) return leaseLost(job);
+    log.info("job_done", { id: job.id, kind: job.kind, attempt: job.attempts, ms: Math.round(performance.now() - started) });
   }
 
   /**
@@ -150,6 +153,9 @@ export function createJobRunner(
       stopping = true;
       if (timer !== undefined) clearInterval(timer);
       timer = undefined;
+      // A claim already sent to the database still starts its jobs (they're
+      // leased, their attempt counted): let them join `active` before draining.
+      if (claiming) await claiming;
       if (active.size === 0) return;
       const drained = Promise.all([...active]).then(() => undefined);
       await Promise.race([drained, Bun.sleep(graceMs)]);

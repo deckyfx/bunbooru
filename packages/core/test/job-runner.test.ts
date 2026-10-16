@@ -154,6 +154,61 @@ describe.skipIf(!TEST_DATABASE_URL)("job runner (integration)", () => {
     expect(finished).toBe(true);
   });
 
+  it("doesn't count a failure to record success as a failed run", async () => {
+    const repository = createJobRepository(db);
+    let completeCalls = 0;
+    jobs = createJobService(
+      {
+        ...repository,
+        complete: async (job, now) => {
+          completeCalls += 1;
+          if (completeCalls === 1) throw new Error("connection reset");
+          return repository.complete(job, now);
+        },
+      },
+      () => clock,
+    );
+    let runs = 0;
+    jobs.register("core", { "core:once": { maxAttempts: 1, run: async () => void runs++ } });
+    const { id } = await jobs.enqueue("core:once", null);
+
+    await runner().tick();
+    // Not failed (it was its only attempt): still leased, to be re-run once the lease lapses.
+    expect(await statusOf(id)).toMatchObject({ status: "running", last_error: null });
+    expect(runs).toBe(1);
+  });
+
+  it("waits for a claim in flight on stop, so the jobs it took still run", async () => {
+    const repository = createJobRepository(db);
+    let releaseClaim = () => {};
+    const claimGate = new Promise<void>((resolve) => (releaseClaim = resolve));
+    jobs = createJobService(
+      {
+        ...repository,
+        claim: async (input) => {
+          const claimed = await repository.claim(input);
+          await claimGate; // the database answered; the runner hasn't seen it yet
+          return claimed;
+        },
+      },
+      () => clock,
+    );
+    const ran: number[] = [];
+    jobs.register("core", { "core:slow": { run: async () => void ran.push(1) } });
+    const { id } = await jobs.enqueue("core:slow", null);
+
+    const r = runner();
+    const pass = r.tick(); // a claim now in flight
+    await Bun.sleep(20);
+    const stopped = r.stop(5_000);
+    releaseClaim();
+    await stopped;
+    // By the time stop() resolves (and a shutdown would exit), the job is done.
+    expect(ran).toEqual([1]);
+    expect(await statusOf(id)).toMatchObject({ status: "done" });
+    await pass;
+  });
+
   it("refuses to enqueue a malformed kind", async () => {
     await expect(jobs.enqueue("nocolon", 1)).rejects.toBeInstanceOf(JobKindConflictError);
   });
