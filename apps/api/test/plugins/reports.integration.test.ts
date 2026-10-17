@@ -204,12 +204,30 @@ describe.skipIf(!TEST_DATABASE_URL)("reports plugin (integration)", () => {
     expect((await queue()).items).toEqual([]);
     expect(resolved.items[0]).toMatchObject({ assetId: id, resolution: "Post deleted" });
 
-    // Gone now: a second delete is a 404.
+    // Gone, with nothing left open: a second delete is a 404.
     const again = await live.request(`/plugins/reports/assets/${id}/delete`, {
       method: "POST",
       token: admin.token,
       body: JSON.stringify({}),
     });
     expect(again.status).toBe(404);
+  });
+
+  it("recovers a post deleted without its reports closed: a retry closes them", async () => {
+    const id = await live.post("h", member.id);
+    await report(id, { reason: "spam" });
+    // As if the earlier delete succeeded but closing the reports failed (and
+    // the listener did too): the post is gone, its report still open.
+    await live.db.execute(sql`DELETE FROM assets WHERE id = ${id}`);
+    expect((await queue()).items.map((item) => item.assetId)).toEqual([id]);
+
+    const retry = await live.request(`/plugins/reports/assets/${id}/delete`, {
+      method: "POST",
+      token: admin.token,
+      body: JSON.stringify({}),
+    });
+    expect(retry.status).toBe(204);
+    expect((await queue()).items).toEqual([]);
+    expect((await queue("?status=resolved")).items.map((item) => item.assetId)).toEqual([id]);
   });
 });

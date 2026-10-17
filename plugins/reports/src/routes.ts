@@ -146,16 +146,31 @@ export function buildReportsRoutes(ctx: PluginContext) {
       // answering, so the queue the moderator reloads next already shows them
       // closed. (The `asset.deleted` listener does the same, idempotently, for
       // posts deleted elsewhere; on its own it may land after the reload.)
+      //
+      // Idempotent, so a partial failure is recoverable by clicking again: a
+      // post that is already gone but still has open reports (a resolve that
+      // failed last time) gets them closed and a 204. Only a post that is gone
+      // AND has nothing open is a 404.
       .post(
         "/assets/:id/delete",
         async ({ request, params, body, set }) => {
           const user = await requireModerator(request);
           const reason = normalizeNote(body.reason) ?? "";
-          if (!(await ctx.services.assets.delete(params.id, { deletedById: user.id, reason }))) {
-            throw new NotFoundError("Post not found");
+          const deleted = await ctx.services.assets.delete(params.id, { deletedById: user.id, reason });
+          let closed = 0;
+          try {
+            closed = await resolveOpenForAsset(ctx.db, params.id, POST_DELETED_RESOLUTION);
+          } catch (error) {
+            // The post IS deleted; its reports stay open until the listener or
+            // a second click (above) closes them. Don't turn that into a 500.
+            if (!deleted) throw error;
+            ctx.log.error("report_resolve_failed", {
+              assetId: params.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
-          await resolveOpenForAsset(ctx.db, params.id, POST_DELETED_RESOLUTION);
-          ctx.log.info("reported_post_deleted", { assetId: params.id, by: user.username });
+          if (!deleted && closed === 0) throw new NotFoundError("Post not found");
+          ctx.log.info("reported_post_deleted", { assetId: params.id, by: user.username, alreadyGone: !deleted });
           set.status = 204;
           return "";
         },
