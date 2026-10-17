@@ -30,7 +30,6 @@ The Core only owns:
 
 - Assets
 - Tags
-- Collections
 - Users
 - Authentication
 - Permissions
@@ -47,6 +46,8 @@ Everything else belongs in plugins.
 If a feature can reasonably be optional, it MUST become a plugin.
 
 Examples: Comments, Favorites, Notes, Pools, Wiki, AI, OCR, Notifications, RSS, Email.
+
+Collections are the Pools plugin (ordered sets of posts), not Core.
 
 ---
 

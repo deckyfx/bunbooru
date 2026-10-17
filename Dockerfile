@@ -15,11 +15,11 @@ COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 COPY packages/core/package.json packages/core/
 COPY packages/db/package.json packages/db/
-COPY packages/auth/package.json packages/auth/
 COPY packages/events/package.json packages/events/
 COPY packages/storage/package.json packages/storage/
 COPY packages/search/package.json packages/search/
 COPY packages/plugin-sdk/package.json packages/plugin-sdk/
+COPY plugins/banned-hashes/package.json plugins/banned-hashes/
 COPY plugins/example/package.json plugins/example/
 COPY plugins/favorites/package.json plugins/favorites/
 COPY plugins/pools/package.json plugins/pools/

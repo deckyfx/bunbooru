@@ -104,3 +104,34 @@ export class MailProviderConflictError extends Error {
     this.name = "MailProviderConflictError";
   }
 }
+
+/**
+ * An ingest guard refused the upload (a banned hash, a quota). `message` is the
+ * guard's reason, safe to show the uploader. API → 403.
+ */
+export class IngestRejectedError extends Error {
+  constructor(
+    reason: string,
+    /** The plugin whose guard refused it. */
+    readonly ownerId: string,
+  ) {
+    super(reason);
+    this.name = "IngestRejectedError";
+  }
+}
+
+/**
+ * An ingest guard threw or timed out. Guards fail CLOSED (a broken ban check
+ * must not let banned files in), so the upload is refused as temporarily
+ * unavailable; an admin can deactivate the faulty plugin. API → 503.
+ */
+export class IngestCheckFailedError extends Error {
+  constructor(
+    /** The plugin whose guard failed. */
+    readonly ownerId: string,
+    options?: { cause?: unknown },
+  ) {
+    super(`An upload check (${ownerId}) failed; try again later`, options);
+    this.name = "IngestCheckFailedError";
+  }
+}

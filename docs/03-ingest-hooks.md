@@ -1,6 +1,12 @@
 # Ingest Hooks — Design Plan
 
-**Status:** draft, not implemented. Revisit before building.
+**Status:** Phase 1 (guards only) and Phase 2 (`banned-hashes`) are built.
+Transforms, deletion, `/assets/exists` and `exif-strip` (Phases 3–5) are not.
+As built, guards differ from the sketch in §8: `IngestCandidate` carries
+`sha256`, `md5`, `sizeBytes`, `uploaderId`, `source`, `blob` and an
+`AbortSignal` (no declared MIME type),
+and the timeout is fixed at 5s. With no transforms yet, the guard's `sha256`
+IS the original hash (§5).
 
 Adds plugin-extensible hook points around the asset ingest pipeline so features
 like hash bans, EXIF stripping, and AI auto-tagging live in plugins instead of

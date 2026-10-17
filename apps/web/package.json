@@ -12,6 +12,7 @@
   "dependencies": {
     "@bunbooru/api": "workspace:*",
     "@bunbooru/plugin-example": "workspace:*",
+    "@bunbooru/plugin-banned-hashes": "workspace:*",
     "@bunbooru/plugin-favorites": "workspace:*",
     "@bunbooru/plugin-pools": "workspace:*",
     "@bunbooru/plugin-shimmie-import": "workspace:*",

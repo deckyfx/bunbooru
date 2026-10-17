@@ -43,7 +43,6 @@ CockroachDB — are reached through repository adapters.
 - Assets
 - Upload
 - Tags
-- Collections
 - Search
 - Permissions
 - Admin Panel
@@ -56,7 +55,7 @@ CockroachDB — are reached through repository adapters.
 - Favorites
 - Notes
 - Wiki
-- Pools
+- Pools (collections: ordered sets of posts)
 - Aliases
 - Tag implications
 

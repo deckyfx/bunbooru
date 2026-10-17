@@ -9,7 +9,13 @@ import type {
 } from "@bunbooru/db";
 import type { StagingStore } from "@bunbooru/storage";
 
-import { AuthorizationError, UnsupportedMediaError, UploadConflictError } from "../src/errors";
+import {
+  AuthorizationError,
+  IngestCheckFailedError,
+  IngestRejectedError,
+  UnsupportedMediaError,
+  UploadConflictError,
+} from "../src/errors";
 import type { AssetService } from "../src/services/asset-service";
 import { createUploadService } from "../src/services/upload-service";
 
@@ -273,6 +279,41 @@ describe("createUploadService.appendChunk", () => {
     // Permanent failure: no point keeping undecodable bytes around.
     expect(sessions.get("tok")).toBeUndefined();
     expect(staging.removed).toEqual(["tok"]);
+  });
+
+  it("cleans up when a guard refuses the file, but keeps the session when a guard fails", async () => {
+    const refused = fakeSessions({ token: "tok", declaredSize: 4 });
+    const refusedStaging = fakeStaging();
+    const banning = createUploadService(
+      refused.repo,
+      refusedStaging.store,
+      fakeAssetService(async () => {
+        throw new IngestRejectedError("This file is banned", "banned-hashes");
+      }),
+      cap(),
+    );
+    await expect(
+      banning.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]), adminUser),
+    ).rejects.toBeInstanceOf(IngestRejectedError);
+    expect(refused.get("tok")).toBeUndefined();
+    expect(refusedStaging.removed).toEqual(["tok"]);
+
+    const failing = fakeSessions({ token: "tok", declaredSize: 4 });
+    const failingStaging = fakeStaging();
+    const flaky = createUploadService(
+      failing.repo,
+      failingStaging.store,
+      fakeAssetService(async () => {
+        throw new IngestCheckFailedError("banned-hashes");
+      }),
+      cap(),
+    );
+    await expect(
+      flaky.appendChunk("tok", 0, new Uint8Array([1, 2, 3, 4]), adminUser),
+    ).rejects.toBeInstanceOf(IngestCheckFailedError);
+    // Transient: a later zero-length PATCH re-drives finalization.
+    expect(failing.get("tok")).toBeDefined();
+    expect(failingStaging.removed).toEqual([]);
   });
 
   it("serializes cancel against an in-flight append (no interleave)", async () => {

@@ -20,4 +20,5 @@ export const PLUGIN_REGISTRY: Record<string, () => Promise<PluginModule>> = {
   "smtp-mailer": () => import("@bunbooru/plugin-smtp-mailer"),
   favorites: () => import("@bunbooru/plugin-favorites"),
   pools: () => import("@bunbooru/plugin-pools"),
+  "banned-hashes": () => import("@bunbooru/plugin-banned-hashes"),
 };

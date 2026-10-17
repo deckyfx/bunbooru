@@ -3,6 +3,7 @@ import type { StagingStore } from "@bunbooru/storage";
 
 import {
   AuthorizationError,
+  IngestRejectedError,
   UnsupportedMediaError,
   UploadConflictError,
   UploadRangeError,
@@ -234,7 +235,10 @@ export function createUploadService(
           );
           return { status: "complete", asset, deduped };
         } catch (error) {
-          permanent = error instanceof UnsupportedMediaError;
+          // Undecodable bytes, or a file a guard refused (a ban), will never
+          // finalize: drop them. A guard that merely FAILED (503) may pass on a
+          // retry, so the session is kept.
+          permanent = error instanceof UnsupportedMediaError || error instanceof IngestRejectedError;
           throw error;
         } finally {
           if (permanent) {

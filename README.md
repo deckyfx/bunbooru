@@ -30,7 +30,6 @@ A modern, extensible Booru engine built with Bun.
 
 - Asset management
 - Tagging
-- Collections
 - Search language
 - Authentication
 - Permissions
@@ -39,7 +38,8 @@ A modern, extensible Booru engine built with Bun.
 ### Optional Plugins
 
 Built: **Favorites**, **Pools**, **Thumbnails**, **Shimmie2 import**,
-**SMTP mail**. Switched on and off at runtime under Admin → Extensions.
+**SMTP mail**, **Banned hashes** (refuses re-uploads of banned files by
+sha256/md5). Switched on and off at runtime under Admin → Extensions.
 
 Planned:
 
@@ -84,7 +84,6 @@ The core should only understand:
 
 - Assets
 - Tags
-- Collections
 - Users
 - Search
 - Plugins
@@ -99,12 +98,11 @@ apps/
   web/        React client
 
 packages/
-  core/       Domain: Asset, Tag, Collection, User, Permission
+  core/       Domain: Asset, Tag, User, Permission, Auth
   db/         Drizzle schemas, repositories, migrations
   search/     Lexer, parser, AST, optimizer, SQL builder
   events/     Publish/subscribe event bus
   storage/    StorageProvider interface + implementations
-  auth/       Authentication & permissions
   plugin-sdk/ Public API for plugins
 
 plugins/

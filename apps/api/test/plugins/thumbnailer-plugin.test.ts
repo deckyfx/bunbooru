@@ -11,7 +11,7 @@ import type {
   TagService,
   User,
 } from "@bunbooru/core";
-import { createCoreEvents, createSearchProviderRegistry } from "@bunbooru/core";
+import { createCoreEvents, createIngestGuardRegistry, createSearchProviderRegistry } from "@bunbooru/core";
 import { buildThumbnailerRoutes } from "@bunbooru/plugin-thumbnailer";
 import type { PluginContext } from "@bunbooru/plugin-sdk";
 
@@ -34,6 +34,7 @@ const appCore = {
   events: createCoreEvents(),
   searchProviders: createSearchProviderRegistry(),
   jobService: {} as Core["jobService"],
+  ingestGuards: createIngestGuardRegistry(),
 } satisfies Core;
 
 const member: User = {

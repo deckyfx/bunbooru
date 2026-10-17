@@ -28,6 +28,7 @@ import {
 
 import { createCoreEvents, type CoreEvents } from "./events";
 import { createJobService, type JobService } from "./jobs/job-service";
+import { createIngestGuardRegistry, type IngestGuardRegistry } from "./ingest/guards";
 import { createSearchProviderRegistry, type SearchProviderRegistry } from "./search/providers";
 import { createMailService, type MailService } from "./mail/mail-service";
 import { createAssetService, type AssetService } from "./services/asset-service";
@@ -83,6 +84,11 @@ export interface Core {
    * plugins') that a runner executes, in the API process or a dedicated worker.
    */
   jobService: JobService;
+  /**
+   * Plugin ingest guards (a hash ban): checks every upload passes before it's
+   * stored. The plugin host registers an active plugin's guards.
+   */
+  ingestGuards: IngestGuardRegistry;
 }
 
 /** Runtime configuration needed to stand up the Core. */
@@ -138,15 +144,22 @@ export function assembleCore(
   const tagRepository = createTagRepository(db);
   const tagAliasRepository = createTagAliasRepository(db);
   const tagImplicationRepository = createTagImplicationRepository(db);
-  // Search rewrites aliased names through the same table tagging uses.
   const searchProviders = createSearchProviderRegistry();
+  const ingestGuards = createIngestGuardRegistry();
   const jobService = createJobService(createJobRepository(db));
   // Search rewrites aliased names through the same table tagging uses, and
-  // consults the live plugin metatags (`fav:`, `pool:`).
-  const assetService = createAssetService(createAssetRepository(db), storage, events, {
-    resolveAliases: (names) => tagAliasRepository.resolve(names),
-    providers: searchProviders,
-  });
+  // consults the live plugin metatags (`fav:`, `pool:`). Every ingest passes
+  // the live plugin guards.
+  const assetService = createAssetService(
+    createAssetRepository(db),
+    storage,
+    events,
+    {
+      resolveAliases: (names) => tagAliasRepository.resolve(names),
+      providers: searchProviders,
+    },
+    ingestGuards,
+  );
   const settingsService = createSettingsService(createSettingsRepository(db), {
     defaults: {
       maxUploadBytes: limits.maxUploadBytes,
@@ -202,6 +215,7 @@ export function assembleCore(
     events,
     searchProviders,
     jobService,
+    ingestGuards,
   };
 }
 

@@ -1,4 +1,4 @@
-import type { JobService, MailService, SearchProviderRegistry } from "@bunbooru/core";
+import type { IngestGuardRegistry, JobService, MailService, SearchProviderRegistry } from "@bunbooru/core";
 
 import type { PluginCapabilityBinding } from "./host";
 
@@ -47,6 +47,21 @@ export function jobsBinding(jobs: JobService): PluginCapabilityBinding {
     },
     onDeactivate(plugin) {
       jobs.unregister(plugin.id);
+    },
+  };
+}
+
+/**
+ * A plugin's upload checks follow its active state, so deactivating a guard
+ * that misbehaves (guards fail closed) lets uploads through again at once.
+ */
+export function ingestGuardsBinding(guards: IngestGuardRegistry): PluginCapabilityBinding {
+  return {
+    onActivate(plugin) {
+      if (plugin.ingestGuards.length > 0) guards.register(plugin.id, plugin.ingestGuards);
+    },
+    onDeactivate(plugin) {
+      guards.unregister(plugin.id);
     },
   };
 }

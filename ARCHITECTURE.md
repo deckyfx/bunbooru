@@ -73,7 +73,6 @@ apps/
 packages/
   core/
   db/
-  auth/
   events/
   storage/
   search/
@@ -100,7 +99,9 @@ database.
 
 ## core
 
-Contains: Asset, Tag, Collection, User, Permission. No optional features.
+Contains: Asset, Tag, User, Permission, and authentication (sessions, API
+keys, the permission model). No optional features. Collections are the
+optional **Pools** plugin (ordered sets of posts), per the Plugin Rule.
 
 ## db
 
@@ -111,11 +112,6 @@ Drizzle schemas, repositories, migrations, transactions, database adapters.
 Owns the Lexer, Parser, AST, and Optimizer. No HTTP, no Drizzle, no database:
 the facts the optimizer needs from the database (tag aliases) are handed to it
 as plain data. The SQL Builder lives in Core, next to the schema it targets.
-
-## auth
-
-Session-based authentication and the permission model. Issues and validates
-sessions; resolves a request's identity and permissions for Services.
 
 ## events
 
@@ -167,9 +163,20 @@ Routes never contain business logic.
 # Upload Pipeline
 
 ```
-Upload → Validation → Temporary Storage → Hash → Metadata
-       → Persist Asset → Emit AssetCreated → Background Jobs
+Upload → Validation → Temporary Storage → Hash → Ingest Guards → Dedupe
+       → Metadata → Persist Asset → Emit AssetCreated → Background Jobs
 ```
+
+Every source (one-shot, resumable, importers) goes through one ingest
+function, so a step there covers them all by construction.
+
+**Ingest guards** are plugin checks every upload must pass (`banned-hashes`
+refuses banned sha256/md5). They run after the hash pass, before dedupe (a
+banned file can't be laundered through a stored copy) and before any decode (a
+refusal costs one hash pass). The first refusal is a 403 with its reason.
+Guards fail closed: a throw or a 5s overrun refuses the upload (503), and an
+admin deactivates the broken plugin. Byte-rewriting transforms (EXIF strip)
+are designed but not built: see `docs/03-ingest-hooks.md`.
 
 Background jobs triggered: Thumbnail, OCR, AI, Notifications, Search Index.
 
