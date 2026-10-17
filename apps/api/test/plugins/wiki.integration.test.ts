@@ -249,4 +249,19 @@ describe.skipIf(!TEST_DATABASE_URL)("wiki plugin (integration)", () => {
     );
     expect(second.nextAfter).toBeNull();
   });
+
+  it("refuses a NUL character with a 400, on plugin and Core routes alike", async () => {
+    // Postgres text can't store U+0000: without the API's guard this was a 500.
+    const res = await put("cat", { body: "a\u0000b" });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(await res.json())).toContain("NUL");
+
+    const id = await live.post("nul", member.id);
+    const core = await live.request(`/assets/${id}`, {
+      method: "PATCH",
+      token: member.token,
+      body: JSON.stringify({ source: "https://example.com/\u0000" }),
+    });
+    expect(core.status).toBe(400);
+  });
 });

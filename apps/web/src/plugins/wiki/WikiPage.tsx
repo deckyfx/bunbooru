@@ -94,7 +94,10 @@ function PageView({ title }: { title: string }) {
       <div role="tabpanel" id="wiki-tabpanel" aria-labelledby={`wiki-tab-${active}`}>
         {page.isPending ? (
           <p className="text-[12px] text-muted">Loading…</p>
-        ) : page.isError ? (
+        ) : page.isError && page.data === undefined ? (
+          // Only when nothing ever loaded: a failed BACKGROUND refetch keeps
+          // the last good page, and must not unmount the editor (losing the
+          // draft) or replace a page the reader is looking at.
           <p role="alert" className="text-[12px] text-tag-artist">
             Couldn’t load the page.
           </p>

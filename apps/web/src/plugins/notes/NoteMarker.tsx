@@ -77,7 +77,10 @@ export function NoteMarker({ note, onChanged }: { note: NoteDto; onChanged: () =
         if (e.pointerType === "mouse") setHovered(true);
       }}
       onPointerLeave={() => setHovered(false)}
-      onFocus={() => setFocused(true)}
+      // Keyboard focus only (`:focus-visible`): a click or tap also focuses the
+      // button, and counting that would keep the popover open after a second
+      // tap meant to close it. Clicks and taps go through `pinned` instead.
+      onFocus={(e) => setFocused(e.target instanceof Element && e.target.matches(":focus-visible"))}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false);
       }}
