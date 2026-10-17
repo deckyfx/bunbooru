@@ -57,6 +57,12 @@ const uploadRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/uploads/new",
   component: UploadPage,
+  // `shared`: how many files the PWA share target parked for this page to take
+  // (set by the service worker's redirect; see src/pwa/sw.ts).
+  validateSearch: (search: Record<string, unknown>): { shared?: number } => {
+    const shared = Number(search.shared);
+    return Number.isSafeInteger(shared) && shared >= 0 && shared <= 100 ? { shared } : {};
+  },
 });
 
 const loginRoute = createRoute({

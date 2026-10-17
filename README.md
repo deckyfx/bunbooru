@@ -178,6 +178,21 @@ bun run build              # → apps/api/dist/bunbooru
 bun run docker:build       # the same binary in a distroless image (port 3000)
 ```
 
+## Getting images in
+
+- **Upload page**, or **paste / drop images on any page** while signed in;
+  several at once upload as a batch.
+- **Untagged (N)** in the header lists your posts that still need tags, so
+  capture never has to stop for tagging.
+- **Android share sheet:** install the site (Chrome menu → *Install app*) and
+  Bunbooru appears when you share images. This needs the site on **HTTPS**
+  (or `localhost`): browsers allow the service worker only in a secure
+  context, so a plain-HTTP LAN address won't offer it.
+- **API keys:** Account → API keys. Give each device its own **upload-only**
+  key: it can add posts (`POST /api/v1/assets`, with optional
+  space-separated `tags`, and the resumable `/api/v1/uploads` routes) and
+  nothing else.
+
 ## Background jobs
 
 Long or retryable work (thumbnails, imports) goes through a durable job queue in

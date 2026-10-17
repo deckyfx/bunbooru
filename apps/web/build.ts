@@ -62,14 +62,39 @@ export async function buildWeb(): Promise<WebBuild> {
     throw new Error(`Web build failed:\n${messages}`);
   }
 
-  const files = result.outputs
-    .map((output) => {
-      const path = output.path.slice(distDir.length + 1);
-      const name = path.slice(path.lastIndexOf("/") + 1);
-      return { path, hashedName: output.hash !== null && name.includes(output.hash) };
-    })
-    .sort((a, b) => a.path.localeCompare(b.path));
-  return { distDir, files };
+  const files = result.outputs.map((output) => {
+    const path = output.path.slice(distDir.length + 1);
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    return { path, hashedName: output.hash !== null && name.includes(output.hash) };
+  });
+  files.push(...(await buildPwa(distDir)));
+  return { distDir, files: files.sort((a, b) => a.path.localeCompare(b.path)) };
+}
+
+/** The PWA files copied verbatim to the site root (stable names the manifest and browsers ask for). */
+const PWA_STATIC = ["manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png"];
+
+/**
+ * The PWA's root-level files, with stable (unhashed) names: `sw.js` must sit
+ * at the root to control the whole site, and the manifest and its icons are
+ * requested by fixed URL. Served revalidated, never cached forever.
+ */
+async function buildPwa(distDir: string): Promise<WebBuildFile[]> {
+  const worker = await Bun.build({
+    entrypoints: [`${import.meta.dir}/src/pwa/sw.ts`],
+    outdir: distDir,
+    naming: "sw.js",
+    target: "browser",
+    minify: true,
+  });
+  if (!worker.success) {
+    const messages = worker.logs.map((log) => `   ${log.message}`).join("\n");
+    throw new Error(`Service worker build failed:\n${messages}`);
+  }
+  for (const name of PWA_STATIC) {
+    await Bun.write(`${distDir}/${name}`, Bun.file(`${import.meta.dir}/src/pwa/${name}`));
+  }
+  return ["sw.js", ...PWA_STATIC].map((path) => ({ path, hashedName: false }));
 }
 
 if (import.meta.main) {

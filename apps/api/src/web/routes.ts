@@ -34,13 +34,21 @@ const API_PREFIX = /^\/api(?:\/|$)/;
  * a client route may legitimately end in a dotted segment (tag names like `k.o`
  * or `st._louis`), and that must still get the SPA.
  */
-const ASSET_FILE = /\.(?:js|mjs|css|map|html|json|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf)$/i;
+const ASSET_FILE = /\.(?:js|mjs|css|map|html|json|webmanifest|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf)$/i;
+
+/** Content types `Bun.file` doesn't infer from the extension. */
+const EXTRA_TYPES: Record<string, string> = { webmanifest: "application/manifest+json" };
 
 /** Serve one embedded file with its cache policy. */
 function serveFile(file: string, cacheControl: string): Response {
-  // Bun.file infers Content-Type from the extension.
+  // Bun.file infers Content-Type from the extension, bar the few above.
+  const extra = EXTRA_TYPES[file.slice(file.lastIndexOf(".") + 1).toLowerCase()];
   return new Response(Bun.file(file), {
-    headers: { "cache-control": cacheControl, "x-content-type-options": "nosniff" },
+    headers: {
+      "cache-control": cacheControl,
+      "x-content-type-options": "nosniff",
+      ...(extra ? { "content-type": extra } : {}),
+    },
   });
 }
 
@@ -49,7 +57,8 @@ function serveFile(file: string, cacheControl: string): Response {
  * API (production single-binary mode). Returns an empty plugin when `assets` is
  * empty, which is the case when running from source.
  *
- * One catch-all GET route, so registration order doesn't matter: Elysia ranks
+ * One catch-all GET route (plus the share-target fallback, `POST /share`), so
+ * registration order doesn't matter: Elysia ranks
  * every concrete route (`/api/v1/…`, `/health`, plugin routes) above a wildcard.
  * The catch-all then answers, in order:
  * - an embedded file at that exact path, cached forever only if its name is
@@ -73,10 +82,15 @@ export function createWebRoutes(assets: readonly WebAsset[]) {
     return plugin; // running from source: the web dev server owns the SPA
   }
 
-  return plugin.get("/*", ({ path }) => {
-    const asset = byPath.get(path);
-    if (asset) return serveFile(asset.file, asset.immutable ? IMMUTABLE_CACHE : REVALIDATE_CACHE);
-    if (API_PREFIX.test(path) || ASSET_FILE.test(path)) throw new NotFoundError();
-    return serveFile(shell, REVALIDATE_CACHE);
-  });
+  return plugin
+    // The PWA share target posts here. The service worker normally answers it
+    // (see apps/web/src/pwa/sw.ts); if none is running yet, land on the upload
+    // page, which says nothing arrived, rather than a 404.
+    .post("/share", ({ redirect }) => redirect("/uploads/new?shared=0", 303))
+    .get("/*", ({ path }) => {
+      const asset = byPath.get(path);
+      if (asset) return serveFile(asset.file, asset.immutable ? IMMUTABLE_CACHE : REVALIDATE_CACHE);
+      if (API_PREFIX.test(path) || ASSET_FILE.test(path)) throw new NotFoundError();
+      return serveFile(shell, REVALIDATE_CACHE);
+    });
 }

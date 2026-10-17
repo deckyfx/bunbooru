@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { ImagePlus, Loader2 } from "lucide-react";
 
 import { BatchUpload } from "../components/batch-upload";
@@ -10,6 +10,7 @@ import { assetFileUrl } from "../lib/api";
 import { useUpdateAsset, type AssetDto } from "../lib/assets";
 import { useCurrentUser } from "../lib/auth";
 import { uploadAsset } from "../lib/upload";
+import { takeSharedFiles } from "../pwa/register";
 import { imageFiles, usePendingUploads } from "../stores/pending-uploads";
 
 /** Human-readable byte size. */
@@ -46,6 +47,9 @@ export function UploadPage() {
   const [batchFiles, setBatchFiles] = useState<File[] | null>(null);
   const pending = usePendingUploads((s) => s.batch);
   const clearPending = usePendingUploads((s) => s.clear);
+  const handPending = usePendingUploads((s) => s.hand);
+  const { shared } = useSearch({ from: "/uploads/new" });
+  const navigate = useNavigate();
   // Abort an in-flight upload if the user resets or leaves the page, so an
   // abandoned upload can't finish and create an asset behind their back.
   const abortRef = useRef<AbortController | null>(null);
@@ -112,6 +116,20 @@ export function UploadPage() {
       setBatchFiles(images);
     }
   }
+
+  // Arrived from the share sheet: take what the service worker parked and hand
+  // it over like any other capture. The `?shared` marker is dropped first, so a
+  // refresh doesn't look for files that are already gone.
+  useEffect(() => {
+    if (shared === undefined) return;
+    const timer = setTimeout(async () => {
+      void navigate({ to: "/uploads/new", search: {}, replace: true });
+      const files = await takeSharedFiles(shared).catch(() => []);
+      if (files.length > 0) handPending(files);
+      else setError("No image arrived from the share. Share the image itself, not a link to it.");
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [shared, navigate, handPending]);
 
   // Files handed over by a paste, drop or share elsewhere on the site. Taken on
   // a timer the cleanup cancels, so StrictMode's double mount starts it once.
