@@ -106,7 +106,14 @@ export const PLUGIN_UI: PluginUiRegistry = {
     },
   ],
   "post-detail-image": [],
-  "posts-search": [],
+  "posts-search": [
+    {
+      pluginId: "wiki",
+      id: "excerpt",
+      title: "Wiki",
+      component: lazy(() => import("./wiki/WikiExcerpt").then((m) => ({ default: m.WikiExcerpt }))),
+    },
+  ],
 };
 
 /** Plugin links in the site menus (header and home page), to the plugin's pages. */
@@ -114,6 +121,7 @@ export const PLUGIN_NAV: readonly PluginNavLink[] = [
   { pluginId: "favorites", label: "Favorites", to: "/favorites", visibility: "member" },
   { pluginId: "pools", label: "Pools", to: "/pools" },
   { pluginId: "comments", label: "Comments", to: "/comments", order: 10 },
+  { pluginId: "wiki", label: "Wiki", to: "/wiki", order: 20 },
 ];
 
 /**
@@ -128,4 +136,6 @@ export const PLUGIN_PAGES = {
   favorites: lazy(() => import("./favorites/FavoritesPage").then((m) => ({ default: m.FavoritesPage }))),
   pools: lazy(() => import("./pools/PoolsPage").then((m) => ({ default: m.PoolsPage }))),
   pool: lazy(() => import("./pools/PoolPage").then((m) => ({ default: m.PoolPage }))),
+  wiki: lazy(() => import("./wiki/WikiIndexPage").then((m) => ({ default: m.WikiIndexPage }))),
+  wikiPage: lazy(() => import("./wiki/WikiPage").then((m) => ({ default: m.WikiPage }))),
 };

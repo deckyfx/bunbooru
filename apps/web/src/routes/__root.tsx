@@ -27,7 +27,6 @@ const MENU = [
   { label: "Notes" },
   { label: "Artists" },
   { label: "Tags" },
-  { label: "Wiki" },
   { label: "Forum" },
   { label: "More »" },
 ] as const;

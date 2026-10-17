@@ -42,13 +42,14 @@ Built: **Favorites**, **Pools**, **Thumbnails**, **Shimmie2 import**,
 sha256/md5), **Reports** (users report posts; moderators dismiss them or
 delete the post from a queue), **Comments** (flat comments under a post,
 plus a site-wide page of the newest), **Scores** (up/down votes and a net
-score on each post). Switched on and off at runtime under
+score on each post), **Wiki** (a page per tag explaining it, with edit
+history, `[[page]]`/`{{tag}}` links, and an excerpt above a one-tag
+search). Switched on and off at runtime under
 Admin → Extensions.
 
 Planned:
 
 - Notes
-- Wiki
 - AI Tagging
 - OCR
 - Translation

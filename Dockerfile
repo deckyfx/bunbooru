@@ -30,6 +30,7 @@ COPY plugins/scores/package.json plugins/scores/
 COPY plugins/shimmie-import/package.json plugins/shimmie-import/
 COPY plugins/smtp-mailer/package.json plugins/smtp-mailer/
 COPY plugins/thumbnailer/package.json plugins/thumbnailer/
+COPY plugins/wiki/package.json plugins/wiki/
 
 RUN bun install --frozen-lockfile
 
