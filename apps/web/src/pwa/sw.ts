@@ -1,4 +1,4 @@
-import { SHARE_CACHE, SHARED_NAME_HEADER, sharedFileKey } from "./share-cache";
+import { MAX_SHARED_FILES, SHARE_CACHE, SHARED_NAME_HEADER, sharedFileKey } from "./share-cache";
 
 /**
  * Bunbooru's service worker. Its one job is the PWA share target: Android
@@ -46,7 +46,8 @@ async function receiveShare(request: Request): Promise<Response> {
     const form = await request.formData();
     const images = form
       .getAll("media")
-      .filter((entry): entry is File => entry instanceof File && entry.type.startsWith("image/"));
+      .filter((entry): entry is File => entry instanceof File && entry.type.startsWith("image/"))
+      .slice(0, MAX_SHARED_FILES);
     // A fresh cache per share: anything left from an unfinished one is stale.
     await caches.delete(SHARE_CACHE);
     const cache = await caches.open(SHARE_CACHE);
