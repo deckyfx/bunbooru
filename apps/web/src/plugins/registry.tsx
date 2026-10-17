@@ -105,6 +105,8 @@ export const PLUGIN_UI: PluginUiRegistry = {
       component: lazy(() => import("./comments/CommentThread").then((m) => ({ default: m.CommentThread }))),
     },
   ],
+  "post-detail-image": [],
+  "posts-search": [],
 };
 
 /** Plugin links in the site menus (header and home page), to the plugin's pages. */

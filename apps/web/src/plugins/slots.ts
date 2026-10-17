@@ -22,6 +22,15 @@ export interface SlotPropsMap {
   "post-detail-aside": { asset: AssetDto };
   /** The post page's main column, under the image (comments). */
   "post-detail-main": { asset: AssetDto };
+  /**
+   * A layer exactly covering the post's image (notes). Positioned over the
+   * image box and click-through by default: a widget makes its own elements
+   * interactive with `pointer-events-auto`. Lay things out in percentages of
+   * the box, which scales with the displayed image.
+   */
+  "post-detail-image": { asset: AssetDto };
+  /** Above the search results, for the current query (a tag's wiki excerpt). Empty when browsing all posts. */
+  "posts-search": { query: string };
 }
 
 /** A slot name. Closed: a typo is a type error, not a widget that never renders. */
