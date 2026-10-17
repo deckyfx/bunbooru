@@ -215,7 +215,7 @@ describe.skipIf(!TEST_DATABASE_URL)("wiki plugin (integration)", () => {
     expect((await get("ac/dc")).status).toBe(404);
 
     const versions = await live.db.execute(sql`SELECT count(*)::int AS n FROM wiki_page_versions`);
-    expect(versions).toEqual([{ n: 0 }]);
+    expect([...versions]).toEqual([{ n: 0 }]);
   });
 
   it("lists pages alphabetically, by title prefix, 50 at a time", async () => {
