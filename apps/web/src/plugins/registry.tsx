@@ -90,12 +90,21 @@ export const PLUGIN_UI: PluginUiRegistry = {
       component: lazy(() => import("./reports/ReportPostButton").then((m) => ({ default: m.ReportPostButton }))),
     },
   ],
+  "post-detail-main": [
+    {
+      pluginId: "comments",
+      id: "thread",
+      title: "Comments",
+      component: lazy(() => import("./comments/CommentThread").then((m) => ({ default: m.CommentThread }))),
+    },
+  ],
 };
 
 /** Plugin links in the site menus (header and home page), to the plugin's pages. */
 export const PLUGIN_NAV: readonly PluginNavLink[] = [
   { pluginId: "favorites", label: "Favorites", to: "/favorites", visibility: "member" },
   { pluginId: "pools", label: "Pools", to: "/pools" },
+  { pluginId: "comments", label: "Comments", to: "/comments", order: 10 },
 ];
 
 /**
@@ -104,6 +113,9 @@ export const PLUGIN_NAV: readonly PluginNavLink[] = [
  * `PluginPage` that shows not-found while the plugin is inactive.
  */
 export const PLUGIN_PAGES = {
+  comments: lazy(() =>
+    import("./comments/RecentCommentsPage").then((m) => ({ default: m.RecentCommentsPage })),
+  ),
   favorites: lazy(() => import("./favorites/FavoritesPage").then((m) => ({ default: m.FavoritesPage }))),
   pools: lazy(() => import("./pools/PoolsPage").then((m) => ({ default: m.PoolsPage }))),
   pool: lazy(() => import("./pools/PoolPage").then((m) => ({ default: m.PoolPage }))),

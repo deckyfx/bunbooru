@@ -24,6 +24,7 @@
       "dependencies": {
         "@bunbooru/core": "workspace:*",
         "@bunbooru/plugin-banned-hashes": "workspace:*",
+        "@bunbooru/plugin-comments": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
         "@bunbooru/plugin-favorites": "workspace:*",
         "@bunbooru/plugin-pools": "workspace:*",
@@ -52,6 +53,7 @@
       "dependencies": {
         "@bunbooru/api": "workspace:*",
         "@bunbooru/plugin-banned-hashes": "workspace:*",
+        "@bunbooru/plugin-comments": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
         "@bunbooru/plugin-favorites": "workspace:*",
         "@bunbooru/plugin-pools": "workspace:*",
@@ -118,6 +120,18 @@
     },
     "plugins/banned-hashes": {
       "name": "@bunbooru/plugin-banned-hashes",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/plugin-sdk": "workspace:*",
+        "drizzle-orm": "^0.45.4",
+        "elysia": "^1.4.30",
+      },
+      "devDependencies": {
+        "drizzle-kit": "^0.31.11",
+      },
+    },
+    "plugins/comments": {
+      "name": "@bunbooru/plugin-comments",
       "version": "0.1.0",
       "dependencies": {
         "@bunbooru/plugin-sdk": "workspace:*",
@@ -229,6 +243,8 @@
     "@bunbooru/extension": ["@bunbooru/extension@workspace:apps/extension"],
 
     "@bunbooru/plugin-banned-hashes": ["@bunbooru/plugin-banned-hashes@workspace:plugins/banned-hashes"],
+
+    "@bunbooru/plugin-comments": ["@bunbooru/plugin-comments@workspace:plugins/comments"],
 
     "@bunbooru/plugin-example": ["@bunbooru/plugin-example@workspace:plugins/example"],
 

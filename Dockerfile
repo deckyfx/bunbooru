@@ -21,6 +21,7 @@ COPY packages/storage/package.json packages/storage/
 COPY packages/search/package.json packages/search/
 COPY packages/plugin-sdk/package.json packages/plugin-sdk/
 COPY plugins/banned-hashes/package.json plugins/banned-hashes/
+COPY plugins/comments/package.json plugins/comments/
 COPY plugins/example/package.json plugins/example/
 COPY plugins/favorites/package.json plugins/favorites/
 COPY plugins/pools/package.json plugins/pools/

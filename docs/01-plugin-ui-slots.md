@@ -11,8 +11,9 @@ below. The rest of this document is the original draft, kept for its reasoning.
   holds each widget's title, order and visibility next to its component, and
   the server only says which plugins are active. That removed the SDK's
   `adminPages` (a parallel mechanism) instead of adding one.
-- **Slots:** `admin` and `post-detail-aside`, in a closed union
-  (`plugins/slots.ts`). The others wait for a real consumer (§11 Phase 4).
+- **Slots:** `admin`, `post-detail-aside` and `post-detail-main` (under the
+  image; the draft's `post-detail-below`, first filled by comments), in a
+  closed union (`plugins/slots.ts`). The others wait for a real consumer (§11 Phase 4).
 - **Pages** (the draft's §7 left them out): plugin-owned routes such as
   `/favorites`, `/pools`, `/pools/:id`, declared in `router.tsx` through
   `pluginRoute()` so links stay typed, rendered through `<PluginPage>`

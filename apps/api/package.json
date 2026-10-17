@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@bunbooru/core": "workspace:*",
+    "@bunbooru/plugin-comments": "workspace:*",
     "@bunbooru/plugin-example": "workspace:*",
     "@bunbooru/plugin-banned-hashes": "workspace:*",
     "@bunbooru/plugin-favorites": "workspace:*",

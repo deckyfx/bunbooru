@@ -40,12 +40,12 @@ A modern, extensible Booru engine built with Bun.
 Built: **Favorites**, **Pools**, **Thumbnails**, **Shimmie2 import**,
 **SMTP mail**, **Banned hashes** (refuses re-uploads of banned files by
 sha256/md5), **Reports** (users report posts; moderators dismiss them or
-delete the post from a queue). Switched on and off at runtime under
+delete the post from a queue), **Comments** (flat comments under a post,
+plus a site-wide page of the newest). Switched on and off at runtime under
 Admin → Extensions.
 
 Planned:
 
-- Comments
 - Notes
 - Wiki
 - AI Tagging
