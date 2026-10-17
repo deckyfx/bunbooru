@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
@@ -39,11 +39,14 @@ export function AdjustOverlay({
   assetId,
   onDone,
   onCancel,
+  onSavingChange,
 }: {
   note: NoteDto;
   assetId: number;
   onDone: () => void;
   onCancel: () => void;
+  /** Told when a save starts and settles, so the layer can hold off Escape meanwhile. */
+  onSavingChange: (saving: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const hintId = useId();
@@ -60,6 +63,13 @@ export function AdjustOverlay({
       onDone();
     },
   });
+
+  // Report the in-flight save to the layer: its page-wide Escape must not
+  // "cancel" a save that the server will complete anyway. Cleared on unmount.
+  useEffect(() => {
+    onSavingChange(save.isPending);
+    return () => onSavingChange(false);
+  }, [save.isPending, onSavingChange]);
 
   const drag = useBoxDrag({
     box: draft,

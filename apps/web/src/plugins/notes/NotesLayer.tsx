@@ -40,6 +40,8 @@ export function NotesLayer({ asset }: SlotPropsMap["post-detail-image"]) {
   const layerRef = useRef<HTMLDivElement>(null);
   // The note to focus once it's back from adjust mode (its overlay had focus).
   const [returnFocusTo, setReturnFocusTo] = useState<number | null>(null);
+  // An adjusted note's save is in flight: Escape must not appear to cancel it.
+  const [saving, setSaving] = useState(false);
 
   const notes = useQuery({
     // Keyed by viewer too: each note's `canEdit` depends on who's asking.
@@ -52,13 +54,13 @@ export function NotesLayer({ asset }: SlotPropsMap["post-detail-image"]) {
   useEffect(() => {
     if (mode.kind === "view") return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || saving) return;
       if (mode.kind === "adjust") setReturnFocusTo(mode.noteId);
       setMode({ kind: "view" });
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [mode]);
+  }, [mode, saving]);
 
   // Runs after the note's marker is back in place of its overlay.
   useEffect(() => {
@@ -111,6 +113,7 @@ export function NotesLayer({ asset }: SlotPropsMap["post-detail-image"]) {
             refresh();
           }}
           onCancel={() => leaveAdjust(adjusting.id)}
+          onSavingChange={setSaving}
         />
       ) : null}
 
