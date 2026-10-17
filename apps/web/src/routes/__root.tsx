@@ -24,10 +24,8 @@ const VERSION = pkg.version;
  * links come first: Posts, then whatever active plugins add (Favorites, Pools).
  */
 const MENU = [
-  { label: "Notes" },
   { label: "Artists" },
   { label: "Tags" },
-  { label: "Wiki" },
   { label: "Forum" },
   { label: "More »" },
 ] as const;

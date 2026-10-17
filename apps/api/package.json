@@ -19,6 +19,7 @@
     "@bunbooru/plugin-example": "workspace:*",
     "@bunbooru/plugin-banned-hashes": "workspace:*",
     "@bunbooru/plugin-favorites": "workspace:*",
+    "@bunbooru/plugin-notes": "workspace:*",
     "@bunbooru/plugin-pools": "workspace:*",
     "@bunbooru/plugin-reports": "workspace:*",
     "@bunbooru/plugin-scores": "workspace:*",
@@ -26,6 +27,7 @@
     "@bunbooru/plugin-shimmie-import": "workspace:*",
     "@bunbooru/plugin-smtp-mailer": "workspace:*",
     "@bunbooru/plugin-thumbnailer": "workspace:*",
+    "@bunbooru/plugin-wiki": "workspace:*",
     "elysia": "^1.4.30"
   }
 }

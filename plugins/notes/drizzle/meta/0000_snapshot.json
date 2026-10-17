@@ -1,0 +1,141 @@
+{
+  "id": "24b8d4d6-4ae4-4d8a-9d28-b9b481eb784d",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.notes_notes": {
+      "name": "notes_notes",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "asset_id": {
+          "name": "asset_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "x": {
+          "name": "x",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "y": {
+          "name": "y",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "w": {
+          "name": "w",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "h": {
+          "name": "h",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "author_id": {
+          "name": "author_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "author_name": {
+          "name": "author_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "notes_notes_asset_idx": {
+          "name": "notes_notes_asset_idx",
+          "columns": [
+            {
+              "expression": "asset_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "notes_notes_x_check": {
+          "name": "notes_notes_x_check",
+          "value": "\"notes_notes\".\"x\" >= 0"
+        },
+        "notes_notes_y_check": {
+          "name": "notes_notes_y_check",
+          "value": "\"notes_notes\".\"y\" >= 0"
+        },
+        "notes_notes_w_check": {
+          "name": "notes_notes_w_check",
+          "value": "\"notes_notes\".\"w\" > 0"
+        },
+        "notes_notes_h_check": {
+          "name": "notes_notes_h_check",
+          "value": "\"notes_notes\".\"h\" > 0"
+        },
+        "notes_notes_right_check": {
+          "name": "notes_notes_right_check",
+          "value": "\"notes_notes\".\"x\" + \"notes_notes\".\"w\" <= 1 + 1e-9"
+        },
+        "notes_notes_bottom_check": {
+          "name": "notes_notes_bottom_check",
+          "value": "\"notes_notes\".\"y\" + \"notes_notes\".\"h\" <= 1 + 1e-9"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

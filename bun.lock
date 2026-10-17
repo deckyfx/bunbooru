@@ -27,6 +27,7 @@
         "@bunbooru/plugin-comments": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
         "@bunbooru/plugin-favorites": "workspace:*",
+        "@bunbooru/plugin-notes": "workspace:*",
         "@bunbooru/plugin-pools": "workspace:*",
         "@bunbooru/plugin-reports": "workspace:*",
         "@bunbooru/plugin-scores": "workspace:*",
@@ -34,6 +35,7 @@
         "@bunbooru/plugin-shimmie-import": "workspace:*",
         "@bunbooru/plugin-smtp-mailer": "workspace:*",
         "@bunbooru/plugin-thumbnailer": "workspace:*",
+        "@bunbooru/plugin-wiki": "workspace:*",
         "elysia": "^1.4.30",
       },
     },
@@ -57,12 +59,14 @@
         "@bunbooru/plugin-comments": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
         "@bunbooru/plugin-favorites": "workspace:*",
+        "@bunbooru/plugin-notes": "workspace:*",
         "@bunbooru/plugin-pools": "workspace:*",
         "@bunbooru/plugin-reports": "workspace:*",
         "@bunbooru/plugin-scores": "workspace:*",
         "@bunbooru/plugin-shimmie-import": "workspace:*",
         "@bunbooru/plugin-smtp-mailer": "workspace:*",
         "@bunbooru/plugin-thumbnailer": "workspace:*",
+        "@bunbooru/plugin-wiki": "workspace:*",
         "@elysiajs/eden": "^1.4.9",
         "@floating-ui/react": "^0.27.20",
         "@tanstack/react-query": "^5.104.2",
@@ -168,6 +172,18 @@
         "drizzle-kit": "^0.31.11",
       },
     },
+    "plugins/notes": {
+      "name": "@bunbooru/plugin-notes",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/plugin-sdk": "workspace:*",
+        "drizzle-orm": "^0.45.4",
+        "elysia": "^1.4.30",
+      },
+      "devDependencies": {
+        "drizzle-kit": "^0.31.11",
+      },
+    },
     "plugins/pools": {
       "name": "@bunbooru/plugin-pools",
       "version": "0.1.0",
@@ -242,6 +258,18 @@
         "drizzle-kit": "^0.31.11",
       },
     },
+    "plugins/wiki": {
+      "name": "@bunbooru/plugin-wiki",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/plugin-sdk": "workspace:*",
+        "drizzle-orm": "^0.45.4",
+        "elysia": "^1.4.30",
+      },
+      "devDependencies": {
+        "drizzle-kit": "^0.31.11",
+      },
+    },
   },
   "packages": {
     "@borewit/text-codec": ["@borewit/text-codec@0.2.2", "", {}, "sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ=="],
@@ -264,6 +292,8 @@
 
     "@bunbooru/plugin-favorites": ["@bunbooru/plugin-favorites@workspace:plugins/favorites"],
 
+    "@bunbooru/plugin-notes": ["@bunbooru/plugin-notes@workspace:plugins/notes"],
+
     "@bunbooru/plugin-pools": ["@bunbooru/plugin-pools@workspace:plugins/pools"],
 
     "@bunbooru/plugin-reports": ["@bunbooru/plugin-reports@workspace:plugins/reports"],
@@ -277,6 +307,8 @@
     "@bunbooru/plugin-smtp-mailer": ["@bunbooru/plugin-smtp-mailer@workspace:plugins/smtp-mailer"],
 
     "@bunbooru/plugin-thumbnailer": ["@bunbooru/plugin-thumbnailer@workspace:plugins/thumbnailer"],
+
+    "@bunbooru/plugin-wiki": ["@bunbooru/plugin-wiki@workspace:plugins/wiki"],
 
     "@bunbooru/search": ["@bunbooru/search@workspace:packages/search"],
 

@@ -138,12 +138,22 @@ function PostDetailView({ id }: { id: string }) {
         ) : (
           <>
             <div className="flex justify-center rounded border border-line bg-bg p-3">
-              <AssetImage
-                src={assetFileUrl(asset.id)}
-                alt={`Post ${asset.id}`}
-                className="max-h-[80vh] w-auto max-w-full rounded"
-                style={{ aspectRatio: `${asset.width} / ${asset.height}` }}
-              />
+              {/* Shrink-wrapped to the image, so the overlay slot covers exactly it. */}
+              <div className="relative max-w-full">
+                <AssetImage
+                  src={assetFileUrl(asset.id)}
+                  alt={`Post ${asset.id}`}
+                  className="block max-h-[80vh] w-auto max-w-full rounded"
+                  style={{ aspectRatio: `${asset.width} / ${asset.height}` }}
+                />
+                {/* Plugin layers over the image (notes); click-through unless a widget opts in. */}
+                <PluginSlot
+                  key={asset.id}
+                  slot="post-detail-image"
+                  props={{ asset }}
+                  className="pointer-events-none absolute inset-0"
+                />
+              </div>
             </div>
 
             <div className="mt-2 flex flex-wrap items-center gap-3 text-[12px]">

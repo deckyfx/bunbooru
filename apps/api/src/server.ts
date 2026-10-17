@@ -8,6 +8,7 @@ import {
   JOB_RETENTION,
   MAX_PER_PAGE,
   MIN_PASSWORD_LENGTH,
+  ValidationError,
   type ApiKeyScope,
   type ApiKeySummary,
   type Asset,
@@ -30,6 +31,7 @@ import { envConfig } from "./env-config";
 import { describeRuntimeConfig, type RuntimeSection } from "./lib/runtime-config";
 import { buildClearCookie, buildSessionCookie, readSessionToken, requireUser } from "./lib/auth";
 import { credentialAllows } from "./lib/credential-scope";
+import { containsNul } from "./lib/nul";
 import { HttpError } from "./lib/errors";
 import {
   staticPluginHost,
@@ -439,6 +441,14 @@ export function createApp({
         return { error: { message: "Plugin not found or inactive" } };
       }
       return undefined; // no short-circuit — continue to routing
+    })
+    // Postgres `text` can't store NUL: refuse it in any body, query or path
+    // string as a 400 up front, instead of a 500 when it reaches a write. Runs
+    // after body parsing, and covers plugin routes mounted on this app too.
+    .onTransform(({ body, query, params }) => {
+      if (containsNul(body) || containsNul(query) || containsNul(params)) {
+        throw new ValidationError("Text can't contain NUL characters");
+      }
     })
     // Expose the id + a start time to handlers on matched routes.
     .derive(({ set }) => ({

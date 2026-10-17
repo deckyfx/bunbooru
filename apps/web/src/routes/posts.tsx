@@ -9,6 +9,7 @@ import { PostHoverCard } from "../components/popover/post-hover-card";
 import { SearchBox } from "../components/popover/search-box";
 import { AssetImage } from "../components/asset-image";
 import { TagListPanel } from "../components/tags/tag-list-panel";
+import { PluginSlot } from "../components/plugin-slot";
 import { assetFileUrl, assetThumbUrl } from "../lib/api";
 import { usePlugins } from "../lib/plugins";
 import { useAssetsPage } from "../lib/assets";
@@ -79,6 +80,8 @@ export function PostsPage() {
       </aside>
 
       <section className="min-w-0 flex-1">
+        {/* Plugin context for the current search (a tag's wiki excerpt). */}
+        <PluginSlot key={q ?? ""} slot="posts-search" props={{ query: q ?? "" }} className="mb-3 space-y-3" />
         <nav className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line pb-2 text-[12px]">
           <span className="font-bold">Posts</span>
           {data ? (
