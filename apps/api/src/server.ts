@@ -8,6 +8,7 @@ import {
   JOB_RETENTION,
   MAX_PER_PAGE,
   MIN_PASSWORD_LENGTH,
+  type ApiKeyScope,
   type ApiKeySummary,
   type Asset,
   type AssetUpdate,
@@ -28,6 +29,7 @@ import { PLUGIN_SDK_VERSION } from "@bunbooru/plugin-sdk";
 import { envConfig } from "./env-config";
 import { describeRuntimeConfig, type RuntimeSection } from "./lib/runtime-config";
 import { buildClearCookie, buildSessionCookie, readSessionToken, requireUser } from "./lib/auth";
+import { credentialAllows } from "./lib/credential-scope";
 import { HttpError } from "./lib/errors";
 import {
   staticPluginHost,
@@ -244,6 +246,8 @@ const tagCategorySchema = t.Union([
 export type ApiKeyDto = {
   id: number;
   name: string;
+  /** `full`: everything the owner can do. `upload`: add posts only. */
+  scope: ApiKeyScope;
   createdAt: string;
   lastUsedAt: string | null;
 };
@@ -253,6 +257,7 @@ function serializeApiKey(key: ApiKeySummary): ApiKeyDto {
   return {
     id: key.id,
     name: key.name,
+    scope: key.scope,
     createdAt: key.createdAt.toISOString(),
     lastUsedAt: key.lastUsedAt ? key.lastUsedAt.toISOString() : null,
   };
@@ -293,6 +298,9 @@ function serializeUser(user: PublicUser): UserDto {
     createdAt: user.createdAt.toISOString(),
   };
 }
+
+/** Most tags one upload may set (the tag-edit route allows the same). */
+const MAX_UPLOAD_TAGS = 1000;
 
 /** Numeric id path param, shared by the `/assets/:id*` routes and other id routes. */
 const idParam = t.Object({
@@ -497,13 +505,22 @@ export function createApp({
         // write routes call `requireUser` to 401.
         .derive(async ({ request }) => {
           const sessionToken = readSessionToken(request);
+          const auth = sessionToken ? await core.authService.authenticate(sessionToken) : null;
           return {
             visitorId: readVisitorId(request.headers.get("x-visitor-id")),
             sessionToken,
-            currentUser: sessionToken
-              ? await core.authService.currentUser(sessionToken)
-              : null,
+            currentUser: auth?.user ?? null,
+            credentialKind: auth?.kind ?? null,
           };
+        })
+        // An upload-scoped API key reaches only the upload routes (see
+        // `credentialAllows`); anything else is a 403 whatever the route does.
+        // A transform hook (after the derive above, BEFORE body validation), so
+        // the key learns nothing about a route it may not call, not even a 422.
+        .onTransform(({ credentialKind, request, route }) => {
+          if (!credentialAllows(credentialKind, request.method, route)) {
+            throw new AuthorizationError("This API key may only upload");
+          }
         })
         .get("/health", () => ({ status: "ok" as const }))
         // Active-plugin manifest (public metadata) so the web console can
@@ -866,7 +883,9 @@ export function createApp({
         )
         // Upload an image. The bytes are sniffed server-side (format/dimensions),
         // hashed, deduped on sha256, then stored + persisted. 201 for a new asset,
-        // 200 when an identical upload already existed.
+        // 200 when an identical upload already existed. Optional `tags`
+        // (space-separated, booru-style) apply to a NEW post only: a dedupe hit
+        // is someone's existing post, which this upload doesn't get to retag.
         .post(
           "/assets",
           async ({ body, set, requestId, currentUser }) => {
@@ -883,6 +902,11 @@ export function createApp({
               });
               throw new HttpError(413, `Upload exceeds the ${maxUploadBytes}-byte limit`);
             }
+            // Validated before the upload, so a bad tag list can't leave a post behind.
+            const tagNames = body.tags?.split(/\s+/).filter(Boolean) ?? [];
+            if (tagNames.length > MAX_UPLOAD_TAGS) {
+              throw new HttpError(400, `At most ${MAX_UPLOAD_TAGS} tags per upload`);
+            }
             const bytes = new Uint8Array(await file.arrayBuffer());
             const { asset, deduped } = await core.assetService.create({
               bytes,
@@ -890,6 +914,9 @@ export function createApp({
               source: body.source,
               uploaderId: user.id,
             });
+            if (!deduped && tagNames.length > 0) {
+              await core.tagService.setAssetTags(asset.id, tagNames, user.id);
+            }
             set.status = deduped ? 200 : 201;
             return serializeAsset(asset);
           },
@@ -898,6 +925,7 @@ export function createApp({
               file: t.File(),
               rating: t.Optional(ratingSchema),
               source: t.Optional(sourceSchema),
+              tags: t.Optional(t.String({ maxLength: 8192 })),
             }),
           },
         )
@@ -1434,12 +1462,21 @@ export function createApp({
           "/account/api-keys",
           async ({ body, set, currentUser }) => {
             const user = requireUser(currentUser);
-            const { key, record } = await core.authService.createApiKey(user.id, body.name.trim());
+            const { key, record } = await core.authService.createApiKey(
+              user.id,
+              body.name.trim(),
+              body.scope ?? "full",
+            );
             set.status = 201;
             return { ...serializeApiKey(record), key };
           },
-          // `pattern: \S` rejects a whitespace-only name (which we'd trim to "").
-          { body: t.Object({ name: t.String({ minLength: 1, maxLength: 100, pattern: "\\S" }) }) },
+          {
+            body: t.Object({
+              // `pattern: \S` rejects a whitespace-only name (which we'd trim to "").
+              name: t.String({ minLength: 1, maxLength: 100, pattern: "\\S" }),
+              scope: t.Optional(t.Union([t.Literal("full"), t.Literal("upload")])),
+            }),
+          },
         )
         // List the caller's API keys (no secrets).
         .get("/account/api-keys", async ({ currentUser }): Promise<ApiKeyDto[]> => {

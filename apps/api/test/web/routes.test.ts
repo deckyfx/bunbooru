@@ -18,6 +18,7 @@ beforeAll(async () => {
     ["chunk-abc123.js", "console.log(1)", true],
     ["chunk-def456.css", "body{}", true],
     ["app.js", "console.log(2)", false],
+    ["manifest.webmanifest", '{"name":"Bunbooru"}', false],
   ];
   assets = [];
   for (const [name, contents, immutable] of files) {
@@ -61,6 +62,21 @@ describe("createWebRoutes", () => {
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("console.log(2)");
     expect(res.headers.get("cache-control")).toBe("no-cache");
+  });
+
+  it("serves the web manifest with its content type", async () => {
+    const res = await get(createWebRoutes(assets), "/manifest.webmanifest");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/manifest+json");
+    expect(res.headers.get("cache-control")).toBe("no-cache");
+  });
+
+  it("sends a share that reached the server (no service worker yet) to the upload page", async () => {
+    const res = await createWebRoutes(assets).handle(
+      new Request("http://localhost/share", { method: "POST", body: new FormData() }),
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/uploads/new?shared=0");
   });
 
   it.each(["/", "/posts/12", "/admin/extensions", "/index.html"])(

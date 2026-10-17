@@ -1,6 +1,7 @@
 import type {
   ApiKey,
   ApiKeyRepository,
+  ApiKeyScope,
   AuthTokenRepository,
   SessionRepository,
   User,
@@ -54,8 +55,20 @@ export type PublicUser = Omit<User, "passwordHash">;
 export type ApiKeySummary = Omit<ApiKey, "tokenHash">;
 
 /** Drop the secret `tokenHash` so it never leaks into a response or log. */
-function toApiKeySummary({ id, userId, name, lastUsedAt, createdAt }: ApiKey): ApiKeySummary {
-  return { id, userId, name, lastUsedAt, createdAt };
+function toApiKeySummary({ id, userId, name, scope, lastUsedAt, createdAt }: ApiKey): ApiKeySummary {
+  return { id, userId, name, scope, lastUsedAt, createdAt };
+}
+
+/**
+ * How a request authenticated. `session`: a login (cookie or Bearer session
+ * token). `full` / `upload`: an API key of that scope (see `ApiKeyScope`).
+ */
+export type CredentialKind = "session" | ApiKeyScope;
+
+/** The caller behind a credential, and what kind of credential it was. */
+export interface Authenticated {
+  user: User;
+  kind: CredentialKind;
 }
 
 /** Result of minting an API key: the raw key (shown once) + the summary row. */
@@ -80,6 +93,11 @@ export interface AuthService {
    * `bnb_…` API key — or null. Dispatches on the API-key prefix.
    */
   currentUser(token: string | null | undefined): Promise<User | null>;
+  /**
+   * Like {@link currentUser}, but also says what kind of credential it was, so
+   * the API can confine an upload-scoped key to the upload routes.
+   */
+  authenticate(token: string | null | undefined): Promise<Authenticated | null>;
   /** Revoke a session by its raw token (logout). */
   logout(token: string): Promise<void>;
   /**
@@ -91,7 +109,8 @@ export interface AuthService {
   /** Reclaim expired sessions; returns how many were removed. */
   gcExpiredSessions(at?: Date): Promise<number>;
   /** Mint a named API key for a user; the raw key is returned only here. */
-  createApiKey(userId: number, name: string): Promise<CreatedApiKey>;
+  /** Mint a key (default scope `full`). The raw key is returned once. */
+  createApiKey(userId: number, name: string, scope?: ApiKeyScope): Promise<CreatedApiKey>;
   /** A user's API keys (no raw tokens or hashes), newest first. */
   listApiKeys(userId: number): Promise<ApiKeySummary[]>;
   /** Revoke one of the user's API keys; true if a key was removed. */
@@ -288,6 +307,27 @@ export function createAuthService(
     });
   }
 
+  /** Resolve a raw credential (API key or session token) to its user and kind. */
+  async function authenticate(token: string | null | undefined): Promise<Authenticated | null> {
+    if (!token) return null;
+
+    // API key (`bnb_…`): no expiry, valid until revoked.
+    if (token.startsWith(API_KEY_PREFIX)) {
+      const key = await apiKeys.findByTokenHash(sha256hex(token));
+      if (!key) return null;
+      // Best-effort activity timestamp; never let it fail the request.
+      void apiKeys.touchLastUsed(key.id, now()).catch(() => undefined);
+      const user = await users.findById(key.userId);
+      return user ? { user, kind: key.scope } : null;
+    }
+
+    // Session token.
+    const session = await sessions.findValidByTokenHash(sha256hex(token), now());
+    if (!session) return null;
+    const user = await users.findById(session.userId);
+    return user ? { user, kind: "session" } : null;
+  }
+
   return {
     async register({ username, password, email }) {
       assertPasswordLength(password);
@@ -327,22 +367,11 @@ export function createAuthService(
     },
 
     async currentUser(token) {
-      if (!token) return null;
-
-      // API key (`bnb_…`): no expiry, valid until revoked.
-      if (token.startsWith(API_KEY_PREFIX)) {
-        const key = await apiKeys.findByTokenHash(sha256hex(token));
-        if (!key) return null;
-        // Best-effort activity timestamp; never let it fail the request.
-        void apiKeys.touchLastUsed(key.id, now()).catch(() => undefined);
-        return users.findById(key.userId);
-      }
-
-      // Session token.
-      const session = await sessions.findValidByTokenHash(sha256hex(token), now());
-      if (!session) return null;
-      return users.findById(session.userId);
+      return (await authenticate(token))?.user ?? null;
     },
+
+    authenticate,
+
 
     async logout(token) {
       await sessions.deleteByTokenHash(sha256hex(token));
@@ -356,9 +385,9 @@ export function createAuthService(
       return sessions.deleteExpired(at, SESSION_GC_BATCH);
     },
 
-    async createApiKey(userId, name) {
+    async createApiKey(userId, name, scope = "full") {
       const key = API_KEY_PREFIX + generateToken();
-      const record = await apiKeys.create({ userId, name, tokenHash: sha256hex(key) });
+      const record = await apiKeys.create({ userId, name, scope, tokenHash: sha256hex(key) });
       return { key, record: toApiKeySummary(record) };
     },
 

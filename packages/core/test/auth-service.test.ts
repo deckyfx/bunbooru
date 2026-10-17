@@ -141,6 +141,7 @@ function fakeApiKeyRepo() {
         tokenHash: input.tokenHash,
         userId: input.userId,
         name: input.name,
+        scope: input.scope ?? "full",
         lastUsedAt: input.lastUsedAt ?? null,
         createdAt: input.createdAt ?? new Date("2026-01-01T00:00:00.000Z"),
       };
@@ -421,6 +422,21 @@ describe("createAuthService — API keys", () => {
     // The raw key authenticates (no expiry — even far in the future).
     const resolved = await service.currentUser(key);
     expect(resolved).toMatchObject({ id: user.id, username: "user" });
+  });
+
+  it("reports each credential's kind: session, full key, upload key", async () => {
+    const { service } = makeService();
+    const { user, token } = await service.register({ username: "user", password: "supersecret" });
+    const full = await service.createApiKey(user.id, "laptop");
+    const upload = await service.createApiKey(user.id, "phone", "upload");
+
+    expect(full.record.scope).toBe("full");
+    expect(upload.record.scope).toBe("upload");
+    expect((await service.authenticate(token))?.kind).toBe("session");
+    expect((await service.authenticate(full.key))?.kind).toBe("full");
+    expect(await service.authenticate(upload.key)).toMatchObject({ kind: "upload", user: { id: user.id } });
+    expect(await service.authenticate("bnb_deadbeef")).toBeNull();
+    expect(await service.authenticate(null)).toBeNull();
   });
 
   it("does not resolve a bogus API key or a revoked one", async () => {

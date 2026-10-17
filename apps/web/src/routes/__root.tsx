@@ -4,6 +4,7 @@ import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-route
 
 import pkg from "../../package.json";
 import { AccountLinks } from "../components/account-links";
+import { GlobalCapture } from "../components/global-capture";
 import { usePluginNavLinks } from "../components/plugin-slot";
 import { SearchBox } from "../components/popover/search-box";
 import { ThemeSwitcher } from "../components/theme-switcher";
@@ -84,6 +85,7 @@ export function RootLayout() {
     // Flex column so the footer can be pushed to the bottom of the viewport even
     // when the page content is short (e.g. the empty gallery).
     <div className="flex min-h-screen flex-col">
+      <GlobalCapture />
       {!isHome && (
         <header className="border-b border-line bg-surface">
           <div className="flex items-center gap-4 px-4 py-1.5">

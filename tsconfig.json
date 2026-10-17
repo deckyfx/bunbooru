@@ -11,5 +11,5 @@
     "plugins/*/src/**/*.ts",
     "plugins/*/test/**/*.ts"
   ],
-  "exclude": ["apps/web"]
+  "exclude": ["apps/web", "apps/extension"]
 }

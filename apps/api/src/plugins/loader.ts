@@ -137,9 +137,12 @@ function buildContext(id: string, core: Core, db: DB, storage: StorageProvider):
     auth: {
       // Resolve the caller the same way the core routes do (Bearer or cookie),
       // so a plugin route's auth is consistent with the rest of the API.
-      currentUser: (request) => {
+      // An upload-scoped API key is for Core's upload routes only: to a
+      // plugin it is no credential at all (the caller is anonymous).
+      currentUser: async (request) => {
         const token = readSessionToken(request);
-        return token ? core.authService.currentUser(token) : Promise.resolve(null);
+        const auth = token ? await core.authService.authenticate(token) : null;
+        return auth && auth.kind !== "upload" ? auth.user : null;
       },
     },
     log: {

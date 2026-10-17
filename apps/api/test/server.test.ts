@@ -112,6 +112,7 @@ const sampleApiKey: ApiKey = {
   tokenHash: "hash",
   userId: sampleUser.id,
   name: "cli",
+  scope: "full",
   lastUsedAt: null,
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
 };
@@ -206,6 +207,14 @@ function stubCore(
       requestEmailVerification: async () => undefined,
       confirmEmailVerification: async () => undefined,
       gcExpiredTokens: async () => 0,
+      // A session unless a test says otherwise: whatever `currentUser` (or its
+      // override) resolves, as a login.
+      authenticate: async (token) => {
+        const user = await (authOverrides.currentUser ?? (async (t) => (t === SESSION_TOKEN ? sampleUser : null)))(
+          token,
+        );
+        return user ? { user, kind: "session" } : null;
+      },
       ...authOverrides,
     },
     settingsService: {

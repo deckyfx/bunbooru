@@ -96,6 +96,7 @@ Everything else extends the core.
 apps/
   api/        REST API (Elysia), and the background job worker
   web/        React client
+  extension/  Browser extension (Chrome + Firefox, Manifest V3)
 
 packages/
   core/       Domain: Asset, Tag, User, Permission, Auth
@@ -177,6 +178,31 @@ minimum (see `.env.example`).
 bun run build              # → apps/api/dist/bunbooru
 bun run docker:build       # the same binary in a distroless image (port 3000)
 ```
+
+## Getting images in
+
+- **Upload page**, or **paste / drop images on any page** while signed in;
+  several at once upload as a batch.
+- **Untagged (N)** in the header lists your posts that still need tags, so
+  capture never has to stop for tagging.
+- **Android share sheet:** install the site (Chrome menu → *Install app*) and
+  Bunbooru appears when you share images. This needs the site on **HTTPS**
+  (or `localhost`): browsers allow the service worker only in a secure
+  context, so a plain-HTTP LAN address won't offer it.
+- **Browser extension** (Chrome, Edge, Brave, Firefox): right-click an image
+  → *Upload to Bunbooru*, or upload every large image on a page from the
+  popup, with optional sticky tags. Build it with `bun run build:extension`,
+  then load `apps/extension/dist/chrome` (chrome://extensions → *Load
+  unpacked*) or `apps/extension/dist/firefox` (about:debugging → *Load
+  Temporary Add-on*). In its settings, enter your Bunbooru address and an
+  upload-only key, and allow access to all sites: images are usually served
+  from another site (a CDN) that doesn't allow cross-site reads, so without
+  it most uploads fail. Hosts that check the `Referer` header (Pixiv
+  originals) are not supported yet.
+- **API keys:** Account → API keys. Give each device its own **upload-only**
+  key: it can add posts (`POST /api/v1/assets`, with optional
+  space-separated `tags`, and the resumable `/api/v1/uploads` routes) and
+  nothing else.
 
 ## Background jobs
 

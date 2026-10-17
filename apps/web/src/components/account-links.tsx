@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 
+import { untaggedQuery, useUntaggedCount } from "../lib/assets";
 import { useCurrentUser, useLogout } from "../lib/auth";
 
 /**
@@ -15,6 +16,8 @@ import { useCurrentUser, useLogout } from "../lib/auth";
 export function AccountLinks({ className }: { className?: string }) {
   const { data: user, isPending } = useCurrentUser();
   const logout = useLogout();
+  const untagged = useUntaggedCount(user?.username);
+  const toTag = untagged.data?.total ?? 0;
 
   if (isPending) return null;
 
@@ -25,6 +28,18 @@ export function AccountLinks({ className }: { className?: string }) {
           {user.role === "admin" ? (
             <Link to="/admin" className="hover:underline">
               Admin
+            </Link>
+          ) : null}
+          {toTag > 0 ? (
+            // The triage queue: uploads land untagged (quick capture never asks
+            // for tags), and get tagged from here later.
+            <Link
+              to="/posts"
+              search={{ q: untaggedQuery(user.username) }}
+              className="hover:underline"
+              title="Your posts that have no tags yet"
+            >
+              Untagged ({untagged.data?.capped ? `${toTag}+` : toTag})
             </Link>
           ) : null}
           <Link to="/account" className="hover:underline">

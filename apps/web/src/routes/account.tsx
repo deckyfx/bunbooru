@@ -287,6 +287,7 @@ function ApiKeysSection() {
   const create = useCreateApiKey();
   const revoke = useRevokeApiKey();
   const [name, setName] = useState("");
+  const [scope, setScope] = useState<"full" | "upload">("upload");
   // The one-time secret from the most recent creation (shown until dismissed).
   const [freshKey, setFreshKey] = useState<string | null>(null);
 
@@ -295,7 +296,7 @@ function ApiKeysSection() {
     if (create.isPending) return;
     const trimmed = name.trim();
     if (!trimmed) return;
-    create.mutate(trimmed, {
+    create.mutate({ name: trimmed, scope }, {
       onSuccess: (created) => {
         setFreshKey(created.key);
         setName("");
@@ -309,7 +310,10 @@ function ApiKeysSection() {
       <p className="text-[12px] text-muted">
         Use an API key with{" "}
         <code className="rounded bg-line/40 px-1">Authorization: Bearer &lt;key&gt;</code> for
-        non-browser access. A key has full account access and no expiry until revoked.
+        non-browser access. An <span className="font-bold">upload-only</span> key (for the
+        browser extension or a phone) can add posts and nothing else; a{" "}
+        <span className="font-bold">full</span> key can do anything you can. Keys don’t expire;
+        make one per device so you can revoke it alone.
       </p>
 
       {freshKey ? (
@@ -331,10 +335,20 @@ function ApiKeysSection() {
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Key name (e.g. laptop cli)"
+          placeholder="Key name (e.g. work laptop)"
           maxLength={100}
+          aria-label="Key name"
           className="block w-full rounded border border-line p-1.5 text-[12px] outline-none focus:border-link"
         />
+        <select
+          value={scope}
+          onChange={(e) => setScope(e.target.value === "full" ? "full" : "upload")}
+          aria-label="Key access"
+          className="rounded border border-line bg-bg p-1.5 text-[12px] outline-none focus:border-link"
+        >
+          <option value="upload">Upload only</option>
+          <option value="full">Full access</option>
+        </select>
         <button
           type="submit"
           disabled={create.isPending}
@@ -363,7 +377,18 @@ function ApiKeysSection() {
           {keys.data.map((key) => (
             <li key={key.id} className="flex items-center gap-2 p-2 text-[12px]">
               <div className="min-w-0 flex-1">
-                <div className="truncate font-bold">{key.name}</div>
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate font-bold">{key.name}</span>
+                  <span
+                    className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${
+                      key.scope === "upload"
+                        ? "border-line text-muted"
+                        : "border-tag-artist/40 text-tag-artist"
+                    }`}
+                  >
+                    {key.scope === "upload" ? "upload only" : "full access"}
+                  </span>
+                </div>
                 <div className="text-[11px] text-muted">
                   created {formatDate(key.createdAt)} · last used {formatDate(key.lastUsedAt)}
                 </div>
