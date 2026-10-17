@@ -24,6 +24,7 @@ COPY plugins/banned-hashes/package.json plugins/banned-hashes/
 COPY plugins/comments/package.json plugins/comments/
 COPY plugins/example/package.json plugins/example/
 COPY plugins/favorites/package.json plugins/favorites/
+COPY plugins/notes/package.json plugins/notes/
 COPY plugins/pools/package.json plugins/pools/
 COPY plugins/reports/package.json plugins/reports/
 COPY plugins/scores/package.json plugins/scores/

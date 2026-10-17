@@ -105,7 +105,14 @@ export const PLUGIN_UI: PluginUiRegistry = {
       component: lazy(() => import("./comments/CommentThread").then((m) => ({ default: m.CommentThread }))),
     },
   ],
-  "post-detail-image": [],
+  "post-detail-image": [
+    {
+      pluginId: "notes",
+      id: "layer",
+      title: "Notes",
+      component: lazy(() => import("./notes/NotesLayer").then((m) => ({ default: m.NotesLayer }))),
+    },
+  ],
   "posts-search": [],
 };
 

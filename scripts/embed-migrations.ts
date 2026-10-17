@@ -35,6 +35,7 @@ const PACKAGES = [
   "plugins/reports",
   "plugins/comments",
   "plugins/scores",
+  "plugins/notes",
 ] as const;
 
 export interface JournalEntry {

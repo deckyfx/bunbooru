@@ -27,6 +27,7 @@
         "@bunbooru/plugin-comments": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
         "@bunbooru/plugin-favorites": "workspace:*",
+        "@bunbooru/plugin-notes": "workspace:*",
         "@bunbooru/plugin-pools": "workspace:*",
         "@bunbooru/plugin-reports": "workspace:*",
         "@bunbooru/plugin-scores": "workspace:*",
@@ -57,6 +58,7 @@
         "@bunbooru/plugin-comments": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
         "@bunbooru/plugin-favorites": "workspace:*",
+        "@bunbooru/plugin-notes": "workspace:*",
         "@bunbooru/plugin-pools": "workspace:*",
         "@bunbooru/plugin-reports": "workspace:*",
         "@bunbooru/plugin-scores": "workspace:*",
@@ -168,6 +170,18 @@
         "drizzle-kit": "^0.31.11",
       },
     },
+    "plugins/notes": {
+      "name": "@bunbooru/plugin-notes",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/plugin-sdk": "workspace:*",
+        "drizzle-orm": "^0.45.4",
+        "elysia": "^1.4.30",
+      },
+      "devDependencies": {
+        "drizzle-kit": "^0.31.11",
+      },
+    },
     "plugins/pools": {
       "name": "@bunbooru/plugin-pools",
       "version": "0.1.0",
@@ -263,6 +277,8 @@
     "@bunbooru/plugin-example": ["@bunbooru/plugin-example@workspace:plugins/example"],
 
     "@bunbooru/plugin-favorites": ["@bunbooru/plugin-favorites@workspace:plugins/favorites"],
+
+    "@bunbooru/plugin-notes": ["@bunbooru/plugin-notes@workspace:plugins/notes"],
 
     "@bunbooru/plugin-pools": ["@bunbooru/plugin-pools@workspace:plugins/pools"],
 
