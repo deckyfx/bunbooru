@@ -32,6 +32,7 @@ const PACKAGES = [
   "plugins/favorites",
   "plugins/pools",
   "plugins/banned-hashes",
+  "plugins/reports",
 ] as const;
 
 export interface JournalEntry {
