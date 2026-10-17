@@ -2,7 +2,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyPluginMigrations, createCoreRuntime, type Core, type DB } from "@bunbooru/core";
+import {
+  applyPluginMigrations,
+  createCoreRuntime,
+  type Core,
+  type DB,
+  type StorageProvider,
+} from "@bunbooru/core";
 
 import { ingestGuardsBinding, jobsBinding, searchBinding } from "../../src/plugins/capability-bindings";
 import { createPluginHost } from "../../src/plugins/host";
@@ -25,10 +31,24 @@ export function uniqueImage(label: string): Uint8Array {
   return new Uint8Array([...PNG_1x1, ...new TextEncoder().encode(label)]);
 }
 
+/**
+ * Poll `probe` until it holds, for up to ~1s. Event listeners (`asset.created`,
+ * `asset.deleted`) run asynchronously, so a test waits for their effect before
+ * asserting it; the caller asserts afterwards, so a timeout fails there.
+ */
+export async function eventually(probe: () => Promise<boolean>): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    if (await probe()) return;
+    await Bun.sleep(10);
+  }
+}
+
 /** A running API over the real Core and the real, migrated plugins. */
 export interface LiveApi {
   core: Core;
   db: DB;
+  /** The shared store (un-namespaced): Core's `assets/…` and `plugins/<id>/…`. */
+  storage: StorageProvider;
   /** Send a request to `/api/v1…` (path relative to it), optionally as a user. */
   request(path: string, init?: RequestInit & { token?: string }): Promise<Response>;
   /** Register a user; the first one becomes admin. Returns their session token. */
@@ -82,6 +102,7 @@ export async function bootLive(pluginIds: string[]): Promise<LiveApi> {
   return {
     core,
     db,
+    storage,
     request(path, { token, headers, ...init } = {}) {
       return app.handle(
         new Request(`http://localhost/api/v1${path}`, {

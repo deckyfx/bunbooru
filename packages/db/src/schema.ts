@@ -156,6 +156,36 @@ export const assets = pgTable(
   ],
 );
 
+/**
+ * What is left of a deleted post. Deletion is a HARD delete (the asset row, its
+ * tag links and its stored file go), so this row is the only record that the
+ * content was here: its hashes, who removed it, why and when. `assetId` is the
+ * old post id, deliberately NOT a foreign key (the row it named is gone).
+ *
+ * The hash indexes are NOT unique: once a post is deleted its sha256 is free
+ * again, so the same bytes can be uploaded (a new post) and deleted again,
+ * leaving a second tombstone. A future `/assets/exists` reports a hash with a
+ * tombstone and no live post as `deleted`.
+ */
+export const assetTombstones = pgTable(
+  "asset_tombstones",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    assetId: bigint("asset_id", { mode: "number" }).notNull(),
+    sha256: text("sha256").notNull(),
+    md5: text("md5").notNull(),
+    // No FK either: the deleter's account may go later, and the tombstone
+    // should still say who it was at the time.
+    deletedById: bigint("deleted_by_id", { mode: "number" }),
+    reason: text("reason").notNull().default(""),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("asset_tombstones_sha256_idx").on(table.sha256),
+    index("asset_tombstones_md5_idx").on(table.md5),
+  ],
+);
+
 /** A label. `postCount` is a denormalized counter maintained by the tag service. */
 export const tags = pgTable(
   "tags",
@@ -544,6 +574,8 @@ export type NewUser = typeof users.$inferInsert;
 
 export type Asset = typeof assets.$inferSelect;
 export type NewAsset = typeof assets.$inferInsert;
+
+export type AssetTombstone = typeof assetTombstones.$inferSelect;
 
 export type Tag = typeof tags.$inferSelect;
 export type NewTag = typeof tags.$inferInsert;

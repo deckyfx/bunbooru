@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { sql } from "drizzle-orm";
 
-import { bootLive, TEST_DATABASE_URL, type LiveApi } from "./live-harness";
+import { bootLive, eventually, TEST_DATABASE_URL, type LiveApi } from "./live-harness";
 
 /**
  * The favorites plugin end to end: its real migrations, its routes mounted on
@@ -57,6 +57,26 @@ describe.skipIf(!TEST_DATABASE_URL)("favorites plugin (integration)", () => {
     expect((await live.request(`/plugins/favorites/assets/${posts[0]}`, { method: "PUT" })).status).toBe(401);
     expect((await fav(99_999, alice.token)).status).toBe(404);
     expect((await live.request("/plugins/favorites/assets/99999")).status).toBe(404);
+  });
+
+  it("drops a deleted post's favorites, keeping everyone else's", async () => {
+    await fav(posts[0], alice.token);
+    await fav(posts[0], bob.token);
+    await fav(posts[1], alice.token);
+
+    expect(await live.core.assetService.delete(posts[0], { deletedById: alice.id, reason: "" })).toBe(true);
+
+    /** Favorite rows for one post, straight from the table. */
+    const favCount = async (assetId: number) =>
+      Number(
+        [...(await live.db.execute<{ n: number | string }>(
+          sql`SELECT count(*) AS n FROM favorites_posts WHERE asset_id = ${assetId}`,
+        ))][0]?.n,
+      );
+    await eventually(async () => (await favCount(posts[0])) === 0);
+
+    expect(await favCount(posts[0])).toBe(0);
+    expect(await favCount(posts[1])).toBe(1);
   });
 
   it("fav:<user> finds a user's favorites and composes with other terms", async () => {

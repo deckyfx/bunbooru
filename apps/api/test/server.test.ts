@@ -557,6 +557,88 @@ describe("PATCH /api/v1/assets/:id", () => {
   });
 });
 
+describe("DELETE /api/v1/assets/:id", () => {
+  /** A DELETE, as the default member (owner of `sampleAsset`) unless `auth` is false. */
+  function deleteReq(path: string, body?: unknown, auth = true): Request {
+    return new Request(`http://localhost/api/v1${path}`, {
+      method: "DELETE",
+      headers: {
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+        ...(auth ? AUTH_HEADER : {}),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  }
+
+  it("lets the uploader delete, forwarding who and why → 204", async () => {
+    let received: { id: number; by: { deletedById: number | null; reason: string } } | undefined;
+    const core = stubCore({
+      getById: async () => sampleAsset,
+      delete: async (id, by) => {
+        received = { id, by };
+        return true;
+      },
+    });
+    const res = await buildApp(core).handle(deleteReq("/assets/1", { reason: "  wrong crop  " }));
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+    expect(received).toEqual({ id: 1, by: { deletedById: sampleUser.id, reason: "wrong crop" } });
+  });
+
+  it("accepts no body (empty reason)", async () => {
+    let reason: string | undefined;
+    const core = stubCore({
+      getById: async () => sampleAsset,
+      delete: async (_id, by) => {
+        reason = by.reason;
+        return true;
+      },
+    });
+    const res = await buildApp(core).handle(deleteReq("/assets/1"));
+    expect(res.status).toBe(204);
+    expect(reason).toBe("");
+  });
+
+  it("lets an admin delete someone else's post", async () => {
+    let deleted = false;
+    const core = stubCore(
+      {
+        getById: async () => ({ ...sampleAsset, uploaderId: 999 }),
+        delete: async () => (deleted = true),
+      },
+      {},
+      {},
+      {},
+      { currentUser: async () => adminUser },
+    );
+    expect((await buildApp(core).handle(deleteReq("/assets/1"))).status).toBe(204);
+    expect(deleted).toBe(true);
+  });
+
+  it("refuses another member's post → 403, without deleting", async () => {
+    let called = false;
+    const core = stubCore({
+      getById: async () => ({ ...sampleAsset, uploaderId: 999 }),
+      delete: async () => (called = true),
+    });
+    expect((await buildApp(core).handle(deleteReq("/assets/1"))).status).toBe(403);
+    expect(called).toBe(false);
+  });
+
+  it("401 anonymous, 404 unknown post, 422 for an over-long reason", async () => {
+    const owned = stubCore({ getById: async () => sampleAsset, delete: async () => true });
+    expect((await buildApp(owned).handle(deleteReq("/assets/1", undefined, false))).status).toBe(401);
+    expect((await buildApp(stubCore()).handle(deleteReq("/assets/1"))).status).toBe(404);
+    const long = await buildApp(owned).handle(deleteReq("/assets/1", { reason: "x".repeat(501) }));
+    expect(long.status).toBe(422);
+  });
+
+  it("404 when the post vanished between the check and the delete", async () => {
+    const core = stubCore({ getById: async () => sampleAsset, delete: async () => false });
+    expect((await buildApp(core).handle(deleteReq("/assets/1"))).status).toBe(404);
+  });
+});
+
 describe("GET /api/v1/assets/:id/file", () => {
   it("streams the stored bytes with the asset's content type", async () => {
     const body = new Response("IMGBYTES").body;

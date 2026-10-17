@@ -125,7 +125,7 @@ export const plugin = definePlugin({
   name: "Favorites",
   version: "1.0.0",
   description: "Favorite posts, see favorite counts, and search with fav:<username>.",
-  capabilities: ["routes", "tables", "search-providers", "ui-slots", "pages"],
+  capabilities: ["routes", "tables", "events", "search-providers", "ui-slots", "pages"],
   tables: ["favorites_posts"],
   migrations: {
     // Migrations embedded into the binary (regenerate: `bun run gen:migrations`).
@@ -133,6 +133,18 @@ export const plugin = definePlugin({
     migrationsTable: "__drizzle_migrations_favorites",
   },
   register(ctx) {
+    // A deleted post's favorites go with it (no cross-schema FK to do it).
+    ctx.events.on("asset.deleted", async (event) => {
+      try {
+        await ctx.db.delete(favorites).where(eq(favorites.assetId, event.id));
+      } catch (error) {
+        ctx.log.error("favorites_cleanup_failed", {
+          assetId: event.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+
     return {
       routes: buildFavoritesRoutes(ctx),
       searchProviders: [favSearch(ctx)],

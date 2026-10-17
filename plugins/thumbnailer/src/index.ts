@@ -113,6 +113,20 @@ async function processAsset(ctx: PluginContext, assetId: number): Promise<void> 
 }
 
 /**
+ * Drop a deleted post's thumbnail: its row (success or recorded failure) and,
+ * for a success, its stored file. Idempotent: a post with no row is a no-op.
+ */
+async function removeThumbnail(ctx: PluginContext, assetId: number): Promise<void> {
+  const removed = await ctx.db
+    .delete(thumbnails)
+    .where(eq(thumbnails.assetId, assetId))
+    .returning({ storageKey: thumbnails.storageKey });
+  for (const { storageKey } of removed) {
+    if (storageKey) await ctx.storage.delete(storageKey);
+  }
+}
+
+/**
  * Which of `assetIds` already have a thumbnails row (success OR recorded failure).
  * One batched query per page — not one per asset — so a full backfill stays ~O(N)
  * instead of O(N²/batch) as already-recorded assets get re-scanned each call.
@@ -296,6 +310,18 @@ export const plugin = definePlugin({
       }
     });
 
+    // A deleted post's thumbnail goes with it (no cross-schema FK to do it).
+    ctx.events.on("asset.deleted", async (event) => {
+      try {
+        await removeThumbnail(ctx, event.id);
+      } catch (error) {
+        ctx.log.error("thumbnail_cleanup_failed", {
+          assetId: event.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+
     return {
       routes: buildThumbnailerRoutes(ctx),
       jobs: {
@@ -308,6 +334,9 @@ export const plugin = definePlugin({
             const assetId = assetIdOf(payload);
             // Already done (a duplicate backfill chain, or a re-run).
             if (await hasThumbnail(ctx, assetId)) return;
+            // Deleted while the job waited: record nothing, or the row would
+            // outlive the post its `asset.deleted` cleanup already handled.
+            if (!(await ctx.services.assets.getById(assetId))) return;
             await processAsset(ctx, assetId);
           },
         },

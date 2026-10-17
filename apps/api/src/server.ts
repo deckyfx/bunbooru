@@ -967,6 +967,31 @@ export function createApp({
             }),
           },
         )
+        // Delete a post for good (hard delete + tombstone; no undo): its row, tag
+        // links and file go, and plugins drop their rows on `asset.deleted`. The
+        // uploader or an admin only. An optional `reason` lands on the
+        // tombstone. 204 on success.
+        .delete(
+          "/assets/:id",
+          async ({ params, body, currentUser, set }) => {
+            const user = requireUser(currentUser);
+            const existing = await core.assetService.getById(params.id);
+            if (!existing) throw new HttpError(404, "Asset not found");
+            if (!isOwnerOrAdmin(user, existing.uploaderId)) throw new AuthorizationError();
+            const deleted = await core.assetService.delete(params.id, {
+              deletedById: user.id,
+              reason: body?.reason?.trim() ?? "",
+            });
+            // Gone between the check and the delete (a concurrent deletion).
+            if (!deleted) throw new HttpError(404, "Asset not found");
+            set.status = 204;
+            return "";
+          },
+          {
+            params: idParam,
+            body: t.Optional(t.Object({ reason: t.Optional(t.String({ maxLength: 500 })) })),
+          },
+        )
         // Stream an asset's stored bytes. Kept separate from the JSON metadata so
         // the binary never has to be base64'd into a JSON payload.
         .get(

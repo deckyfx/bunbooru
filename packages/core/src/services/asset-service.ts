@@ -317,6 +317,26 @@ export function createAssetService(
     return { asset, deduped: false };
   }
 
+  /**
+   * Best-effort removal of a deleted post's stored file. Keys are
+   * content-addressed, so if the same bytes were re-uploaded between the row's
+   * deletion and now, the new post owns this very object: it is kept. A failed
+   * delete is swallowed on purpose: the row is already gone, and the orphan is
+   * reclaimed by {@link AssetService.gcOrphanedBlobs}. (A re-upload landing
+   * exactly between the check and the delete can still lose its blob, the same
+   * accepted window as the orphan GC: `openFile` then 404s, never serves wrong
+   * bytes.)
+   */
+  async function removeBlob(storageKey: string): Promise<void> {
+    try {
+      const referenced = await repository.findReferencedStorageKeys([storageKey]);
+      if (referenced.has(storageKey)) return;
+      await storage.delete(storageKey);
+    } catch {
+      // Left for the orphan-blob GC (see above).
+    }
+  }
+
   return {
     async list(options = {}) {
       const perPage = Math.min(toPositiveInt(options.perPage, DEFAULT_PER_PAGE), MAX_PER_PAGE);
@@ -435,9 +455,24 @@ export function createAssetService(
         : ingest(source.blob, meta);
     },
 
-    async delete() {
-      // Contract only: implemented by the post-deletion work (see the interface).
-      throw new Error("AssetService.delete is not implemented yet");
+    async delete(id, { deletedById, reason }) {
+      const deletedAt = new Date();
+      // Row, tag links and tombstone go together in one transaction.
+      const deleted = await repository.deleteWithTombstone(id, { deletedById, reason, now: deletedAt });
+      if (!deleted) return false;
+      await removeBlob(deleted.storageKey);
+      // Fire-and-forget like `asset.created`: plugins drop their own rows
+      // (thumbnails, favorites, pool entries); a failing listener can't undo
+      // or delay the deletion.
+      events?.emit("asset.deleted", {
+        id: deleted.id,
+        sha256: deleted.sha256,
+        md5: deleted.md5,
+        deletedById,
+        reason,
+        deletedAt,
+      });
+      return true;
     },
 
     update(id, patch) {

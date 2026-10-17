@@ -23,12 +23,14 @@ export {
 } from "./migrator";
 export {
   createAssetRepository,
+  type AssetDeletion,
   type AssetKeyset,
   type AssetOrder,
   type AssetPage,
   type AssetRepository,
   type AssetSortKey,
   type AssetUpdate,
+  type DeletedAsset,
 } from "./repositories/asset-repository";
 export {
   createUploadSessionRepository,

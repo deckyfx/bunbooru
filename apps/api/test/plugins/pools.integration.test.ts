@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { sql } from "drizzle-orm";
 
-import { bootLive, TEST_DATABASE_URL, type LiveApi } from "./live-harness";
+import { bootLive, eventually, TEST_DATABASE_URL, type LiveApi } from "./live-harness";
 
 /**
  * The pools plugin end to end: real migrations, routes on the API, and the
@@ -78,6 +78,37 @@ describe.skipIf(!TEST_DATABASE_URL)("pools plugin (integration)", () => {
     });
     expect(reorder.status).toBe(200);
     expect(await order(pool.id)).toEqual([posts[3], posts[0], posts[2]]);
+  });
+
+  it("drops a deleted post from every pool, renumbering positions 1..n", async () => {
+    const a = await json<{ id: number }>(await create("first", alice.token));
+    const b = await json<{ id: number }>(await create("second", alice.token));
+    for (const id of [posts[0], posts[1], posts[2]]) await add(a.id, id, alice.token);
+    for (const id of [posts[1], posts[3]]) await add(b.id, id, alice.token);
+
+    expect(await live.core.assetService.delete(posts[1], { deletedById: alice.id, reason: "" })).toBe(true);
+
+    /** A pool's (asset, position) rows straight from the table, in order. */
+    const rows = async (poolId: number) =>
+      [
+        ...(await live.db.execute<{ asset_id: number | string; position: number }>(
+          sql`SELECT asset_id, position FROM pools_posts WHERE pool_id = ${poolId} ORDER BY position`,
+        )),
+      ].map((row) => [Number(row.asset_id), Number(row.position)]);
+    const remaining = async () =>
+      Number(
+        [...(await live.db.execute<{ n: number | string }>(
+          sql`SELECT count(*) AS n FROM pools_posts WHERE asset_id = ${posts[1]}`,
+        ))][0]?.n,
+      );
+    await eventually(async () => (await remaining()) === 0);
+
+    expect(await remaining()).toBe(0);
+    expect(await rows(a.id)).toEqual([
+      [posts[0], 1],
+      [posts[2], 2],
+    ]);
+    expect(await rows(b.id)).toEqual([[posts[3], 1]]);
   });
 
   it("refuses to add a post that doesn't exist", async () => {

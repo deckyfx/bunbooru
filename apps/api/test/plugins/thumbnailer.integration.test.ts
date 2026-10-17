@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 
 import { createJobRunner, type JobRunner } from "@bunbooru/core";
 
-import { bootLive, TEST_DATABASE_URL, type LiveApi } from "./live-harness";
+import { bootLive, eventually, TEST_DATABASE_URL, type LiveApi } from "./live-harness";
 
 const quiet = { info: () => {}, warn: () => {}, error: () => {} };
 
@@ -65,6 +65,37 @@ describe.skipIf(!TEST_DATABASE_URL)("thumbnailer plugin on the job queue (integr
     const res = await thumb(id);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/webp");
+  });
+
+  it("drops a deleted post's thumbnail row and stored file", async () => {
+    const id = await live.post("doomed", admin.id);
+    await queuedSoon("thumbnailer:thumbnail", 1);
+    await drain();
+    expect((await thumb(id)).status).toBe(200);
+    const storedKey = async () =>
+      [...(await live.db.execute<{ storage_key: string | null }>(
+        sql`SELECT storage_key FROM thumbnails WHERE asset_id = ${id}`,
+      ))][0]?.storage_key;
+    const key = await storedKey();
+    expect(key).toBeString();
+    expect(await live.storage.exists(`plugins/thumbnailer/${key}`)).toBe(true);
+
+    expect(await live.core.assetService.delete(id, { deletedById: admin.id, reason: "" })).toBe(true);
+    await eventually(async () => (await storedKey()) === undefined);
+
+    expect(await storedKey()).toBeUndefined();
+    expect(await live.storage.exists(`plugins/thumbnailer/${key}`)).toBe(false);
+    expect((await thumb(id)).status).toBe(404);
+  });
+
+  it("records nothing for a post deleted while its thumbnail job waited", async () => {
+    const id = await live.post("gone", admin.id);
+    await queuedSoon("thumbnailer:thumbnail", 1);
+    expect(await live.core.assetService.delete(id, { deletedById: admin.id, reason: "" })).toBe(true);
+
+    await drain();
+    const rows = await live.db.execute(sql`SELECT 1 FROM thumbnails WHERE asset_id = ${id}`);
+    expect([...rows]).toEqual([]);
   });
 
   it("backfills assets that have no thumbnail, and reports the backfill already starting", async () => {

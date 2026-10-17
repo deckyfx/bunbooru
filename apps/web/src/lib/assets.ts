@@ -101,3 +101,30 @@ export function useUpdateAsset(id: number) {
     },
   });
 }
+
+/**
+ * Delete a post for good via `DELETE /assets/:id` (Eden), with an optional
+ * reason for the tombstone. A 204 has no body, so this checks `res.error`
+ * instead of `unwrap`. On success: mark the gallery lists (and every cached
+ * prev/next, which may point at this post) stale, run `onDeleted` (the page
+ * navigates away), and only THEN drop the post's own query, so the
+ * still-mounted detail page never refetches it into a "not found" flash.
+ */
+export function useDeleteAsset(id: number, onDeleted: () => void | Promise<void>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (reason: string) => {
+      const trimmed = reason.trim();
+      const res = await api.api.v1.assets({ id: String(id) }).delete(trimmed ? { reason: trimmed } : {});
+      if (res.error) throw res.error;
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["assets"] }),
+        queryClient.invalidateQueries({ queryKey: ["asset-neighbors"] }),
+      ]);
+      await onDeleted();
+      queryClient.removeQueries({ queryKey: ["asset", id] });
+    },
+  });
+}
