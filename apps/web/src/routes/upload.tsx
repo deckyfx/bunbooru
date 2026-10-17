@@ -3,12 +3,14 @@ import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "r
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ImagePlus, Loader2 } from "lucide-react";
 
+import { BatchUpload } from "../components/batch-upload";
 import { RatingControl, type Rating } from "../components/rating-control";
 import { PostTagPanel } from "../components/tags/post-tag-panel";
 import { assetFileUrl } from "../lib/api";
 import { useUpdateAsset, type AssetDto } from "../lib/assets";
 import { useCurrentUser } from "../lib/auth";
 import { uploadAsset } from "../lib/upload";
+import { imageFiles, usePendingUploads } from "../stores/pending-uploads";
 
 /** Human-readable byte size. */
 function formatBytes(bytes: number): string {
@@ -40,6 +42,10 @@ export function UploadPage() {
   const [asset, setAsset] = useState<AssetDto | null>(null);
   const [deduped, setDeduped] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Several files at once go to the batch uploader instead.
+  const [batchFiles, setBatchFiles] = useState<File[] | null>(null);
+  const pending = usePendingUploads((s) => s.batch);
+  const clearPending = usePendingUploads((s) => s.clear);
   // Abort an in-flight upload if the user resets or leaves the page, so an
   // abandoned upload can't finish and create an asset behind their back.
   const abortRef = useRef<AbortController | null>(null);
@@ -93,17 +99,43 @@ export function UploadPage() {
     }
   }
 
+  /** One image uploads with the metadata editor after; several go to the batch list. */
+  function startFiles(files: File[]) {
+    const images = imageFiles(files);
+    if (images.length === 0) {
+      if (files.length > 0) setError("Please choose an image file.");
+      return;
+    }
+    if (images.length === 1) void startUpload(images[0]!);
+    else {
+      reset();
+      setBatchFiles(images);
+    }
+  }
+
+  // Files handed over by a paste, drop or share elsewhere on the site. Taken on
+  // a timer the cleanup cancels, so StrictMode's double mount starts it once.
+  useEffect(() => {
+    if (!pending || authPending || !user) return;
+    const timer = setTimeout(() => {
+      clearPending(pending.id);
+      startFiles(pending.files);
+    }, 0);
+    return () => clearTimeout(timer);
+    // `startFiles` is deliberately not a dependency: it's recreated every
+    // render, and re-running would only re-take an already-cleared batch.
+  }, [pending, authPending, user, clearPending]);
+
   function onInputChange(e: ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const files = [...(e.target.files ?? [])];
     // Clear the value so picking the SAME file again still fires `change`.
     e.target.value = "";
-    if (file) void startUpload(file);
+    startFiles(files);
   }
 
   function onDrop(e: DragEvent<HTMLLabelElement>) {
     e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) void startUpload(file);
+    startFiles([...(e.dataTransfer.files ?? [])]);
   }
 
   return (
@@ -126,6 +158,8 @@ export function UploadPage() {
           </Link>
           .
         </p>
+      ) : batchFiles ? (
+        <BatchUpload files={batchFiles} onDone={() => setBatchFiles(null)} />
       ) : asset ? (
         <MetadataEditor asset={asset} previewUrl={previewUrl} deduped={deduped} onReset={reset} />
       ) : (
@@ -157,10 +191,11 @@ export function UploadPage() {
             ) : (
               <span className="flex flex-col items-center gap-2 px-4 text-[12px]">
                 <ImagePlus className="h-10 w-10" strokeWidth={1.25} aria-hidden="true" />
-                Choose file or drag image here
+                Choose files or drag images here
+                <span className="text-[11px]">You can also paste or drop images on any page.</span>
               </span>
             )}
-            <input type="file" accept="image/*" onChange={onInputChange} className="sr-only" />
+            <input type="file" accept="image/*" multiple onChange={onInputChange} className="sr-only" />
           </label>
 
           {uploading ? <ProgressBar value={progress} /> : null}

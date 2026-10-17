@@ -32,6 +32,27 @@ export function useAssetsPage(q?: string, cursor?: string) {
   });
 }
 
+/** The search for `username`'s posts that have no tags yet: the triage queue. */
+export const untaggedQuery = (username: string): string => `user:${username} tagcount:0`;
+
+/**
+ * How many of `username`'s posts still need tags (capped like every count).
+ * One row fetched; the count is what's wanted. Off for a signed-out viewer.
+ */
+export function useUntaggedCount(username: string | undefined) {
+  return useQuery({
+    queryKey: ["assets", "untagged-count", username ?? null],
+    enabled: username !== undefined,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const page = unwrap(
+        await api.api.v1.assets.get({ query: { per_page: 1, q: untaggedQuery(username ?? "") } }),
+      );
+      return { total: page.total, capped: page.totalCapped };
+    },
+  });
+}
+
 /** A single asset's metadata (for the detail page / deep links). */
 export function useAsset(id: number) {
   return useQuery({
