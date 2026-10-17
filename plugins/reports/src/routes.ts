@@ -10,9 +10,16 @@ import {
   type User,
 } from "@bunbooru/plugin-sdk";
 
-import { normalizeNote, normalizeReason } from "./reasons";
+import { normalizeNote, normalizeReason, POST_DELETED_RESOLUTION } from "./reasons";
 import type { ReportRow } from "./schema";
-import { closeReport, createReport, findReport, listReports, openReportsForAsset } from "./store";
+import {
+  closeReport,
+  createReport,
+  findReport,
+  listReports,
+  openReportsForAsset,
+  resolveOpenForAsset,
+} from "./store";
 
 export const PLUGIN_ID = "reports";
 
@@ -135,8 +142,10 @@ export function buildReportsRoutes(ctx: PluginContext) {
         },
         { params: t.Object({ id: idParam }), body: t.Object({ note: t.Optional(textInput) }) },
       )
-      // Delete the reported post for good. The plugin's `asset.deleted`
-      // listener resolves its open reports.
+      // Delete the reported post for good, and resolve its open reports BEFORE
+      // answering, so the queue the moderator reloads next already shows them
+      // closed. (The `asset.deleted` listener does the same, idempotently, for
+      // posts deleted elsewhere; on its own it may land after the reload.)
       .post(
         "/assets/:id/delete",
         async ({ request, params, body, set }) => {
@@ -145,6 +154,7 @@ export function buildReportsRoutes(ctx: PluginContext) {
           if (!(await ctx.services.assets.delete(params.id, { deletedById: user.id, reason }))) {
             throw new NotFoundError("Post not found");
           }
+          await resolveOpenForAsset(ctx.db, params.id, POST_DELETED_RESOLUTION);
           ctx.log.info("reported_post_deleted", { assetId: params.id, by: user.username });
           set.status = 204;
           return "";

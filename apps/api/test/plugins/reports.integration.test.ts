@@ -197,13 +197,11 @@ describe.skipIf(!TEST_DATABASE_URL)("reports plugin (integration)", () => {
     );
     expect(tombstone?.reason).toBe("breaks the rules");
     expect(Number(tombstone?.deleted_by_id)).toBe(admin.id); // a raw bigint comes back as text
-    // …and the plugin's own asset.deleted listener closed the report.
-    let resolved: QueuePage = { items: [], nextBefore: null };
-    for (let i = 0; i < 50 && resolved.items.length === 0; i++) {
-      resolved = await queue("?status=resolved");
-      if (resolved.items.length === 0) await Bun.sleep(20);
-    }
+    // …and the report is already closed when the route answers (no polling:
+    // the queue a moderator reloads right after must not show it open).
+    const resolved = await queue("?status=resolved");
     expect(resolved.items).toHaveLength(1);
+    expect((await queue()).items).toEqual([]);
     expect(resolved.items[0]).toMatchObject({ assetId: id, resolution: "Post deleted" });
 
     // Gone now: a second delete is a 404.
