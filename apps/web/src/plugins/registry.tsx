@@ -67,6 +67,13 @@ export const PLUGIN_UI: PluginUiRegistry = {
       component: lazy(() => import("./favorites/FavoriteButton").then((m) => ({ default: m.FavoriteButton }))),
     },
     {
+      pluginId: "scores",
+      id: "score",
+      title: "Score",
+      order: 5,
+      component: lazy(() => import("./scores/ScoreWidget").then((m) => ({ default: m.ScoreWidget }))),
+    },
+    {
       pluginId: "pools",
       id: "nav",
       title: "Pools",
