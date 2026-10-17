@@ -22,4 +22,6 @@ export const PLUGIN_REGISTRY: Record<string, () => Promise<PluginModule>> = {
   pools: () => import("@bunbooru/plugin-pools"),
   "banned-hashes": () => import("@bunbooru/plugin-banned-hashes"),
   reports: () => import("@bunbooru/plugin-reports"),
+  comments: () => import("@bunbooru/plugin-comments"),
+  scores: () => import("@bunbooru/plugin-scores"),
 };

@@ -157,6 +157,9 @@ function PostDetailView({ id }: { id: string }) {
               {/* Uploader or admin only; renders nothing for anyone else. */}
               <DeletePostControl asset={asset} />
             </div>
+
+            {/* Plugin widgets under the image (comments), each isolated from the page. */}
+            <PluginSlot key={asset.id} slot="post-detail-main" props={{ asset }} className="mt-4 space-y-4" />
           </>
         )}
       </section>

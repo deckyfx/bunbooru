@@ -24,10 +24,12 @@
       "dependencies": {
         "@bunbooru/core": "workspace:*",
         "@bunbooru/plugin-banned-hashes": "workspace:*",
+        "@bunbooru/plugin-comments": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
         "@bunbooru/plugin-favorites": "workspace:*",
         "@bunbooru/plugin-pools": "workspace:*",
         "@bunbooru/plugin-reports": "workspace:*",
+        "@bunbooru/plugin-scores": "workspace:*",
         "@bunbooru/plugin-sdk": "workspace:*",
         "@bunbooru/plugin-shimmie-import": "workspace:*",
         "@bunbooru/plugin-smtp-mailer": "workspace:*",
@@ -52,10 +54,12 @@
       "dependencies": {
         "@bunbooru/api": "workspace:*",
         "@bunbooru/plugin-banned-hashes": "workspace:*",
+        "@bunbooru/plugin-comments": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
         "@bunbooru/plugin-favorites": "workspace:*",
         "@bunbooru/plugin-pools": "workspace:*",
         "@bunbooru/plugin-reports": "workspace:*",
+        "@bunbooru/plugin-scores": "workspace:*",
         "@bunbooru/plugin-shimmie-import": "workspace:*",
         "@bunbooru/plugin-smtp-mailer": "workspace:*",
         "@bunbooru/plugin-thumbnailer": "workspace:*",
@@ -128,6 +132,18 @@
         "drizzle-kit": "^0.31.11",
       },
     },
+    "plugins/comments": {
+      "name": "@bunbooru/plugin-comments",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/plugin-sdk": "workspace:*",
+        "drizzle-orm": "^0.45.4",
+        "elysia": "^1.4.30",
+      },
+      "devDependencies": {
+        "drizzle-kit": "^0.31.11",
+      },
+    },
     "plugins/example": {
       "name": "@bunbooru/plugin-example",
       "version": "0.1.0",
@@ -166,6 +182,18 @@
     },
     "plugins/reports": {
       "name": "@bunbooru/plugin-reports",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/plugin-sdk": "workspace:*",
+        "drizzle-orm": "^0.45.4",
+        "elysia": "^1.4.30",
+      },
+      "devDependencies": {
+        "drizzle-kit": "^0.31.11",
+      },
+    },
+    "plugins/scores": {
+      "name": "@bunbooru/plugin-scores",
       "version": "0.1.0",
       "dependencies": {
         "@bunbooru/plugin-sdk": "workspace:*",
@@ -230,6 +258,8 @@
 
     "@bunbooru/plugin-banned-hashes": ["@bunbooru/plugin-banned-hashes@workspace:plugins/banned-hashes"],
 
+    "@bunbooru/plugin-comments": ["@bunbooru/plugin-comments@workspace:plugins/comments"],
+
     "@bunbooru/plugin-example": ["@bunbooru/plugin-example@workspace:plugins/example"],
 
     "@bunbooru/plugin-favorites": ["@bunbooru/plugin-favorites@workspace:plugins/favorites"],
@@ -237,6 +267,8 @@
     "@bunbooru/plugin-pools": ["@bunbooru/plugin-pools@workspace:plugins/pools"],
 
     "@bunbooru/plugin-reports": ["@bunbooru/plugin-reports@workspace:plugins/reports"],
+
+    "@bunbooru/plugin-scores": ["@bunbooru/plugin-scores@workspace:plugins/scores"],
 
     "@bunbooru/plugin-sdk": ["@bunbooru/plugin-sdk@workspace:packages/plugin-sdk"],
 

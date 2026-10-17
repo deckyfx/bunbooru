@@ -135,6 +135,7 @@ function pluginRoute<const Path extends string>(pluginId: string, title: string,
 const favoritesRoute = pluginRoute("favorites", "Favorites", "/favorites", PLUGIN_PAGES.favorites);
 const poolsRoute = pluginRoute("pools", "Pools", "/pools", PLUGIN_PAGES.pools);
 const poolRoute = pluginRoute("pools", "Pools", "/pools/$poolId", PLUGIN_PAGES.pool);
+const commentsRoute = pluginRoute("comments", "Comments", "/comments", PLUGIN_PAGES.comments);
 
 const routeTree = rootRoute.addChildren([
   homeRoute,
@@ -152,6 +153,7 @@ const routeTree = rootRoute.addChildren([
   favoritesRoute,
   poolsRoute,
   poolRoute,
+  commentsRoute,
 ]);
 
 export const router = createRouter({ routeTree });

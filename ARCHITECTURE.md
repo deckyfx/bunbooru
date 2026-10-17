@@ -260,8 +260,9 @@ A plugin's backend lives in its package; its UI lives in the web app, since
 `plugins → apps` is forbidden (a plugin can't import the Eden client, router
 or styles). `apps/web/src/plugins/registry.tsx` lists, per plugin:
 
-- **Slot widgets**: named places on a page (`admin`, `post-detail-aside`), a
-  closed union, each with the props the app supplies there;
+- **Slot widgets**: named places on a page (`admin`, `post-detail-aside`,
+  `post-detail-main`), a closed union, each with the props the app supplies
+  there;
 - **Pages**: plugin-owned routes (`/favorites`, `/pools/:id`), declared in
   `router.tsx` so links stay typed;
 - **Menu links** in the header and home page.

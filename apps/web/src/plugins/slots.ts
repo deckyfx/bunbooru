@@ -20,6 +20,8 @@ export interface SlotPropsMap {
   admin: Record<string, never>;
   /** The post page's sidebar, under the tags and history. */
   "post-detail-aside": { asset: AssetDto };
+  /** The post page's main column, under the image (comments). */
+  "post-detail-main": { asset: AssetDto };
 }
 
 /** A slot name. Closed: a typo is a type error, not a widget that never renders. */
