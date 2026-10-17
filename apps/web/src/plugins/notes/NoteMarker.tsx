@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 
 import { useMutation } from "@tanstack/react-query";
-import { Pencil, Trash2 } from "lucide-react";
+import { Move, Pencil, Trash2 } from "lucide-react";
 
 import { unwrap } from "../../lib/api";
 import { authErrorMessage } from "../../lib/auth";
@@ -16,9 +16,21 @@ const ICON_BUTTON_CLASS =
  * One note over the image: a translucent, focusable box whose text shows in a
  * popover on hover, on keyboard focus, or pinned open by a click or tap (touch
  * has no hover). The text is plain (`whitespace-pre-wrap`), never HTML. Its
- * author or an admin gets Edit text and Delete in the popover.
+ * author or an admin gets Edit text, Move / resize (`onAdjust`) and Delete in
+ * the popover. While another note is being adjusted it is `inactive`: still
+ * shown, but inert (no pointer, no focus, no popover).
  */
-export function NoteMarker({ note, onChanged }: { note: NoteDto; onChanged: () => void }) {
+export function NoteMarker({
+  note,
+  onChanged,
+  onAdjust,
+  inactive = false,
+}: {
+  note: NoteDto;
+  onChanged: () => void;
+  onAdjust: () => void;
+  inactive?: boolean;
+}) {
   const popoverId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
@@ -44,7 +56,7 @@ export function NoteMarker({ note, onChanged }: { note: NoteDto; onChanged: () =
   });
 
   const busy = editing || confirmingDelete;
-  const open = hovered || focused || pinned || busy;
+  const open = !inactive && (hovered || focused || pinned || busy);
 
   // A pinned or busy popover closes on a press anywhere else.
   useEffect(() => {
@@ -71,8 +83,9 @@ export function NoteMarker({ note, onChanged }: { note: NoteDto; onChanged: () =
   return (
     <div
       ref={rootRef}
-      className="pointer-events-auto absolute"
+      className={`${inactive ? "pointer-events-none opacity-60" : "pointer-events-auto"} absolute`}
       style={{ ...boxStyle(note), zIndex: open ? 20 : 10 }}
+      inert={inactive}
       onPointerEnter={(e) => {
         if (e.pointerType === "mouse") setHovered(true);
       }}
@@ -97,6 +110,8 @@ export function NoteMarker({ note, onChanged }: { note: NoteDto; onChanged: () =
         aria-label={`Note: ${excerpt(note.body)}`}
         aria-expanded={open}
         aria-controls={popoverId}
+        // The layer returns focus here when this note leaves adjust mode.
+        data-note-id={note.id}
         onClick={() => setPinned((value) => !value)}
         className="block h-full w-full cursor-help border border-black/60 bg-yellow-100/30 outline-none ring-1 ring-white/70 hover:bg-yellow-100/50 focus-visible:ring-2 focus-visible:ring-link"
       />
@@ -137,6 +152,16 @@ export function NoteMarker({ note, onChanged }: { note: NoteDto; onChanged: () =
                   className={ICON_BUTTON_CLASS}
                 >
                   <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Move or resize note"
+                  title="Move / resize"
+                  onClick={onAdjust}
+                  disabled={remove.isPending}
+                  className={ICON_BUTTON_CLASS}
+                >
+                  <Move className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
