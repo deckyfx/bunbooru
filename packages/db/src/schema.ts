@@ -414,6 +414,13 @@ export type PluginTable = typeof pluginTables.$inferSelect;
 export type NewPluginTable = typeof pluginTables.$inferInsert;
 
 /**
+ * What an API key may do. `full`: anything its owner can. `upload`: add posts
+ * only (one-shot and resumable uploads), for ingest clients (the browser
+ * extension, a phone), so a leaked key can't read private state, edit or delete.
+ */
+export type ApiKeyScope = "full" | "upload";
+
+/**
  * A long-lived API key for non-browser (Bearer) clients. Like sessions, the DB
  * stores only the sha256 hash of the opaque token (`bnb_…`); the raw key is shown
  * once at creation. No expiry — a key is valid until revoked. Cascades when the
@@ -428,10 +435,16 @@ export const apiKeys = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    // Text + CHECK rather than a pg enum (adding a value later needs no
+    // two-pass migration).
+    scope: text("scope").$type<ApiKeyScope>().notNull().default("full"),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("api_keys_user_idx").on(table.userId)],
+  (table) => [
+    index("api_keys_user_idx").on(table.userId),
+    check("api_keys_scope_valid", sql`${table.scope} in ('full', 'upload')`),
+  ],
 );
 
 /**

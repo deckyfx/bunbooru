@@ -118,7 +118,7 @@ export {
   type JobService,
 } from "./jobs/job-service";
 export { createJobRunner, retryDelayMs, type JobLogger, type JobRunner, type JobRunnerOptions } from "./jobs/job-runner";
-export type { JobCount, JsonValue } from "@bunbooru/db";
+export type { ApiKeyScope, JobCount, JsonValue } from "@bunbooru/db";
 // Plugin search metatags (`fav:`, `pool:`) — the registry the API's plugin host fills.
 export {
   CORE_METATAG_KEYS,
@@ -166,9 +166,11 @@ export {
   createAuthService,
   MIN_PASSWORD_LENGTH,
   type ApiKeySummary,
+  type Authenticated,
   type AuthService,
   type AuthServiceConfig,
   type CreatedApiKey,
+  type CredentialKind,
   type LoginResult,
   type PublicUser,
   type RegisterInput,

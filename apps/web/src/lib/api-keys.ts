@@ -28,12 +28,12 @@ export function useApiKeys() {
   });
 }
 
-/** Mint a named key; the response carries the raw token to show once. */
+/** Mint a named key of a scope; the response carries the raw token to show once. */
 export function useCreateApiKey() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (name: string): Promise<CreatedApiKeyDto> =>
-      unwrap(await api.api.v1.account["api-keys"].post({ name })),
+    mutationFn: async ({ name, scope }: { name: string; scope: ApiKeyDto["scope"] }): Promise<CreatedApiKeyDto> =>
+      unwrap(await api.api.v1.account["api-keys"].post({ name, scope })),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: API_KEYS_KEY }),
   });
 }
