@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Bunbooru settings</title>
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      main { max-width: 520px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Bun<span>booru</span> settings</h1>
+      <form id="form">
+        <label for="server">Your Bunbooru address</label>
+        <input id="server" placeholder="https://booru.example" autocomplete="url" spellcheck="false" required />
+
+        <label for="key">API key</label>
+        <input id="key" type="password" placeholder="bnb_…" autocomplete="off" spellcheck="false" required />
+        <p class="muted">
+          Create one under <b>Account → API keys</b> as <b>Upload only</b>, one per browser, so you can
+          revoke it alone. It's kept in this browser's extension storage and never shown to web pages.
+        </p>
+
+        <button type="submit" id="save">Save and test</button>
+        <p id="status" role="status"></p>
+      </form>
+
+      <h2>Images on other sites</h2>
+      <p class="muted">
+        To fetch an image the way the page shows it (images behind a login, like Pixiv originals),
+        the extension needs access to the sites you upload from. Without it, most public images
+        still work.
+      </p>
+      <p id="sites-status" class="muted"></p>
+      <button type="button" class="secondary" id="grant-sites">Allow access to all sites</button>
+    </main>
+    <script type="module" src="options.ts"></script>
+  </body>
+</html>

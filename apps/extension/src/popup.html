@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Bunbooru</title>
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      body { width: 340px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Bun<span>booru</span></h1>
+
+      <section id="setup" hidden>
+        <p>Connect the extension to your Bunbooru first.</p>
+        <button type="button" id="open-options">Open settings</button>
+      </section>
+
+      <section id="ready" hidden>
+        <p class="muted" id="who">Checking…</p>
+
+        <label for="tags">Tags for the next uploads</label>
+        <input id="tags" list="tag-suggestions" autocomplete="off" spellcheck="false" placeholder="optional, space-separated" />
+        <datalist id="tag-suggestions"></datalist>
+        <p class="muted">Right-click an image → <b>Upload to Bunbooru</b>. Tags are optional; tag later from <i>Untagged</i>.</p>
+
+        <button type="button" id="upload-page">Upload all images on this page</button>
+        <p class="muted" id="page-status" role="status"></p>
+
+        <h2>Recent</h2>
+        <ul id="history"></ul>
+        <p class="muted" id="history-empty">Nothing uploaded yet.</p>
+        <p><button type="button" class="linklike" id="settings-link">Settings</button></p>
+      </section>
+    </main>
+    <script type="module" src="popup.ts"></script>
+  </body>
+</html>

@@ -9,7 +9,7 @@
     "plugins/*"
   ],
   "scripts": {
-    "typecheck": "bun check && bun check -p apps/web",
+    "typecheck": "bun check && bun check -p apps/web && bun check -p apps/extension",
     "test": "NODE_ENV=test bun test",
     "dev": "bun --watch scripts/dev.ts",
     "dev:api": "bun --watch apps/api/src/index.ts",
@@ -24,6 +24,7 @@
     "cr": "bun bin/cr.ts",
     "build": "bun run apps/api/build.ts",
     "build:web": "bun run apps/web/build.ts",
+    "build:extension": "bun run apps/extension/build.ts",
     "docker:build": "docker build -t bunbooru:latest .",
     "services:up": "docker compose up -d",
     "services:up:redis": "docker compose --profile redis up -d",

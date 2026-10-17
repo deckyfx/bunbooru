@@ -1,0 +1,17 @@
+{
+  "name": "@bunbooru/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run build.ts",
+    "typecheck": "bun check -p ."
+  },
+  "dependencies": {
+    "@bunbooru/api": "workspace:*",
+    "@elysiajs/eden": "^1.4.9"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.5"
+  }
+}
