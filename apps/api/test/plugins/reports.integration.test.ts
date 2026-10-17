@@ -39,7 +39,7 @@ describe.skipIf(!TEST_DATABASE_URL)("reports plugin (integration)", () => {
 
   beforeEach(async () => {
     await live.db.execute(
-      sql`TRUNCATE TABLE assets, asset_tags, tags, users, sessions, reports_reports RESTART IDENTITY CASCADE`,
+      sql`TRUNCATE TABLE assets, asset_tags, tags, users, sessions, reports_reports, asset_tombstones RESTART IDENTITY CASCADE`,
     );
     admin = await live.user("admin"); // the first account is the admin
     member = await live.user("member");
@@ -178,5 +178,40 @@ describe.skipIf(!TEST_DATABASE_URL)("reports plugin (integration)", () => {
       live.request(`/plugins/reports/assets/${id}/delete`, { method: "POST", token, body: JSON.stringify({}) });
     expect((await remove()).status).toBe(401);
     expect((await remove(member.token)).status).toBe(403);
+  });
+
+  it("deletes a reported post from the queue, end to end", async () => {
+    const id = await live.post("g", member.id);
+    await report(id, { reason: "not allowed here" });
+    const res = await live.request(`/plugins/reports/assets/${id}/delete`, {
+      method: "POST",
+      token: admin.token,
+      body: JSON.stringify({ reason: "  breaks the rules " }),
+    });
+    expect(res.status).toBe(204);
+
+    // Core deleted the post and left a tombstone carrying the trimmed reason…
+    expect((await live.request(`/assets/${id}`)).status).toBe(404);
+    const [tombstone] = await live.db.execute<{ reason: string; deleted_by_id: string }>(
+      sql`SELECT reason, deleted_by_id FROM asset_tombstones WHERE asset_id = ${id}`,
+    );
+    expect(tombstone?.reason).toBe("breaks the rules");
+    expect(Number(tombstone?.deleted_by_id)).toBe(admin.id); // a raw bigint comes back as text
+    // …and the plugin's own asset.deleted listener closed the report.
+    let resolved: QueuePage = { items: [], nextBefore: null };
+    for (let i = 0; i < 50 && resolved.items.length === 0; i++) {
+      resolved = await queue("?status=resolved");
+      if (resolved.items.length === 0) await Bun.sleep(20);
+    }
+    expect(resolved.items).toHaveLength(1);
+    expect(resolved.items[0]).toMatchObject({ assetId: id, resolution: "Post deleted" });
+
+    // Gone now: a second delete is a 404.
+    const again = await live.request(`/plugins/reports/assets/${id}/delete`, {
+      method: "POST",
+      token: admin.token,
+      body: JSON.stringify({}),
+    });
+    expect(again.status).toBe(404);
   });
 });
