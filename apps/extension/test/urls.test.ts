@@ -55,7 +55,9 @@ describe("parseTags", () => {
 
 describe("originPattern", () => {
   it("builds a host permission pattern for web origins only", () => {
-    expect(originPattern("https://cdn.example:8443/a.png")).toBe("https://cdn.example:8443/*");
+    // No port: Firefox rejects ports in match patterns; portless covers all ports in Chrome.
+    expect(originPattern("https://cdn.example:8443/a.png")).toBe("https://cdn.example/*");
+    expect(originPattern("http://192.168.0.10:3000")).toBe("http://192.168.0.10/*");
     expect(originPattern("data:image/png;base64,x")).toBeNull();
     expect(originPattern("nope")).toBeNull();
   });

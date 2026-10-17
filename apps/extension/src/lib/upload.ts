@@ -9,6 +9,9 @@ export interface ImageSource {
   pageUrl?: string;
 }
 
+/** A user-facing reason the image couldn't be fetched. */
+class FetchProblem extends Error {}
+
 /**
  * Fetch an image the way the page saw it. Cookies for the image's site go
  * along only when the user granted the extension that site (so a gated image,
@@ -17,12 +20,24 @@ export interface ImageSource {
 async function fetchImage(src: string): Promise<Blob> {
   const pattern = originPattern(src);
   const granted = pattern ? await chrome.permissions.contains({ origins: [pattern] }) : false;
-  const res = await fetch(src, { credentials: granted ? "include" : "omit", referrerPolicy: "no-referrer-when-downgrade" });
-  if (!res.ok) throw new Error(`The site answered ${res.status} for this image.`);
+  let res: Response;
+  try {
+    res = await fetch(src, { credentials: granted ? "include" : "omit" });
+  } catch {
+    // Without access to the image's site, the fetch is cross-origin and most
+    // image hosts don't allow that (no CORS headers): say how to fix it.
+    throw new FetchProblem(
+      granted || src.startsWith("data:")
+        ? "Couldn't fetch the image."
+        : "Couldn't fetch the image. Allow the extension access to all sites in its settings.",
+    );
+  }
+  if (!res.ok) throw new FetchProblem(`The site answered ${res.status} for this image.`);
   const blob = await res.blob();
-  if (!blob.type.startsWith("image/")) throw new Error("That address didn't return an image.");
+  if (!blob.type.startsWith("image/")) throw new FetchProblem("That address didn't return an image.");
   return blob;
 }
+
 
 /** A short form of an address for the popup's list. */
 function shorten(src: string): string {
@@ -49,22 +64,21 @@ async function attempt({ src, pageUrl }: ImageSource): Promise<UploadRecord["out
   try {
     blob = await fetchImage(src);
   } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error && error.message.startsWith("The site") ? error.message : "Couldn't fetch the image.",
-    };
+    return { ok: false, error: error instanceof FetchProblem ? error.message : "Couldn't fetch the image." };
   }
 
-  const res = await apiFor(settings).api.v1.assets.post({
-    file: new File([blob], filenameFor(src, blob.type), { type: blob.type }),
-    ...(pageUrl && /^https?:/i.test(pageUrl) ? { source: pageUrl.slice(0, 2048) } : {}),
-    ...(settings.tags.trim() ? { tags: settings.tags.trim() } : {}),
-  });
   try {
+    // Inside the try: an unreachable server (DNS, TLS, refused) rejects the
+    // fetch itself, which must become a reported failure, not a throw.
+    const res = await apiFor(settings).api.v1.assets.post({
+      file: new File([blob], filenameFor(src, blob.type), { type: blob.type }),
+      ...(pageUrl && /^https?:/i.test(pageUrl) ? { source: pageUrl.slice(0, 2048) } : {}),
+      ...(settings.tags.trim() ? { tags: settings.tags.trim() } : {}),
+    });
     const asset = unwrap(res);
     // 200 = an identical file was already there (no new post, tags left alone).
     return { ok: true, assetId: asset.id, deduped: res.status === 200 };
   } catch (error) {
-    return { ok: false, error: errorMessage(error, "The upload failed.") };
+    return { ok: false, error: errorMessage(error, `Couldn't upload to ${settings.serverUrl}.`) };
   }
 }

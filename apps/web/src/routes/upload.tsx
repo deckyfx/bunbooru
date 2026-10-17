@@ -45,6 +45,8 @@ export function UploadPage() {
   const [error, setError] = useState<string | null>(null);
   // Several files at once go to the batch uploader instead.
   const [batchFiles, setBatchFiles] = useState<File[] | null>(null);
+  // Bumped per batch, so each one mounts a fresh batch list (no stale rows).
+  const [batchId, setBatchId] = useState(0);
   const pending = usePendingUploads((s) => s.batch);
   const clearPending = usePendingUploads((s) => s.clear);
   const handPending = usePendingUploads((s) => s.hand);
@@ -110,9 +112,12 @@ export function UploadPage() {
       if (files.length > 0) setError("Please choose an image file.");
       return;
     }
-    if (images.length === 1) void startUpload(images[0]!);
-    else {
+    if (images.length === 1) {
+      setBatchFiles(null); // a single image leaves batch mode
+      void startUpload(images[0]!);
+    } else {
       reset();
+      setBatchId((id) => id + 1);
       setBatchFiles(images);
     }
   }
@@ -177,7 +182,7 @@ export function UploadPage() {
           .
         </p>
       ) : batchFiles ? (
-        <BatchUpload files={batchFiles} onDone={() => setBatchFiles(null)} />
+        <BatchUpload key={batchId} files={batchFiles} onDone={() => setBatchFiles(null)} />
       ) : asset ? (
         <MetadataEditor asset={asset} previewUrl={previewUrl} deduped={deduped} onReset={reset} />
       ) : (

@@ -28,9 +28,11 @@
 
       <h2>Images on other sites</h2>
       <p class="muted">
-        To fetch an image the way the page shows it (images behind a login, like Pixiv originals),
-        the extension needs access to the sites you upload from. Without it, most public images
-        still work.
+        Images usually come from a different site than the page (an image server or CDN), and
+        most of those don't let other sites read their images. So the extension needs access to
+        the sites you upload from: <b>allow all sites</b> for uploads to just work. It also sends
+        your login cookies for that site along, so images only you can see come through. Without
+        it, only images that allow cross-site loading can be fetched.
       </p>
       <p id="sites-status" class="muted"></p>
       <button type="button" class="secondary" id="grant-sites">Allow access to all sites</button>

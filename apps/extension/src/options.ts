@@ -1,6 +1,6 @@
 import { apiFor, errorMessage, unwrap } from "./lib/api";
 import { loadSettings, saveSettings } from "./lib/settings";
-import { normalizeServerUrl } from "./lib/urls";
+import { normalizeServerUrl, originPattern } from "./lib/urls";
 
 /** An element the page is known to have. */
 function el<T extends HTMLElement>(id: string): T {
@@ -28,7 +28,8 @@ async function main(): Promise<void> {
 
     // The extension may only talk to origins it was granted (part of the
     // click, so the browser shows its prompt).
-    const granted = await chrome.permissions.request({ origins: [`${normalized.origin}/*`] });
+    const pattern = originPattern(normalized.origin);
+    const granted = pattern !== null && (await chrome.permissions.request({ origins: [pattern] }));
     if (!granted) return show("The extension needs permission to reach your server.", "bad");
 
     server.value = normalized.origin;

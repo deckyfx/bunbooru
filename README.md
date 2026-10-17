@@ -195,8 +195,10 @@ bun run docker:build       # the same binary in a distroless image (port 3000)
   then load `apps/extension/dist/chrome` (chrome://extensions → *Load
   unpacked*) or `apps/extension/dist/firefox` (about:debugging → *Load
   Temporary Add-on*). In its settings, enter your Bunbooru address and an
-  upload-only key; optionally allow all sites, so images behind a login
-  (Pixiv originals) are fetched with that site's cookies.
+  upload-only key, and allow access to all sites: images are usually served
+  from another site (a CDN) that doesn't allow cross-site reads, so without
+  it most uploads fail. Hosts that check the `Referer` header (Pixiv
+  originals) are not supported yet.
 - **API keys:** Account → API keys. Give each device its own **upload-only**
   key: it can add posts (`POST /api/v1/assets`, with optional
   space-separated `tags`, and the resumable `/api/v1/uploads` routes) and

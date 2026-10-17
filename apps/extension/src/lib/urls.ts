@@ -64,11 +64,15 @@ export function parseTags(input: string): string[] {
   return [...new Set(input.trim().toLowerCase().split(/\s+/).filter(Boolean))];
 }
 
-/** The `origin/*` match pattern for a URL's origin, for `chrome.permissions`. */
+/**
+ * The host permission pattern for a URL, for `chrome.permissions`. Without the
+ * port: Firefox doesn't support ports in match patterns (one with a port
+ * matches nothing there), and in Chrome a portless pattern covers every port.
+ */
 export function originPattern(url: string): string | null {
   try {
-    const { protocol, host } = new URL(url);
-    return protocol === "https:" || protocol === "http:" ? `${protocol}//${host}/*` : null;
+    const { protocol, hostname } = new URL(url);
+    return protocol === "https:" || protocol === "http:" ? `${protocol}//${hostname}/*` : null;
   } catch {
     return null;
   }
