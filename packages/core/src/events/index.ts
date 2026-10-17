@@ -19,9 +19,27 @@ export interface AssetCreatedEvent {
   createdAt: Date;
 }
 
+/**
+ * Payload for {@link CoreEventMap}'s `asset.deleted` — emitted after a post was
+ * deleted (its row, tags and file are gone; a tombstone keeps the hashes).
+ * Plugins drop their own rows for it (thumbnails, favorites, pool entries,
+ * open reports): there are no cross-schema foreign keys to do it for them.
+ */
+export interface AssetDeletedEvent {
+  id: number;
+  sha256: string;
+  md5: string;
+  /** Who deleted it; null for a system deletion. */
+  deletedById: number | null;
+  /** The moderator's reason (may be empty). */
+  reason: string;
+  deletedAt: Date;
+}
+
 /** The Core's event map — the single source of truth for emit/subscribe types. */
 export interface CoreEventMap {
   "asset.created": AssetCreatedEvent;
+  "asset.deleted": AssetDeletedEvent;
 }
 
 /** The Core's typed event bus. */

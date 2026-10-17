@@ -300,8 +300,20 @@ banned_hashes(sha256, md5, reason, banned_by, banned_at)
 
 ## 10. Interaction with asset deletion and mobile sync
 
-Assets currently have **no delete path** (no repository `delete`, no
-`deletedAt`). When deletion is designed it must account for this plan:
+> **Update: deletion has shipped, as a HARD delete with a tombstone**, not the
+> soft delete (`deletedAt`, bytes awaiting GC) this section sketched. The asset
+> row, its tag links and its file are removed in one go; an `asset_tombstones`
+> row keeps the sha256, md5, who deleted it, why and when (see "Deleting Posts"
+> in ARCHITECTURE.md). The tombstone is what a future `/assets/exists` reports
+> as `deleted`: a hash with a tombstone and no live post. A hash can carry
+> several tombstones (uploaded and deleted more than once). With a hard delete
+> no bytes linger after deletion, so the "`deleted` outranks `present`" rule
+> below only bites when the same bytes were re-uploaded after a deletion:
+> whether that live post reads `present` or `deleted` is to be decided with the
+> endpoint (§11). The rest of this section is the original plan.
+
+Assets had **no delete path** when this was written (no repository `delete`,
+no `deletedAt`). When deletion is designed it must account for this plan:
 
 **Delete and ban are separate actions.** Most deletes are "wrong crop,
 re-uploading the good one" — auto-banning on delete makes that unfixable.

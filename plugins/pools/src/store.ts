@@ -219,6 +219,24 @@ export function removePost(db: DB, poolId: number, assetId: number): Promise<boo
   });
 }
 
+/**
+ * Take a (deleted) post out of every pool it's in, closing each gap so every
+ * pool's positions stay 1..n. One {@link removePost} per pool, so each edit
+ * holds only that pool's lock (never several at once, so no lock-order
+ * deadlock with a concurrent multi-pool edit). Returns how many pools changed.
+ */
+export async function removeAssetEverywhere(db: DB, assetId: number): Promise<number> {
+  const memberships = await db
+    .select({ poolId: poolPosts.poolId })
+    .from(poolPosts)
+    .where(eq(poolPosts.assetId, assetId));
+  let changed = 0;
+  for (const { poolId } of memberships) {
+    if (await removePost(db, poolId, assetId)) changed += 1;
+  }
+  return changed;
+}
+
 /** Every pool a post is in, with its position and neighbours there, by name. */
 export async function poolsForAsset(db: DB, assetId: number): Promise<PoolMembership[]> {
   const rows = await db.execute<{

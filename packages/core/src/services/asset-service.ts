@@ -141,6 +141,14 @@ export interface AssetService {
    * moving the file into storage instead of copying it.
    */
   createFromSource(source: IngestSource, meta?: CreateAssetMeta): Promise<CreateAssetResult>;
+  /**
+   * Delete a post for good: its row, tag links and stored file go, and a
+   * tombstone keeps its hashes, who deleted it, why and when. Emits
+   * `asset.deleted` so plugins drop their rows. False when there's no such
+   * post. Re-uploading the same bytes later makes a new post. Authorization
+   * is the caller's job.
+   */
+  delete(id: number, by: { deletedById: number | null; reason: string }): Promise<boolean>;
   /** Patch an asset's mutable metadata (rating/source); null if it doesn't exist. */
   update(id: number, patch: AssetUpdate): Promise<Asset | null>;
   /** Open an asset's stored bytes for streaming, or null if the asset is absent. */
@@ -309,6 +317,26 @@ export function createAssetService(
     return { asset, deduped: false };
   }
 
+  /**
+   * Best-effort removal of a deleted post's stored file. Keys are
+   * content-addressed, so if the same bytes were re-uploaded between the row's
+   * deletion and now, the new post owns this very object: it is kept. A failed
+   * delete is swallowed on purpose: the row is already gone, and the orphan is
+   * reclaimed by {@link AssetService.gcOrphanedBlobs}. (A re-upload landing
+   * exactly between the check and the delete can still lose its blob, the same
+   * accepted window as the orphan GC: `openFile` then 404s, never serves wrong
+   * bytes.)
+   */
+  async function removeBlob(storageKey: string): Promise<void> {
+    try {
+      const referenced = await repository.findReferencedStorageKeys([storageKey]);
+      if (referenced.has(storageKey)) return;
+      await storage.delete(storageKey);
+    } catch {
+      // Left for the orphan-blob GC (see above).
+    }
+  }
+
   return {
     async list(options = {}) {
       const perPage = Math.min(toPositiveInt(options.perPage, DEFAULT_PER_PAGE), MAX_PER_PAGE);
@@ -425,6 +453,26 @@ export function createAssetService(
       return source.kind === "file"
         ? ingest(Bun.file(source.path), meta, source.path)
         : ingest(source.blob, meta);
+    },
+
+    async delete(id, { deletedById, reason }) {
+      const deletedAt = new Date();
+      // Row, tag links and tombstone go together in one transaction.
+      const deleted = await repository.deleteWithTombstone(id, { deletedById, reason, now: deletedAt });
+      if (!deleted) return false;
+      await removeBlob(deleted.storageKey);
+      // Fire-and-forget like `asset.created`: plugins drop their own rows
+      // (thumbnails, favorites, pool entries); a failing listener can't undo
+      // or delay the deletion.
+      events?.emit("asset.deleted", {
+        id: deleted.id,
+        sha256: deleted.sha256,
+        md5: deleted.md5,
+        deletedById,
+        reason,
+        deletedAt,
+      });
+      return true;
     },
 
     update(id, patch) {

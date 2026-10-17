@@ -169,6 +169,7 @@ function fakeAssetService(finalize: AssetService["createFromSource"]): AssetServ
     getById: unused as AssetService["getById"],
     getMany: unused as AssetService["getMany"],
     update: unused as AssetService["update"],
+    delete: unused as AssetService["delete"],
     neighbors: unused as AssetService["neighbors"],
     openFile: unused as AssetService["openFile"],
     gcOrphanedBlobs: unused as AssetService["gcOrphanedBlobs"],

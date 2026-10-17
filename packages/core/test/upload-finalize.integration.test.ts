@@ -55,6 +55,7 @@ function memoryRepo(): AssetRepository {
     },
     update: async () => null,
     neighbors: async () => ({ newerId: null, olderId: null }),
+    deleteWithTombstone: async () => null,
   };
 }
 

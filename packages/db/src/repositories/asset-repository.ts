@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, inArray, lt, sql, type SQL } from "drizzle-orm";
 
-import { assets, type Asset, type NewAsset } from "../schema";
+import { assets, assetTombstones, type Asset, type NewAsset } from "../schema";
 import type { DB } from "../client";
 
 /** The asset columns a listing can be sorted by (each paired with `id`). */
@@ -87,7 +87,27 @@ export interface AssetRepository {
    * `olderId` the next-lower id. Either is null at the ends. Unfiltered (all posts).
    */
   neighbors(id: number): Promise<{ newerId: number | null; olderId: number | null }>;
+  /**
+   * Hard-delete one asset and leave a tombstone, in ONE transaction: lock the
+   * row, delete it (its tag links, tag history and view ledger cascade; the
+   * asset_tags trigger decrements each tag's `post_count`), and record its
+   * hashes with who deleted it, why and when. Returns what the caller still
+   * needs (the stored file to remove, the hashes to announce), or null when
+   * there's no such asset. The stored FILE is the caller's job.
+   */
+  deleteWithTombstone(id: number, by: AssetDeletion): Promise<DeletedAsset | null>;
 }
+
+/** Who deleted an asset, why, and when (recorded on its tombstone). */
+export interface AssetDeletion {
+  /** The deleting user; null for a system deletion. */
+  deletedById: number | null;
+  reason: string;
+  now: Date;
+}
+
+/** What survives a {@link AssetRepository.deleteWithTombstone}: enough to clean up and announce. */
+export type DeletedAsset = Pick<Asset, "id" | "storageKey" | "sha256" | "md5">;
 
 /** Mutable-after-create asset fields (immutable: dimensions, hashes, storage key). */
 export type AssetUpdate = Partial<Pick<NewAsset, "rating" | "source">>;
@@ -208,6 +228,29 @@ export function createAssetRepository(db: DB): AssetRepository {
         .orderBy(desc(assets.id))
         .limit(1);
       return { newerId: newer?.id ?? null, olderId: older?.id ?? null };
+    },
+
+    deleteWithTombstone(id, { deletedById, reason, now }) {
+      return db.transaction(async (tx) => {
+        // Lock first, so a concurrent tag edit (which locks the same row) either
+        // finishes before the delete or sees the row gone, never half of each.
+        const [locked] = await tx
+          .select({ id: assets.id, storageKey: assets.storageKey, sha256: assets.sha256, md5: assets.md5 })
+          .from(assets)
+          .where(eq(assets.id, id))
+          .for("update");
+        if (!locked) return null;
+        await tx.delete(assets).where(eq(assets.id, id));
+        await tx.insert(assetTombstones).values({
+          assetId: locked.id,
+          sha256: locked.sha256,
+          md5: locked.md5,
+          deletedById,
+          reason,
+          deletedAt: now,
+        });
+        return locked;
+      });
     },
   };
 }

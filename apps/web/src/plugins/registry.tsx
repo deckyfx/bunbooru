@@ -29,6 +29,12 @@ export const PLUGIN_UI: PluginUiRegistry = {
       component: lazy(() => import("./example/ExampleSection").then((m) => ({ default: m.ExampleSection }))),
     },
     {
+      pluginId: "reports",
+      id: "queue",
+      title: "Reports",
+      component: lazy(() => import("./reports/ReportsSection").then((m) => ({ default: m.ReportsSection }))),
+    },
+    {
       pluginId: "shimmie-import",
       id: "import",
       title: "Import from Shimmie",
@@ -74,6 +80,14 @@ export const PLUGIN_UI: PluginUiRegistry = {
       order: 100,
       visibility: "moderator",
       component: lazy(() => import("./banned-hashes/BanFileButton").then((m) => ({ default: m.BanFileButton }))),
+    },
+    {
+      pluginId: "reports",
+      id: "report",
+      title: "Report",
+      order: 90,
+      visibility: "member",
+      component: lazy(() => import("./reports/ReportPostButton").then((m) => ({ default: m.ReportPostButton }))),
     },
   ],
 };

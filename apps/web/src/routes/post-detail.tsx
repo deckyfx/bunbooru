@@ -4,6 +4,7 @@ import { Link, useParams } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 
 import { AssetImage } from "../components/asset-image";
+import { DeletePostControl } from "../components/delete-post-control";
 import { PluginSlot } from "../components/plugin-slot";
 import { RatingControl, type Rating } from "../components/rating-control";
 import { SearchBox } from "../components/popover/search-box";
@@ -151,8 +152,10 @@ function PostDetailView({ id }: { id: string }) {
                 download
                 className="flex items-center gap-1 rounded border border-line px-2 py-1 hover:border-link"
               >
-                <Download className="h-3.5 w-3.5" /> Download
+                <Download className="h-3.5 w-3.5" aria-hidden="true" /> Download
               </a>
+              {/* Uploader or admin only; renders nothing for anyone else. */}
+              <DeletePostControl asset={asset} />
             </div>
           </>
         )}

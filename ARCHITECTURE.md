@@ -182,6 +182,30 @@ Background jobs triggered: Thumbnail, OCR, AI, Notifications, Search Index.
 
 ---
 
+# Deleting Posts
+
+```
+DELETE /assets/:id → (uploader or admin) → one transaction:
+    lock row → delete asset (tag links, tag history, views cascade;
+    tags.post_count decremented by trigger) → insert tombstone
+  → delete stored file (best effort) → Emit AssetDeleted → plugin cleanup
+```
+
+Deletion is a **hard delete with a tombstone**, with no undo. The asset row,
+its tag links and its file are gone; an `asset_tombstones` row keeps the
+sha256, md5, who deleted it, why and when. The sha256 unique index is freed,
+so re-uploading the same bytes later makes a new post (and a later deletion
+a second tombstone). A file that can't be removed is left for the orphan-blob
+GC.
+
+There are no foreign keys from plugin tables into Core's, so each plugin
+drops its own rows on `asset.deleted` (thumbnailer: the thumbnail row and
+file; favorites: the post's favorites; pools: the post's entries, renumbering
+each pool). Listeners catch and log their own errors; a failing one never
+affects the deletion.
+
+---
+
 # Search Pipeline
 
 ```
@@ -255,6 +279,7 @@ their own authorization. Slots are added when a real widget needs one. See
 
 ```
 AssetCreated → Thumbnail → OCR → AI → Notification → Analytics
+AssetDeleted → each plugin drops its rows for the post
 ```
 
 Plugins never call each other directly.

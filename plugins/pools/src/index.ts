@@ -6,7 +6,7 @@ import { definePlugin, type PluginContext, type SearchProvider } from "@bunbooru
 
 import { buildPoolsRoutes, PLUGIN_ID } from "./routes";
 import { poolPosts } from "./schema";
-import { findPoolIdByName } from "./store";
+import { findPoolIdByName, removeAssetEverywhere } from "./store";
 
 export { buildPoolsRoutes, type PoolsPluginApp } from "./routes";
 
@@ -38,7 +38,7 @@ export const plugin = definePlugin({
   name: "Pools",
   version: "1.0.0",
   description: "Ordered sets of posts (comics, series), with pool pages and pool:<id> search.",
-  capabilities: ["routes", "tables", "search-providers", "ui-slots", "pages"],
+  capabilities: ["routes", "tables", "events", "search-providers", "ui-slots", "pages"],
   tables: ["pools_pools", "pools_posts"],
   migrations: {
     // Migrations embedded into the binary (regenerate: `bun run gen:migrations`).
@@ -46,6 +46,18 @@ export const plugin = definePlugin({
     migrationsTable: "__drizzle_migrations_pools",
   },
   register(ctx) {
+    // A deleted post leaves every pool it was in, closing the gaps it leaves.
+    ctx.events.on("asset.deleted", async (event) => {
+      try {
+        await removeAssetEverywhere(ctx.db, event.id);
+      } catch (error) {
+        ctx.log.error("pools_cleanup_failed", {
+          assetId: event.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+
     return {
       routes: buildPoolsRoutes(ctx),
       searchProviders: [poolSearch(ctx)],

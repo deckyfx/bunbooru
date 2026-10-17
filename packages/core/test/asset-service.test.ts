@@ -4,6 +4,7 @@ import type { Asset, AssetPage, AssetRepository, NewAsset } from "@bunbooru/db";
 import type { StorageProvider } from "@bunbooru/storage";
 
 import { UnsupportedMediaError, ValidationError } from "../src/errors";
+import { createCoreEvents, type AssetDeletedEvent } from "../src/events";
 import {
   createAssetService,
   DEFAULT_PER_PAGE,
@@ -113,6 +114,12 @@ function fakeRepo(initial: Asset[] = []): AssetRepository {
       const newer = rows.filter((r) => r.id > id).sort((a, b) => a.id - b.id)[0];
       const older = rows.filter((r) => r.id < id).sort((a, b) => b.id - a.id)[0];
       return { newerId: newer?.id ?? null, olderId: older?.id ?? null };
+    },
+    deleteWithTombstone: async (id) => {
+      const index = rows.findIndex((r) => r.id === id);
+      if (index === -1) return null;
+      const [row] = rows.splice(index, 1);
+      return row ? { id: row.id, storageKey: row.storageKey, sha256: row.sha256, md5: row.md5 } : null;
     },
   };
 }
@@ -462,5 +469,75 @@ describe("createAssetService.getById / openFile", () => {
 
     stored.clear(); // blob deleted out from under the DB row
     expect(await service.openFile(asset.id)).toBeNull();
+  });
+});
+
+describe("createAssetService.delete", () => {
+  it("removes the row and the stored file, and announces asset.deleted", async () => {
+    const { provider, stored } = fakeStorage();
+    const events = createCoreEvents();
+    const seen: AssetDeletedEvent[] = [];
+    events.on("asset.deleted", (event) => void seen.push(event));
+    const service = createAssetService(fakeRepo(), provider, events);
+    const { asset } = await service.create({ bytes: PNG_1x1 });
+
+    expect(await service.delete(asset.id, { deletedById: 3, reason: "dupe" })).toBe(true);
+
+    expect(await service.getById(asset.id)).toBeNull();
+    expect(stored.has(asset.storageKey)).toBe(false);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      id: asset.id,
+      sha256: asset.sha256,
+      md5: asset.md5,
+      deletedById: 3,
+      reason: "dupe",
+    });
+    expect(seen[0]?.deletedAt).toBeInstanceOf(Date);
+  });
+
+  it("returns false for an unknown post, touching nothing", async () => {
+    const events = createCoreEvents();
+    let emitted = 0;
+    events.on("asset.deleted", () => void (emitted += 1));
+    const service = createAssetService(fakeRepo([asset(1)]), fakeStorage().provider, events);
+
+    expect(await service.delete(99, { deletedById: null, reason: "" })).toBe(false);
+    expect(await service.getById(1)).not.toBeNull();
+    expect(emitted).toBe(0);
+  });
+
+  it("still succeeds when the file can't be deleted (left to the orphan GC)", async () => {
+    const { provider } = fakeStorage();
+    const failing = {
+      ...provider,
+      delete: async () => {
+        throw new Error("disk on fire");
+      },
+    };
+    const service = createAssetService(fakeRepo(), failing);
+    const { asset } = await service.create({ bytes: PNG_1x1 });
+
+    expect(await service.delete(asset.id, { deletedById: null, reason: "" })).toBe(true);
+    expect(await service.getById(asset.id)).toBeNull();
+  });
+
+  it("keeps the file when the same bytes were already re-uploaded as a new post", async () => {
+    const { provider, stored } = fakeStorage();
+    const repo = fakeRepo();
+    const service = createAssetService(repo, provider);
+    const { asset } = await service.create({ bytes: PNG_1x1 });
+    // Simulate the race: between the row's deletion and the file's, a re-upload
+    // of the same content inserted a new row pointing at the same object.
+    const { id: _oldId, ...sameContent } = asset;
+    const repoDelete = repo.deleteWithTombstone;
+    repo.deleteWithTombstone = async (id, by) => {
+      const gone = await repoDelete(id, by);
+      await repo.create(sameContent);
+      return gone;
+    };
+
+    expect(await service.delete(asset.id, { deletedById: null, reason: "" })).toBe(true);
+    expect(stored.has(asset.storageKey)).toBe(true);
   });
 });

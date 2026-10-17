@@ -65,6 +65,7 @@ export {
 export {
   createCoreEvents,
   type AssetCreatedEvent,
+  type AssetDeletedEvent,
   type CoreEventMap,
   type CoreEvents,
 } from "./events";
