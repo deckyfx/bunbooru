@@ -207,4 +207,22 @@ describe.skipIf(!TEST_DATABASE_URL)("comments plugin (integration)", () => {
     expect(rows.map((row) => Number(row.asset_id))).toEqual([kept]); // a raw bigint comes back as text
     expect((await thread(id)).items).toEqual([]);
   });
+
+  it("leaves no comment behind on a post deleted while it was being posted", async () => {
+    const id = await live.post("racing", admin.id);
+    // The post exists at the check, and is gone (its cleanup already run) by
+    // the time the comment is written.
+    const service = live.core.assetService;
+    const getById = service.getById;
+    let calls = 0;
+    service.getById = async (assetId) => (assetId === id && ++calls > 1 ? null : getById(assetId));
+    let res: Response;
+    try {
+      res = await comment(id, { body: "first!" });
+    } finally {
+      service.getById = getById;
+    }
+    expect(res.status).toBe(404);
+    expect([...(await live.db.execute(sql`SELECT 1 FROM comments_comments WHERE asset_id = ${id}`))]).toEqual([]);
+  });
 });

@@ -100,6 +100,12 @@ export function buildCommentsRoutes(ctx: PluginContext) {
             authorName: user.username,
             body: text,
           });
+          // Deleted after the check above, its `asset.deleted` cleanup already
+          // run: don't leave an orphan the recent feed would link to.
+          if (!(await ctx.services.assets.getById(params.id))) {
+            await deleteComment(ctx.db, comment.id);
+            throw new NotFoundError("Post not found");
+          }
           ctx.log.info("comment_posted", { id: comment.id, assetId: params.id, by: user.username });
           set.status = 201;
           return serializeComment(comment, user);
