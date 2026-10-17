@@ -26,7 +26,6 @@ const VERSION = pkg.version;
 const MENU = [
   { label: "Artists" },
   { label: "Tags" },
-  { label: "Wiki" },
   { label: "Forum" },
   { label: "More »" },
 ] as const;

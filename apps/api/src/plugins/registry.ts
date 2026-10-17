@@ -25,4 +25,5 @@ export const PLUGIN_REGISTRY: Record<string, () => Promise<PluginModule>> = {
   comments: () => import("@bunbooru/plugin-comments"),
   scores: () => import("@bunbooru/plugin-scores"),
   notes: () => import("@bunbooru/plugin-notes"),
+  wiki: () => import("@bunbooru/plugin-wiki"),
 };

@@ -14,7 +14,6 @@ const HOME_MENU = [
   { label: "Posts", to: "/posts" },
   { label: "Upload", to: "/uploads/new" },
   { label: "Tags", to: "/posts" },
-  { label: "Wiki", to: "/posts" },
   { label: "Forum", to: "/posts" },
 ] as const;
 

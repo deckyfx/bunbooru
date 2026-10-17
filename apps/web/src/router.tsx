@@ -136,6 +136,8 @@ const favoritesRoute = pluginRoute("favorites", "Favorites", "/favorites", PLUGI
 const poolsRoute = pluginRoute("pools", "Pools", "/pools", PLUGIN_PAGES.pools);
 const poolRoute = pluginRoute("pools", "Pools", "/pools/$poolId", PLUGIN_PAGES.pool);
 const commentsRoute = pluginRoute("comments", "Comments", "/comments", PLUGIN_PAGES.comments);
+const wikiRoute = pluginRoute("wiki", "Wiki", "/wiki", PLUGIN_PAGES.wiki);
+const wikiPageRoute = pluginRoute("wiki", "Wiki", "/wiki/$title", PLUGIN_PAGES.wikiPage);
 
 const routeTree = rootRoute.addChildren([
   homeRoute,
@@ -154,6 +156,8 @@ const routeTree = rootRoute.addChildren([
   poolsRoute,
   poolRoute,
   commentsRoute,
+  wikiRoute,
+  wikiPageRoute,
 ]);
 
 export const router = createRouter({ routeTree });
