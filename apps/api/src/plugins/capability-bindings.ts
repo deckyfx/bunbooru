@@ -1,4 +1,10 @@
-import type { IngestGuardRegistry, JobService, MailService, SearchProviderRegistry } from "@bunbooru/core";
+import type {
+  IngestGuardRegistry,
+  JobService,
+  MailService,
+  SearchProviderRegistry,
+  SortProviderRegistry,
+} from "@bunbooru/core";
 
 import type { PluginCapabilityBinding } from "./host";
 
@@ -28,6 +34,23 @@ export function searchBinding(providers: SearchProviderRegistry): PluginCapabili
   return {
     onActivate(plugin) {
       if (plugin.searchProviders.length > 0) providers.register(plugin.id, plugin.searchProviders);
+    },
+    onDeactivate(plugin) {
+      providers.unregister(plugin.id);
+    },
+  };
+}
+
+/**
+ * A plugin's sort keys (`order:score`) follow its active state, so a
+ * deactivated plugin's `order:` key falls back to the default order at once
+ * (and its outstanding page cursors stop matching). A key colliding with a
+ * Core order key or another plugin's throws, which fails that activation.
+ */
+export function sortBinding(providers: SortProviderRegistry): PluginCapabilityBinding {
+  return {
+    onActivate(plugin) {
+      if (plugin.sortProviders.length > 0) providers.register(plugin.id, plugin.sortProviders);
     },
     onDeactivate(plugin) {
       providers.unregister(plugin.id);

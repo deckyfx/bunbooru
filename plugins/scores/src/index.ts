@@ -4,10 +4,12 @@ import { definePlugin, type PluginContext } from "@bunbooru/plugin-sdk";
 
 import { buildScoresRoutes, PLUGIN_ID } from "./routes";
 import { scoreSearch } from "./search";
+import { scoreSort } from "./sort";
 import { removeAssetScores } from "./store";
 
 export { buildScoresRoutes, type ScoresPluginApp } from "./routes";
 export { scoreSearch } from "./search";
+export { scoreSort } from "./sort";
 export type { ScoreStatus, Vote } from "./votes";
 
 /**
@@ -29,14 +31,15 @@ export function onAssetDeleted(ctx: PluginContext) {
 
 /**
  * Scores: signed-in users vote a post up or down (▲ score ▼ on the post page),
- * everyone sees its net score, and `score:>10` searches by it.
+ * everyone sees its net score, `score:>10` searches by it and `order:score`
+ * sorts by it.
  */
 export const plugin = definePlugin({
   id: PLUGIN_ID,
   name: "Scores",
   version: "1.0.0",
-  description: "Up/down votes on posts, a net score on each, and score:<n> search.",
-  capabilities: ["routes", "tables", "events", "search-providers", "ui-slots"],
+  description: "Up/down votes on posts, a net score on each, score:<n> search and order:score.",
+  capabilities: ["routes", "tables", "events", "search-providers", "sort-providers", "ui-slots"],
   tables: ["scores_votes", "scores_totals"],
   migrations: {
     // Migrations embedded into the binary (regenerate: `bun run gen:migrations`).
@@ -45,6 +48,10 @@ export const plugin = definePlugin({
   },
   register(ctx) {
     ctx.events.on("asset.deleted", onAssetDeleted(ctx));
-    return { routes: buildScoresRoutes(ctx), searchProviders: [scoreSearch()] };
+    return {
+      routes: buildScoresRoutes(ctx),
+      searchProviders: [scoreSearch()],
+      sortProviders: [scoreSort()],
+    };
   },
 });

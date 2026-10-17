@@ -5,12 +5,18 @@ import {
   createIngestGuardRegistry,
   createJobService,
   createSearchProviderRegistry,
+  createSortProviderRegistry,
   type JobHandler,
   type PluginStateService,
 } from "@bunbooru/core";
 import type { JobRepository } from "@bunbooru/db";
 
-import { ingestGuardsBinding, jobsBinding, searchBinding } from "../../src/plugins/capability-bindings";
+import {
+  ingestGuardsBinding,
+  jobsBinding,
+  searchBinding,
+  sortBinding,
+} from "../../src/plugins/capability-bindings";
 import { createPluginHost } from "../../src/plugins/host";
 import type { LoadedPlugin } from "../../src/plugins/loader";
 
@@ -33,6 +39,7 @@ const plugin = (id: string, keys: string[]): LoadedPlugin => ({
   capabilities: ["search-providers"],
   tables: [],
   searchProviders: keys.map((key) => ({ key, compile: () => sql`true` })),
+  sortProviders: [],
   jobs: {},
   ingestGuards: [],
 });
@@ -70,6 +77,52 @@ describe("search capability binding", () => {
     await expect(host.activate("copycat")).rejects.toThrow(/already provided by favorites/);
     expect(host.isActive("copycat")).toBe(false);
     expect(providers.entries()).toEqual([{ key: "fav", ownerId: "favorites" }]);
+  });
+});
+
+/** A plugin providing sort keys (and nothing else). */
+const sortPlugin = (id: string, keys: string[]): LoadedPlugin => ({
+  ...plugin(id, []),
+  capabilities: ["sort-providers"],
+  sortProviders: keys.map((key) => ({ key, value: () => sql`0` })),
+});
+
+describe("sort capability binding", () => {
+  it("registers a plugin's sort keys on activate and removes them on deactivate", async () => {
+    const providers = createSortProviderRegistry();
+    const host = createPluginHost({
+      pluginState: state(),
+      loaded: [sortPlugin("scores", ["score"])],
+      seedActiveIds: [],
+      capabilityBindings: [sortBinding(providers)],
+    });
+    await host.init();
+    expect(providers.get("score")).toBeUndefined();
+
+    await host.activate("scores");
+    expect(providers.get("score")).toBeDefined();
+
+    await host.deactivate("scores");
+    expect(providers.get("score")).toBeUndefined();
+  });
+
+  it("fails activation of a plugin whose key collides, leaving it inactive", async () => {
+    const providers = createSortProviderRegistry();
+    const host = createPluginHost({
+      pluginState: state(),
+      loaded: [sortPlugin("scores", ["score"]), sortPlugin("copycat", ["score"]), sortPlugin("greedy", ["views"])],
+      seedActiveIds: [],
+      capabilityBindings: [sortBinding(providers)],
+    });
+    await host.init();
+    await host.activate("scores");
+
+    await expect(host.activate("copycat")).rejects.toThrow(/already provided by scores/);
+    expect(host.isActive("copycat")).toBe(false);
+    // A Core order key is refused the same way.
+    await expect(host.activate("greedy")).rejects.toThrow(/reserved by Core/);
+    expect(host.isActive("greedy")).toBe(false);
+    expect(providers.entries()).toEqual([{ key: "score", ownerId: "scores" }]);
   });
 });
 

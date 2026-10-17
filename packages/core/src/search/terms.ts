@@ -1,32 +1,40 @@
-import type { AssetOrder } from "@bunbooru/db";
+import { sql } from "drizzle-orm";
+
+import { assets, type AssetOrder } from "@bunbooru/db";
 import type { CompareOp } from "@bunbooru/search";
 
-/**
- * The `order:` vocabulary. A bare key sorts the way a booru user expects
- * (`id` oldest first, everything else biggest/newest first); `_asc` / `_desc`
- * pick the other way. The default browse order is `id_desc`.
- */
-const ORDERS: Record<string, AssetOrder> = {
-  id: { kind: "column", key: "id", direction: "asc" },
-  id_desc: { kind: "column", key: "id", direction: "desc" },
-  date: { kind: "column", key: "createdAt", direction: "desc" },
-  date_asc: { kind: "column", key: "createdAt", direction: "asc" },
-  views: { kind: "column", key: "viewCount", direction: "desc" },
-  views_asc: { kind: "column", key: "viewCount", direction: "asc" },
-  size: { kind: "column", key: "sizeBytes", direction: "desc" },
-  size_asc: { kind: "column", key: "sizeBytes", direction: "asc" },
-  tagcount: { kind: "column", key: "tagCount", direction: "desc" },
-  tagcount_asc: { kind: "column", key: "tagCount", direction: "asc" },
-  random: { kind: "random" },
-};
+import { CORE_ORDER_KEYS, CORE_ORDERS } from "./core-orders";
+import type { SortProviderLookup } from "./sort-providers";
 
 /** The order a listing uses when the query names none: newest first. */
 export const DEFAULT_ORDER: AssetOrder = { kind: "column", key: "id", direction: "desc" };
 
-/** The `order:` value's sort, or null when it isn't one we know. */
-export function parseOrder(value: string): AssetOrder | null {
-  const order = ORDERS[value.toLowerCase()];
-  return order ? { ...order } : null;
+/**
+ * The `order:` value's sort, or null when it isn't one we know. Core's keys
+ * win; anything else is looked up in `sortProviders` (the live plugin sort
+ * keys) as `<key>` or `<key>_desc` (biggest first, the default, like `views`)
+ * or `<key>_asc`. The plugin's expression is bound to `assets.id` here.
+ */
+export function parseOrder(value: string, sortProviders?: SortProviderLookup): AssetOrder | null {
+  const normalized = value.toLowerCase();
+  // Own keys only: `order:constructor` must not find Object.prototype's.
+  const order = Object.hasOwn(CORE_ORDERS, normalized) ? CORE_ORDERS[normalized] : undefined;
+  if (order) return { ...order };
+  if (!sortProviders) return null;
+
+  const suffix = /_(asc|desc)$/.exec(normalized);
+  const key = suffix ? normalized.slice(0, suffix.index) : normalized;
+  // Core keys are never plugin keys (the registry refuses them), so `id_asc`
+  // and the like can't reach a provider; checked here too for clarity.
+  if (CORE_ORDER_KEYS.has(key)) return null;
+  const provider = sortProviders.get(key);
+  if (!provider) return null;
+  return {
+    kind: "expression",
+    key,
+    value: provider.value({ id: sql`${assets.id}` }),
+    direction: suffix?.[1] === "asc" ? "asc" : "desc",
+  };
 }
 
 /** Half-open UTC interval `[from, until)`; a missing side is unbounded. */

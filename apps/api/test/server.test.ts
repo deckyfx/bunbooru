@@ -29,6 +29,7 @@ import {
   createCoreEvents,
   createIngestGuardRegistry,
   createSearchProviderRegistry,
+  createSortProviderRegistry,
   RegistrationConflictError,
   UnsupportedMediaError,
   UploadConflictError,
@@ -252,6 +253,7 @@ function stubCore(
     },
     events: createCoreEvents(),
     searchProviders: createSearchProviderRegistry(),
+    sortProviders: createSortProviderRegistry(),
     jobService: {} as Core["jobService"],
     ingestGuards: createIngestGuardRegistry(),
   };

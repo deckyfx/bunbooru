@@ -73,6 +73,7 @@ tag term (`kitty` finds posts tagged `cat`).
 | `user:alice` | uploaded by `alice` |
 | `md5:<digest>` | the post with that file hash |
 | `order:` | sort: `id`, `id_desc` (default), `date`, `date_asc`, `views`, `views_asc`, `size`, `size_asc`, `tagcount`, `tagcount_asc`, `random` |
+| `order:score`, `order:score_asc` | sort by net vote score, highest or lowest first; unvoted posts score 0 (Scores plugin, while it's active) |
 | `fav:alice` | favorited by `alice` (Favorites plugin) |
 | `pool:12`, `pool:my_comic` | in that pool, by id or name (Pools plugin) |
 | `score:` | net vote score, a whole number: `score:>10`, `score:<0`, `score:1..10`; unvoted posts score 0 (Scores plugin) |

@@ -248,7 +248,7 @@ plugins/
   in Core's `plugin_states` table (`ENABLED_PLUGINS` only seeds it on first
   boot). Every known plugin is loaded and its routes mounted at startup; an
   inactive one's routes 404 and its capabilities (mail transport, search
-  metatags) are uninstalled, with no restart.
+  metatags, sort keys) are uninstalled, with no restart.
 - No marketplace, no manifests to resolve, no network.
 - Because features build and ship together with Core, they share one
   `plugin-sdk` version. Integration is a compile-time contract, not a runtime
@@ -324,6 +324,12 @@ fav:alice → favorites plugin → exists (select 1 from favorites_posts f
 Core composes it with every other term (AND, OR, negation) and stays unaware
 of favorites. Providers are registered while their plugin is active, and a key
 that collides with Core's or another plugin's fails that plugin's activation.
+
+Sort keys work the same way through `PluginRegistration.sortProviders`
+(`order:score`, from scores): a provider returns a numeric, never-null SQL
+value per post, correlated to `asset.id`, and Core keyset-pages by
+`(value, id)`; while the plugin is inactive the key falls back to the default
+order.
 
 ---
 

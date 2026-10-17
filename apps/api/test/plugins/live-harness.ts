@@ -10,8 +10,13 @@ import {
   type StorageProvider,
 } from "@bunbooru/core";
 
-import { ingestGuardsBinding, jobsBinding, searchBinding } from "../../src/plugins/capability-bindings";
-import { createPluginHost } from "../../src/plugins/host";
+import {
+  ingestGuardsBinding,
+  jobsBinding,
+  searchBinding,
+  sortBinding,
+} from "../../src/plugins/capability-bindings";
+import { createPluginHost, type PluginHost } from "../../src/plugins/host";
 import { loadPlugins } from "../../src/plugins/loader";
 import { createApp } from "../../src/server";
 
@@ -47,6 +52,8 @@ export async function eventually(probe: () => Promise<boolean>): Promise<void> {
 export interface LiveApi {
   core: Core;
   db: DB;
+  /** The plugin host, to deactivate/reactivate a plugin mid-test. */
+  host: PluginHost;
   /** The shared store (un-namespaced): Core's `assets/…` and `plugins/<id>/…`. */
   storage: StorageProvider;
   /** Send a request to `/api/v1…` (path relative to it), optionally as a user. */
@@ -90,6 +97,7 @@ export async function bootLive(pluginIds: string[]): Promise<LiveApi> {
     seedActiveIds: pluginIds,
     capabilityBindings: [
       searchBinding(core.searchProviders),
+      sortBinding(core.sortProviders),
       jobsBinding(core.jobService),
       ingestGuardsBinding(core.ingestGuards),
     ],
@@ -102,6 +110,7 @@ export async function bootLive(pluginIds: string[]): Promise<LiveApi> {
   return {
     core,
     db,
+    host,
     storage,
     request(path, { token, headers, ...init } = {}) {
       return app.handle(

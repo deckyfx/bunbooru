@@ -130,6 +130,15 @@ export {
   type SearchProviderRegistry,
   type SearchTerm,
 } from "./search/providers";
+// Plugin sort keys (`order:score`) — the registry the API's plugin host fills.
+export {
+  createSortProviderRegistry,
+  SortProviderConflictError,
+  type SortProvider,
+  type SortProviderLookup,
+  type SortProviderRegistry,
+} from "./search/sort-providers";
+export { CORE_ORDER_KEYS } from "./search/core-orders";
 // Ingest guards — plugin checks every upload passes before it's stored.
 export {
   createIngestGuardRegistry,

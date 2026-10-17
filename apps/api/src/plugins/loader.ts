@@ -7,6 +7,7 @@ import {
   type JobHandler,
   type MailProvider,
   type SearchProvider,
+  type SortProvider,
   type StorageProvider,
 } from "@bunbooru/core";
 import type {
@@ -39,6 +40,8 @@ export interface LoadedPlugin {
   mailProvider?: MailProvider;
   /** Search metatags this plugin contributes (registered on `core.searchProviders` while active). */
   searchProviders: SearchProvider[];
+  /** Sort keys this plugin contributes (registered on `core.sortProviders` while active). */
+  sortProviders: SortProvider[];
   /** Job handlers by FULL kind (`<pluginId>:<name>`), registered on `core.jobService` while active. */
   jobs: Record<string, JobHandler>;
   /** Upload checks, registered on `core.ingestGuards` while active. */
@@ -242,6 +245,7 @@ export async function loadPlugins({
       routes: registration.routes,
       mailProvider: registration.mailProvider,
       searchProviders: [...(registration.searchProviders ?? [])],
+      sortProviders: [...(registration.sortProviders ?? [])],
       jobs: Object.fromEntries(
         Object.entries(registration.jobs ?? {}).map(([name, handler]) => [`${plugin.id}:${name}`, handler]),
       ),
@@ -251,6 +255,7 @@ export async function loadPlugins({
       id,
       hasRoutes: registration.routes !== undefined,
       searchKeys: (registration.searchProviders ?? []).map((provider) => provider.key),
+      sortKeys: (registration.sortProviders ?? []).map((provider) => provider.key),
       ingestGuards: registration.ingestGuards?.length ?? 0,
       jobs: Object.keys(registration.jobs ?? {}),
     });

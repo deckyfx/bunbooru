@@ -49,6 +49,9 @@ function asset(id: number): Asset {
  */
 function keysetPage(rows: Asset[], { order, limit, after, backward = false }: AssetPage): Asset[] {
   if (order.kind === "random") return rows.slice(0, limit);
+  // A plugin's SQL expression can't be evaluated in memory; the real
+  // repository's tests and the live plugin tests cover expression orders.
+  if (order.kind === "expression") throw new Error("the fake repository can't sort by a SQL expression");
   const valueOf = (row: Asset) =>
     order.key === "createdAt" ? row.createdAt.getTime() : row[order.key];
   const ascending = (order.direction === "asc") !== backward;
