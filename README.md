@@ -40,7 +40,8 @@ A modern, extensible Booru engine built with Bun.
 Built: **Favorites**, **Pools**, **Thumbnails**, **Shimmie2 import**,
 **SMTP mail**, **Banned hashes** (refuses re-uploads of banned files by
 sha256/md5), **Reports** (users report posts; moderators dismiss them or
-delete the post from a queue). Switched on and off at runtime under
+delete the post from a queue), **Scores** (up/down votes and a net score on
+each post). Switched on and off at runtime under
 Admin → Extensions.
 
 Planned:
@@ -73,6 +74,7 @@ tag term (`kitty` finds posts tagged `cat`).
 | `order:` | sort: `id`, `id_desc` (default), `date`, `date_asc`, `views`, `views_asc`, `size`, `size_asc`, `tagcount`, `tagcount_asc`, `random` |
 | `fav:alice` | favorited by `alice` (Favorites plugin) |
 | `pool:12`, `pool:my_comic` | in that pool, by id or name (Pools plugin) |
+| `score:` | net vote score, a whole number: `score:>10`, `score:<0`, `score:1..10`; unvoted posts score 0 (Scores plugin) |
 
 Comparisons are `>`, `>=`, `<`, `<=`, or a range `lo..hi` (either end may be
 left open). A term that can't be understood, such as an unknown key or a

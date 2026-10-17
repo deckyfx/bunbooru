@@ -25,6 +25,7 @@ COPY plugins/example/package.json plugins/example/
 COPY plugins/favorites/package.json plugins/favorites/
 COPY plugins/pools/package.json plugins/pools/
 COPY plugins/reports/package.json plugins/reports/
+COPY plugins/scores/package.json plugins/scores/
 COPY plugins/shimmie-import/package.json plugins/shimmie-import/
 COPY plugins/smtp-mailer/package.json plugins/smtp-mailer/
 COPY plugins/thumbnailer/package.json plugins/thumbnailer/

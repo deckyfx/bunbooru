@@ -28,6 +28,7 @@
         "@bunbooru/plugin-favorites": "workspace:*",
         "@bunbooru/plugin-pools": "workspace:*",
         "@bunbooru/plugin-reports": "workspace:*",
+        "@bunbooru/plugin-scores": "workspace:*",
         "@bunbooru/plugin-sdk": "workspace:*",
         "@bunbooru/plugin-shimmie-import": "workspace:*",
         "@bunbooru/plugin-smtp-mailer": "workspace:*",
@@ -56,6 +57,7 @@
         "@bunbooru/plugin-favorites": "workspace:*",
         "@bunbooru/plugin-pools": "workspace:*",
         "@bunbooru/plugin-reports": "workspace:*",
+        "@bunbooru/plugin-scores": "workspace:*",
         "@bunbooru/plugin-shimmie-import": "workspace:*",
         "@bunbooru/plugin-smtp-mailer": "workspace:*",
         "@bunbooru/plugin-thumbnailer": "workspace:*",
@@ -176,6 +178,18 @@
         "drizzle-kit": "^0.31.11",
       },
     },
+    "plugins/scores": {
+      "name": "@bunbooru/plugin-scores",
+      "version": "0.1.0",
+      "dependencies": {
+        "@bunbooru/plugin-sdk": "workspace:*",
+        "drizzle-orm": "^0.45.4",
+        "elysia": "^1.4.30",
+      },
+      "devDependencies": {
+        "drizzle-kit": "^0.31.11",
+      },
+    },
     "plugins/shimmie-import": {
       "name": "@bunbooru/plugin-shimmie-import",
       "version": "0.1.0",
@@ -237,6 +251,8 @@
     "@bunbooru/plugin-pools": ["@bunbooru/plugin-pools@workspace:plugins/pools"],
 
     "@bunbooru/plugin-reports": ["@bunbooru/plugin-reports@workspace:plugins/reports"],
+
+    "@bunbooru/plugin-scores": ["@bunbooru/plugin-scores@workspace:plugins/scores"],
 
     "@bunbooru/plugin-sdk": ["@bunbooru/plugin-sdk@workspace:packages/plugin-sdk"],
 

@@ -1,0 +1,22 @@
+{
+  "name": "@bunbooru/plugin-scores",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "db:generate": "drizzle-kit generate && bun ../../scripts/embed-migrations.ts",
+    "typecheck": "bun check src test"
+  },
+  "dependencies": {
+    "@bunbooru/plugin-sdk": "workspace:*",
+    "drizzle-orm": "^0.45.4",
+    "elysia": "^1.4.30"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.11"
+  }
+}
