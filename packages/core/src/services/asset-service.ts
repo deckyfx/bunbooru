@@ -141,6 +141,14 @@ export interface AssetService {
    * moving the file into storage instead of copying it.
    */
   createFromSource(source: IngestSource, meta?: CreateAssetMeta): Promise<CreateAssetResult>;
+  /**
+   * Delete a post for good: its row, tag links and stored file go, and a
+   * tombstone keeps its hashes, who deleted it, why and when. Emits
+   * `asset.deleted` so plugins drop their rows. False when there's no such
+   * post. Re-uploading the same bytes later makes a new post. Authorization
+   * is the caller's job.
+   */
+  delete(id: number, by: { deletedById: number | null; reason: string }): Promise<boolean>;
   /** Patch an asset's mutable metadata (rating/source); null if it doesn't exist. */
   update(id: number, patch: AssetUpdate): Promise<Asset | null>;
   /** Open an asset's stored bytes for streaming, or null if the asset is absent. */
@@ -425,6 +433,11 @@ export function createAssetService(
       return source.kind === "file"
         ? ingest(Bun.file(source.path), meta, source.path)
         : ingest(source.blob, meta);
+    },
+
+    async delete() {
+      // Contract only: implemented by the post-deletion work (see the interface).
+      throw new Error("AssetService.delete is not implemented yet");
     },
 
     update(id, patch) {

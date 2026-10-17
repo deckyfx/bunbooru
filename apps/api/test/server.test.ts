@@ -144,6 +144,7 @@ function stubCore(
       create: async () => ({ asset: sampleAsset, deduped: false }),
       createFromSource: async () => ({ asset: sampleAsset, deduped: false }),
       update: async () => null,
+      delete: async () => false,
       openFile: async () => null,
       neighbors: async () => ({ newerId: null, olderId: null }),
       gcOrphanedBlobs: async () => 0,
