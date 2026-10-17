@@ -338,6 +338,13 @@ export const plugin = definePlugin({
             // outlive the post its `asset.deleted` cleanup already handled.
             if (!(await ctx.services.assets.getById(assetId))) return;
             await processAsset(ctx, assetId);
+            // Deleted WHILE we worked: its `asset.deleted` cleanup already ran
+            // and found nothing, so undo what we just wrote, or a deleted
+            // (possibly abusive) post would keep a public thumbnail.
+            if (!(await ctx.services.assets.getById(assetId))) {
+              await removeThumbnail(ctx, assetId);
+              await ctx.storage.delete(thumbnailKey(assetId)).catch(() => undefined);
+            }
           },
         },
         backfill: {

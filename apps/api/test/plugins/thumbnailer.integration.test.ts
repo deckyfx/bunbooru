@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test"
 import { sql } from "drizzle-orm";
 
 import { createJobRunner, type JobRunner } from "@bunbooru/core";
+import { thumbnailKey } from "@bunbooru/plugin-thumbnailer";
 
 import { bootLive, eventually, TEST_DATABASE_URL, type LiveApi } from "./live-harness";
 
@@ -96,6 +97,26 @@ describe.skipIf(!TEST_DATABASE_URL)("thumbnailer plugin on the job queue (integr
     await drain();
     const rows = await live.db.execute(sql`SELECT 1 FROM thumbnails WHERE asset_id = ${id}`);
     expect([...rows]).toEqual([]);
+  });
+
+  it("undoes its work for a post deleted while the thumbnail was being made", async () => {
+    const id = await live.post("mid", admin.id);
+    await queuedSoon("thumbnailer:thumbnail", 1);
+    // The post exists when the job starts, and is gone (its cleanup already
+    // run, finding nothing) by the time the thumbnail is written.
+    const service = live.core.assetService;
+    const getById = service.getById;
+    let calls = 0;
+    service.getById = async (assetId) => (assetId === id && ++calls > 1 ? null : getById(assetId));
+    try {
+      await drain();
+    } finally {
+      service.getById = getById;
+    }
+
+    expect(calls).toBe(2);
+    expect([...(await live.db.execute(sql`SELECT 1 FROM thumbnails WHERE asset_id = ${id}`))]).toEqual([]);
+    expect(await live.storage.exists(`plugins/thumbnailer/${thumbnailKey(id)}`)).toBe(false);
   });
 
   it("backfills assets that have no thumbnail, and reports the backfill already starting", async () => {
