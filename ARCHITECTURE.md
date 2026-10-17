@@ -73,7 +73,6 @@ apps/
 packages/
   core/
   db/
-  auth/
   events/
   storage/
   search/
@@ -100,7 +99,9 @@ database.
 
 ## core
 
-Contains: Asset, Tag, Collection, User, Permission. No optional features.
+Contains: Asset, Tag, User, Permission, and authentication (sessions, API
+keys, the permission model). No optional features. Collections are the
+optional **Pools** plugin (ordered sets of posts), per the Plugin Rule.
 
 ## db
 
@@ -111,11 +112,6 @@ Drizzle schemas, repositories, migrations, transactions, database adapters.
 Owns the Lexer, Parser, AST, and Optimizer. No HTTP, no Drizzle, no database:
 the facts the optimizer needs from the database (tag aliases) are handed to it
 as plain data. The SQL Builder lives in Core, next to the schema it targets.
-
-## auth
-
-Session-based authentication and the permission model. Issues and validates
-sessions; resolves a request's identity and permissions for Services.
 
 ## events
 

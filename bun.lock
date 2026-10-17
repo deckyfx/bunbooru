@@ -22,7 +22,6 @@
       "name": "@bunbooru/api",
       "version": "0.1.0",
       "dependencies": {
-        "@bunbooru/auth": "workspace:*",
         "@bunbooru/core": "workspace:*",
         "@bunbooru/plugin-banned-hashes": "workspace:*",
         "@bunbooru/plugin-example": "workspace:*",
@@ -63,14 +62,6 @@
         "tailwindcss": "^4.3.3",
       },
     },
-    "packages/auth": {
-      "name": "@bunbooru/auth",
-      "version": "0.1.0",
-      "dependencies": {
-        "@bunbooru/core": "workspace:*",
-        "@bunbooru/db": "workspace:*",
-      },
-    },
     "packages/core": {
       "name": "@bunbooru/core",
       "version": "0.1.0",
@@ -97,7 +88,6 @@
       "name": "@bunbooru/plugin-sdk",
       "version": "0.1.0",
       "dependencies": {
-        "@bunbooru/auth": "workspace:*",
         "@bunbooru/core": "workspace:*",
         "@bunbooru/events": "workspace:*",
         "@bunbooru/search": "workspace:*",
@@ -204,8 +194,6 @@
     "@borewit/text-codec": ["@borewit/text-codec@0.2.2", "", {}, "sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ=="],
 
     "@bunbooru/api": ["@bunbooru/api@workspace:apps/api"],
-
-    "@bunbooru/auth": ["@bunbooru/auth@workspace:packages/auth"],
 
     "@bunbooru/core": ["@bunbooru/core@workspace:packages/core"],
 

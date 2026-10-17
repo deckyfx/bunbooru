@@ -30,7 +30,6 @@ A modern, extensible Booru engine built with Bun.
 
 - Asset management
 - Tagging
-- Collections
 - Search language
 - Authentication
 - Permissions
@@ -85,7 +84,6 @@ The core should only understand:
 
 - Assets
 - Tags
-- Collections
 - Users
 - Search
 - Plugins
@@ -100,12 +98,11 @@ apps/
   web/        React client
 
 packages/
-  core/       Domain: Asset, Tag, Collection, User, Permission
+  core/       Domain: Asset, Tag, User, Permission, Auth
   db/         Drizzle schemas, repositories, migrations
   search/     Lexer, parser, AST, optimizer, SQL builder
   events/     Publish/subscribe event bus
   storage/    StorageProvider interface + implementations
-  auth/       Authentication & permissions
   plugin-sdk/ Public API for plugins
 
 plugins/

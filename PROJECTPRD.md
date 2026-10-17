@@ -43,7 +43,7 @@ CockroachDB — are reached through repository adapters.
 - Assets
 - Upload
 - Tags
-- Collections
+- Collections (the Pools plugin)
 - Search
 - Permissions
 - Admin Panel

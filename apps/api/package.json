@@ -14,7 +14,6 @@
     "typecheck": "bun check src test build.ts"
   },
   "dependencies": {
-    "@bunbooru/auth": "workspace:*",
     "@bunbooru/core": "workspace:*",
     "@bunbooru/plugin-example": "workspace:*",
     "@bunbooru/plugin-banned-hashes": "workspace:*",
