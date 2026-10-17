@@ -9,7 +9,7 @@ import type {
   StatsService,
   TagService,
 } from "@bunbooru/core";
-import { createCoreEvents, createSearchProviderRegistry } from "@bunbooru/core";
+import { createCoreEvents, createIngestGuardRegistry, createSearchProviderRegistry } from "@bunbooru/core";
 import { Elysia } from "elysia";
 
 import { createPluginHost, PluginDegradedError, UnknownPluginError } from "../../src/plugins/host";
@@ -42,7 +42,7 @@ function betaRoutes() {
 }
 
 const loaded: LoadedPlugin[] = [
-  { id: "alpha", name: "Alpha", version: "1.0.0", description: "First", capabilities: ["routes"], tables: [], searchProviders: [], jobs: {} },
+  { id: "alpha", name: "Alpha", version: "1.0.0", description: "First", capabilities: ["routes"], tables: [], searchProviders: [], jobs: {}, ingestGuards: [] },
   {
     id: "beta",
     name: "Beta",
@@ -52,6 +52,7 @@ const loaded: LoadedPlugin[] = [
     tables: ["beta_widgets"],
     searchProviders: [],
     jobs: {},
+    ingestGuards: [],
     routes: betaRoutes(),
   },
 ];
@@ -482,6 +483,7 @@ const appCore = {
   events: createCoreEvents(),
   searchProviders: createSearchProviderRegistry(),
   jobService: {} as Core["jobService"],
+  ingestGuards: createIngestGuardRegistry(),
 } satisfies Core;
 
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { sql } from "drizzle-orm";
 
 import {
+  createIngestGuardRegistry,
   createJobService,
   createSearchProviderRegistry,
   type JobHandler,
@@ -9,7 +10,7 @@ import {
 } from "@bunbooru/core";
 import type { JobRepository } from "@bunbooru/db";
 
-import { jobsBinding, searchBinding } from "../../src/plugins/capability-bindings";
+import { ingestGuardsBinding, jobsBinding, searchBinding } from "../../src/plugins/capability-bindings";
 import { createPluginHost } from "../../src/plugins/host";
 import type { LoadedPlugin } from "../../src/plugins/loader";
 
@@ -33,6 +34,7 @@ const plugin = (id: string, keys: string[]): LoadedPlugin => ({
   tables: [],
   searchProviders: keys.map((key) => ({ key, compile: () => sql`true` })),
   jobs: {},
+  ingestGuards: [],
 });
 
 describe("search capability binding", () => {
@@ -141,5 +143,31 @@ describe("jobs capability binding", () => {
     await worker.refresh();
     expect(worker.isActive("thumbnailer")).toBe(false);
     expect(workerJobs.kinds()).toEqual([]);
+  });
+});
+
+describe("ingest guards capability binding", () => {
+  it("installs a plugin's guards on activate and removes them on deactivate", async () => {
+    const guards = createIngestGuardRegistry();
+    const banned: LoadedPlugin = {
+      ...plugin("banned-hashes", []),
+      capabilities: ["ingest-guards"],
+      ingestGuards: [{ check: () => ({ allow: false, reason: "banned" }) }],
+    };
+    const host = createPluginHost({
+      pluginState: state(),
+      loaded: [banned],
+      seedActiveIds: [],
+      capabilityBindings: [ingestGuardsBinding(guards)],
+    });
+    await host.init();
+    expect(guards.ordered()).toEqual([]);
+
+    await host.activate("banned-hashes");
+    expect(guards.ordered().map((g) => g.ownerId)).toEqual(["banned-hashes"]);
+
+    // Deactivating lets uploads through again at once (no restart).
+    await host.deactivate("banned-hashes");
+    expect(guards.ordered()).toEqual([]);
   });
 });

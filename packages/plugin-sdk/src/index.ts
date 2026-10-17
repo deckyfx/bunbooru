@@ -16,6 +16,9 @@ import type {
   DB,
   EmbeddedMigrations,
   EnqueueOptions,
+  IngestCandidate,
+  IngestGuard,
+  IngestVerdict,
   JobContext,
   JobHandler,
   JsonValue,
@@ -44,7 +47,7 @@ import type {
  * mounts the returned {@link PluginRegistration.routes} under
  * `/api/v1/plugins/<id>`.
  */
-export const PLUGIN_SDK_VERSION = "0.9.0" as const;
+export const PLUGIN_SDK_VERSION = "0.10.0" as const;
 
 /** Storage contract re-exported for plugins that register storage providers. */
 export type { StorageProvider };
@@ -57,6 +60,9 @@ export type { SearchProvider, SearchTerm };
 
 /** Job contract re-exported for plugins that run background work. */
 export type { EnqueueOptions, JobContext, JobHandler, JsonValue };
+
+/** Ingest-guard contract re-exported for plugins that check uploads (a hash ban). */
+export type { IngestCandidate, IngestGuard, IngestVerdict };
 
 /**
  * Queue background work for this plugin's own job handlers (its
@@ -91,6 +97,7 @@ export const SDK_CAPABILITIES = [
   "tables",
   "events",
   "search-providers",
+  "ingest-guards",
   "storage-providers",
   "mail-providers",
   "permissions",
@@ -219,6 +226,14 @@ export interface PluginRegistration {
    * runner that dies mid-job means it runs again.
    */
   jobs?: Record<string, JobHandler>;
+  /**
+   * Checks every upload must pass before it's stored, from every source
+   * (one-shot, resumable, importers). Run while the plugin is active, before
+   * dedupe, in `order`. A refusal is a 403 carrying the guard's reason; a guard
+   * that throws or overruns its 5s budget refuses the upload too (503): guards
+   * fail closed, and an admin deactivates a broken one.
+   */
+  ingestGuards?: IngestGuard[];
   /**
    * A mail transport this plugin supplies. The host installs it on Core's
    * `MailService` as the active provider. At most one enabled plugin may register

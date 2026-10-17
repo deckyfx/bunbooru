@@ -10,7 +10,7 @@ import type {
   StorageProvider,
   TagService,
 } from "@bunbooru/core";
-import { createCoreEvents, createSearchProviderRegistry } from "@bunbooru/core";
+import { createCoreEvents, createIngestGuardRegistry, createSearchProviderRegistry } from "@bunbooru/core";
 import { buildExampleRoutes } from "@bunbooru/plugin-example";
 import type { PluginContext } from "@bunbooru/plugin-sdk";
 
@@ -33,6 +33,7 @@ const appCore = {
   events: createCoreEvents(),
   searchProviders: createSearchProviderRegistry(),
   jobService: {} as Core["jobService"],
+  ingestGuards: createIngestGuardRegistry(),
 } satisfies Core;
 
 /** A plugin context whose stats report a fixed post count and whose auth is

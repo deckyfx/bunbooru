@@ -27,6 +27,7 @@ import {
   AuthorizationError,
   ConflictError,
   createCoreEvents,
+  createIngestGuardRegistry,
   createSearchProviderRegistry,
   RegistrationConflictError,
   UnsupportedMediaError,
@@ -242,6 +243,7 @@ function stubCore(
     events: createCoreEvents(),
     searchProviders: createSearchProviderRegistry(),
     jobService: {} as Core["jobService"],
+    ingestGuards: createIngestGuardRegistry(),
   };
 }
 

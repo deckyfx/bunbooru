@@ -3,6 +3,7 @@ import {
   type Core,
   type DB,
   type EmbeddedMigrationConfig,
+  type IngestGuard,
   type JobHandler,
   type MailProvider,
   type SearchProvider,
@@ -40,6 +41,8 @@ export interface LoadedPlugin {
   searchProviders: SearchProvider[];
   /** Job handlers by FULL kind (`<pluginId>:<name>`), registered on `core.jobService` while active. */
   jobs: Record<string, JobHandler>;
+  /** Upload checks, registered on `core.ingestGuards` while active. */
+  ingestGuards: IngestGuard[];
 }
 
 /** Default per-step timeout (ms) — see {@link LoadPluginsOptions.stepTimeoutMs}. */
@@ -239,11 +242,13 @@ export async function loadPlugins({
       jobs: Object.fromEntries(
         Object.entries(registration.jobs ?? {}).map(([name, handler]) => [`${plugin.id}:${name}`, handler]),
       ),
+      ingestGuards: [...(registration.ingestGuards ?? [])],
     });
     logger.info("plugin_loaded", {
       id,
       hasRoutes: registration.routes !== undefined,
       searchKeys: (registration.searchProviders ?? []).map((provider) => provider.key),
+      ingestGuards: registration.ingestGuards?.length ?? 0,
       jobs: Object.keys(registration.jobs ?? {}),
     });
   }

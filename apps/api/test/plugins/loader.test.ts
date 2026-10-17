@@ -10,7 +10,7 @@ import type {
   StorageProvider,
   TagService,
 } from "@bunbooru/core";
-import { createCoreEvents, createSearchProviderRegistry } from "@bunbooru/core";
+import { createCoreEvents, createIngestGuardRegistry, createSearchProviderRegistry } from "@bunbooru/core";
 import { definePlugin, pluginRoutePrefix, type BunbooruPlugin } from "@bunbooru/plugin-sdk";
 import { Elysia } from "elysia";
 
@@ -34,6 +34,7 @@ const core: Core = {
   events: createCoreEvents(),
   searchProviders: createSearchProviderRegistry(),
   jobService: {} as Core["jobService"],
+  ingestGuards: createIngestGuardRegistry(),
 };
 
 /** No migrations are declared, so the db handle is never touched. */

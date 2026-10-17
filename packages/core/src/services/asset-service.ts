@@ -3,6 +3,7 @@ import type { StorageProvider, StoredObject } from "@bunbooru/storage";
 
 import { UnsupportedMediaError, ValidationError } from "../errors";
 import type { CoreEvents } from "../events";
+import { runIngestGuards, type IngestGuardList } from "../ingest/guards";
 import { decodeCursor, encodeCursor } from "../search/asset-cursor";
 import { compileAssetSearch, type SearchContext } from "../search/asset-query";
 
@@ -180,9 +181,10 @@ export function createAssetService(
   storage: StorageProvider,
   events?: CoreEvents,
   search: SearchContext = {},
+  guards?: IngestGuardList,
 ): AssetService {
   /**
-   * The shared ingest pipeline: hash → dedupe → sniff → store → insert → emit,
+   * The shared ingest pipeline: hash → guard → dedupe → sniff → store → insert → emit,
    * over a (possibly file-backed) {@link Blob}. The blob is read in independent
    * passes — one streaming hash pass, one lazy sniff, one streaming store — so
    * the whole object never has to be resident in memory. Order is fixed: the
@@ -207,6 +209,21 @@ export function createAssetService(
       md5Hasher.update(chunk);
     }
     const sha256 = shaHasher.digest("hex");
+    const md5 = md5Hasher.digest("hex");
+
+    // Plugin guards (a hash ban, a quota) may refuse the upload. BEFORE dedupe,
+    // so a banned file can't be laundered through a copy already stored; and
+    // before any decode, so a refusal costs only the hash pass.
+    if (guards) {
+      await runIngestGuards(guards, {
+        sha256,
+        md5,
+        sizeBytes,
+        uploaderId: uploaderId ?? null,
+        source: sourceUrl ?? null,
+        blob: source,
+      });
+    }
 
     // Dedupe on the content hash before the heavier decode/store work.
     const existing = await repository.findBySha256(sha256);
@@ -225,7 +242,6 @@ export function createAssetService(
       throw new UnsupportedMediaError(`Unsupported image format: ${meta.format}`);
     }
 
-    const md5 = md5Hasher.digest("hex");
     const storageKey = contentKey(sha256, ext);
     // Persist the bytes. When the caller hands us the source's local path AND the
     // provider can ingest a local file (same-filesystem), MOVE it into place —

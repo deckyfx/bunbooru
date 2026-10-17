@@ -129,6 +129,19 @@ export {
   type SearchProviderRegistry,
   type SearchTerm,
 } from "./search/providers";
+// Ingest guards — plugin checks every upload passes before it's stored.
+export {
+  createIngestGuardRegistry,
+  INGEST_GUARD_TIMEOUT_MS,
+  IngestGuardRegistrationError,
+  runIngestGuards,
+  type IngestCandidate,
+  type IngestGuard,
+  type IngestGuardList,
+  type IngestGuardRegistry,
+  type IngestVerdict,
+  type RegisteredIngestGuard,
+} from "./ingest/guards";
 // Tag gardening — aliases + implications (admin-managed; data access in @bunbooru/db).
 export { createTagAliasService, type TagAliasService } from "./services/tag-alias-service";
 export {
@@ -199,6 +212,8 @@ export {
   AuthenticationError,
   AuthorizationError,
   ConflictError,
+  IngestCheckFailedError,
+  IngestRejectedError,
   MailNotConfiguredError,
   MailProviderConflictError,
   RegistrationConflictError,
