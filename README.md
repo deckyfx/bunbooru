@@ -39,7 +39,9 @@ A modern, extensible Booru engine built with Bun.
 
 Built: **Favorites**, **Pools**, **Thumbnails**, **Shimmie2 import**,
 **SMTP mail**, **Banned hashes** (refuses re-uploads of banned files by
-sha256/md5). Switched on and off at runtime under Admin → Extensions.
+sha256/md5), **Reports** (users report posts; moderators dismiss them or
+delete the post from a queue). Switched on and off at runtime under
+Admin → Extensions.
 
 Planned:
 
