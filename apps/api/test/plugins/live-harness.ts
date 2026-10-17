@@ -87,7 +87,8 @@ export async function bootLive(pluginIds: string[]): Promise<LiveApi> {
         new Request(`http://localhost/api/v1${path}`, {
           ...init,
           headers: {
-            ...(init.body ? { "content-type": "application/json" } : {}),
+            // JSON for a string body; FormData sets its own multipart type.
+            ...(typeof init.body === "string" ? { "content-type": "application/json" } : {}),
             ...(token ? { authorization: `Bearer ${token}` } : {}),
             ...(headers as Record<string, string> | undefined),
           },

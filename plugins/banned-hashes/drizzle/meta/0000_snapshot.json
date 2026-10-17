@@ -1,0 +1,120 @@
+{
+  "id": "6b5d77a7-90c7-408b-91f9-c322321bba0b",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.banned_hashes_entries": {
+      "name": "banned_hashes_entries",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "bigserial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sha256": {
+          "name": "sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "md5": {
+          "name": "md5",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "banned_by_id": {
+          "name": "banned_by_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "banned_by_name": {
+          "name": "banned_by_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "banned_hashes_entries_sha256_idx": {
+          "name": "banned_hashes_entries_sha256_idx",
+          "columns": [
+            {
+              "expression": "sha256",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "banned_hashes_entries_md5_idx": {
+          "name": "banned_hashes_entries_md5_idx",
+          "columns": [
+            {
+              "expression": "md5",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "banned_hashes_entries_has_hash": {
+          "name": "banned_hashes_entries_has_hash",
+          "value": "\"banned_hashes_entries\".\"sha256\" is not null or \"banned_hashes_entries\".\"md5\" is not null"
+        },
+        "banned_hashes_entries_sha256_hex": {
+          "name": "banned_hashes_entries_sha256_hex",
+          "value": "\"banned_hashes_entries\".\"sha256\" ~ '^[0-9a-f]{64}$'"
+        },
+        "banned_hashes_entries_md5_hex": {
+          "name": "banned_hashes_entries_md5_hex",
+          "value": "\"banned_hashes_entries\".\"md5\" ~ '^[0-9a-f]{32}$'"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

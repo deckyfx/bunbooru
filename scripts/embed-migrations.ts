@@ -31,6 +31,7 @@ const PACKAGES = [
   "plugins/shimmie-import",
   "plugins/favorites",
   "plugins/pools",
+  "plugins/banned-hashes",
 ] as const;
 
 export interface JournalEntry {

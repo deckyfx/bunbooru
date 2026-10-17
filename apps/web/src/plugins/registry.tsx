@@ -15,6 +15,14 @@ import type { PluginNavLink, PluginUiRegistry } from "./slots";
 export const PLUGIN_UI: PluginUiRegistry = {
   admin: [
     {
+      pluginId: "banned-hashes",
+      id: "bans",
+      title: "Banned hashes",
+      component: lazy(() =>
+        import("./banned-hashes/BannedHashesSection").then((m) => ({ default: m.BannedHashesSection })),
+      ),
+    },
+    {
       pluginId: "example",
       id: "pings",
       title: "Example: Pings",
@@ -58,6 +66,14 @@ export const PLUGIN_UI: PluginUiRegistry = {
       title: "Pools",
       order: 10,
       component: lazy(() => import("./pools/PoolNav").then((m) => ({ default: m.PoolNav }))),
+    },
+    {
+      pluginId: "banned-hashes",
+      id: "ban",
+      title: "File ban",
+      order: 100,
+      visibility: "moderator",
+      component: lazy(() => import("./banned-hashes/BanFileButton").then((m) => ({ default: m.BanFileButton }))),
     },
   ],
 };

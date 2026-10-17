@@ -167,9 +167,20 @@ Routes never contain business logic.
 # Upload Pipeline
 
 ```
-Upload → Validation → Temporary Storage → Hash → Metadata
-       → Persist Asset → Emit AssetCreated → Background Jobs
+Upload → Validation → Temporary Storage → Hash → Ingest Guards → Dedupe
+       → Metadata → Persist Asset → Emit AssetCreated → Background Jobs
 ```
+
+Every source (one-shot, resumable, importers) goes through one ingest
+function, so a step there covers them all by construction.
+
+**Ingest guards** are plugin checks every upload must pass (`banned-hashes`
+refuses banned sha256/md5). They run after the hash pass, before dedupe (a
+banned file can't be laundered through a stored copy) and before any decode (a
+refusal costs one hash pass). The first refusal is a 403 with its reason.
+Guards fail closed: a throw or a 5s overrun refuses the upload (503), and an
+admin deactivates the broken plugin. Byte-rewriting transforms (EXIF strip)
+are designed but not built: see `docs/03-ingest-hooks.md`.
 
 Background jobs triggered: Thumbnail, OCR, AI, Notifications, Search Index.
 
