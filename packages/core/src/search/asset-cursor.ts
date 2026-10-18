@@ -1,4 +1,4 @@
-import type { AssetKeyset, AssetOrder } from "@bunbooru/db";
+import type { AssetKeyset, KeysetOrder } from "@bunbooru/db";
 
 /** Which way a cursor continues: toward older/later results, or back toward the start. */
 export type CursorDirection = "next" | "prev";
@@ -17,9 +17,15 @@ interface Payload {
   d: "n" | "p";
 }
 
-/** `createdAt:desc`: what a cursor was minted for. Random order has no cursors. */
-function signature(order: Extract<AssetOrder, { kind: "column" }>): string {
-  return `${order.key}:${order.direction}`;
+/**
+ * What a cursor was minted for: `createdAt:desc` for a column, `x:score:desc`
+ * for a plugin sort key (prefixed, so a plugin key can never pass for a
+ * column's). Random order has no cursors.
+ */
+function signature(order: KeysetOrder): string {
+  return order.kind === "column"
+    ? `${order.key}:${order.direction}`
+    : `x:${order.key}:${order.direction}`;
 }
 
 const toBase64Url = (text: string) =>
@@ -39,7 +45,7 @@ function fromBase64Url(token: string): string | null {
  * it was minted for, so it can't be replayed against a different sort.
  */
 export function encodeCursor(
-  order: Extract<AssetOrder, { kind: "column" }>,
+  order: KeysetOrder,
   keyset: AssetKeyset,
   direction: CursorDirection,
 ): string {
@@ -55,13 +61,11 @@ export function encodeCursor(
 /**
  * Decode `token` for use with `order`, or null if it's malformed, minted for a
  * different order, or carries a value of the wrong type for the sort key (an
- * ISO timestamp for `createdAt`, an integer otherwise). The value is validated
- * here because it's bound straight into the keyset comparison.
+ * ISO timestamp for `createdAt`, any finite number for a plugin sort key, an
+ * integer otherwise). The value is validated here because it's bound straight
+ * into the keyset comparison.
  */
-export function decodeCursor(
-  token: string,
-  order: Extract<AssetOrder, { kind: "column" }>,
-): DecodedCursor | null {
+export function decodeCursor(token: string, order: KeysetOrder): DecodedCursor | null {
   const json = fromBase64Url(token);
   if (json === null) return null;
   let raw: unknown;
@@ -77,7 +81,11 @@ export function decodeCursor(
   if (d !== "n" && d !== "p") return null;
 
   let value: number | string;
-  if (order.key === "createdAt") {
+  if (order.kind === "expression") {
+    // A plugin's value needn't be an integer, but it must be a real number.
+    if (typeof v !== "number" || !Number.isFinite(v)) return null;
+    value = v;
+  } else if (order.key === "createdAt") {
     if (typeof v !== "string") return null;
     const ms = Date.parse(v);
     if (Number.isNaN(ms)) return null;

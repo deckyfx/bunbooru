@@ -10,7 +10,13 @@ import {
 
 import { envConfig, MAX_REQUEST_BODY_BYTES } from "./env-config";
 import { logger } from "./lib/logger";
-import { ingestGuardsBinding, jobsBinding, mailBinding, searchBinding } from "./plugins/capability-bindings";
+import {
+  ingestGuardsBinding,
+  jobsBinding,
+  mailBinding,
+  searchBinding,
+  sortBinding,
+} from "./plugins/capability-bindings";
 import { createPluginHost } from "./plugins/host";
 import { loadPlugins } from "./plugins/loader";
 import { PLUGIN_REGISTRY } from "./plugins/registry";
@@ -173,12 +179,13 @@ export async function startApi(options: StartOptions = {}): Promise<void> {
   }
 
   // Capability bindings: what a plugin supplies to Core (its mail transport,
-  // its search metatags, its job handlers, its upload checks), installed on activate and removed
+  // its search metatags, its sort keys, its job handlers, its upload checks), installed on activate and removed
   // on deactivate. Future per-plugin capabilities add a binding there, not
   // logic in the host.
   const capabilityBindings = [
     mailBinding(core.mailService),
     searchBinding(core.searchProviders),
+    sortBinding(core.sortProviders),
     jobsBinding(core.jobService),
     ingestGuardsBinding(core.ingestGuards),
   ];

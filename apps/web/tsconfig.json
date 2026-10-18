@@ -6,5 +6,5 @@
     "jsxImportSource": "react",
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "build.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "build.ts"]
 }

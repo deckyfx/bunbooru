@@ -30,6 +30,7 @@ import { createCoreEvents, type CoreEvents } from "./events";
 import { createJobService, type JobService } from "./jobs/job-service";
 import { createIngestGuardRegistry, type IngestGuardRegistry } from "./ingest/guards";
 import { createSearchProviderRegistry, type SearchProviderRegistry } from "./search/providers";
+import { createSortProviderRegistry, type SortProviderRegistry } from "./search/sort-providers";
 import { createMailService, type MailService } from "./mail/mail-service";
 import { createAssetService, type AssetService } from "./services/asset-service";
 import { createAuthService, type AuthService } from "./services/auth-service";
@@ -79,6 +80,11 @@ export interface Core {
    * registers an active plugin's providers and removes them on deactivation.
    */
   searchProviders: SearchProviderRegistry;
+  /**
+   * Plugin-contributed sort keys (`order:score`). The API's plugin host
+   * registers an active plugin's providers and removes them on deactivation.
+   */
+  sortProviders: SortProviderRegistry;
   /**
    * The durable job queue: enqueue work and hold the handlers (Core's and active
    * plugins') that a runner executes, in the API process or a dedicated worker.
@@ -145,11 +151,12 @@ export function assembleCore(
   const tagAliasRepository = createTagAliasRepository(db);
   const tagImplicationRepository = createTagImplicationRepository(db);
   const searchProviders = createSearchProviderRegistry();
+  const sortProviders = createSortProviderRegistry();
   const ingestGuards = createIngestGuardRegistry();
   const jobService = createJobService(createJobRepository(db));
   // Search rewrites aliased names through the same table tagging uses, and
-  // consults the live plugin metatags (`fav:`, `pool:`). Every ingest passes
-  // the live plugin guards.
+  // consults the live plugin metatags (`fav:`, `pool:`) and sort keys
+  // (`order:score`). Every ingest passes the live plugin guards.
   const assetService = createAssetService(
     createAssetRepository(db),
     storage,
@@ -157,6 +164,7 @@ export function assembleCore(
     {
       resolveAliases: (names) => tagAliasRepository.resolve(names),
       providers: searchProviders,
+      sortProviders,
     },
     ingestGuards,
   );
@@ -214,6 +222,7 @@ export function assembleCore(
     pluginCatalogService,
     events,
     searchProviders,
+    sortProviders,
     jobService,
     ingestGuards,
   };

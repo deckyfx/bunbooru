@@ -166,6 +166,101 @@ describe.skipIf(!TEST_DATABASE_URL)("scores plugin (integration)", () => {
     expect(await ids("score:abc")).toEqual(all);
   });
 
+  describe("order:score", () => {
+    /** The listing for `q`, one page of `perPage` (default 100), from `cursor`. */
+    const list = async (q: string, { perPage = 100, cursor }: { perPage?: number; cursor?: string } = {}) => {
+      const params = new URLSearchParams({ q, per_page: String(perPage), ...(cursor ? { cursor } : {}) });
+      const res = await live.request(`/assets?${params}`);
+      expect(res.status).toBe(200);
+      return (await res.json()) as { assets: { id: number }[]; nextCursor: string | null; prevCursor: string | null };
+    };
+    const ids = async (q: string) => (await list(q)).assets.map((a) => a.id);
+
+    /** Six posts: scores 2, -1, 0 (a retracted vote's 0 row), 1, 1, and unvoted (0). */
+    let all: number[];
+    let highestFirst: number[];
+    beforeEach(async () => {
+      const [p3, p4, p5] = [await live.post("d", bob.id), await live.post("e", bob.id), await live.post("f", alice.id)];
+      all = [...posts, p3, p4, p5];
+      await vote(posts[0], 1, alice.token);
+      await vote(posts[0], 1, bob.token); // 2
+      await vote(posts[1], -1, alice.token); // -1
+      await vote(posts[2], 1, alice.token);
+      await vote(posts[2], 0, alice.token); // 0, with a totals row
+      await vote(p3, 1, bob.token); // 1
+      await vote(p4, 1, alice.token); // 1, tied with p3: the higher id first
+      // p5 is unvoted: 0, tied with posts[2].
+      highestFirst = [posts[0], p4, p3, p5, posts[2], posts[1]];
+    });
+
+    it("sorts highest first with order:score (and _desc), lowest first with order:score_asc", async () => {
+      expect(await ids("order:score")).toEqual(highestFirst);
+      expect(await ids("order:score_desc")).toEqual(highestFirst);
+      expect(await ids("order:SCORE")).toEqual(highestFirst);
+      // Ascending flips the id tiebreak too: a true reverse.
+      expect(await ids("order:score_asc")).toEqual([...highestFirst].reverse());
+    });
+
+    it("pages through every post exactly once, in order, both ways", async () => {
+      for (const q of ["order:score", "order:score_asc"]) {
+        const expected = q === "order:score" ? highestFirst : [...highestFirst].reverse();
+        const pages: number[][] = [];
+        let page = await list(q, { perPage: 4 });
+        pages.push(page.assets.map((a) => a.id));
+        expect(page.prevCursor).toBeNull();
+        for (let guard = 0; page.nextCursor && guard < 10; guard++) {
+          page = await list(q, { perPage: 4, cursor: page.nextCursor });
+          pages.push(page.assets.map((a) => a.id));
+        }
+        expect(pages.flat()).toEqual(expected);
+
+        // With pages of 2: forward to the end, then back to the (real) first page.
+        const forward: number[] = [];
+        let small = await list(q, { perPage: 2 });
+        forward.push(...small.assets.map((a) => a.id));
+        while (small.nextCursor) {
+          small = await list(q, { perPage: 2, cursor: small.nextCursor });
+          forward.push(...small.assets.map((a) => a.id));
+        }
+        expect(forward).toEqual(expected);
+        const backward: number[][] = [];
+        while (small.prevCursor) {
+          small = await list(q, { perPage: 2, cursor: small.prevCursor });
+          backward.push(small.assets.map((a) => a.id));
+        }
+        expect(backward).toEqual([expected.slice(2, 4), expected.slice(0, 2)]);
+      }
+    });
+
+    it("combines with a filter", async () => {
+      expect(await ids("score:>0 order:score")).toEqual(highestFirst.slice(0, 3));
+      expect(await ids("score:<=0 order:score_asc")).toEqual([posts[1], posts[2], all[5]!]);
+      expect(await ids("user:bob order:score")).toEqual([all[4]!, all[3]!, posts[2]]);
+    });
+
+    it("refuses an order:score cursor under another order", async () => {
+      const { nextCursor } = await list("order:score", { perPage: 2 });
+      const params = new URLSearchParams({ q: "order:views", per_page: "2", cursor: nextCursor! });
+      expect((await live.request(`/assets?${params}`)).status).toBe(400);
+    });
+
+    it("falls back to the default order while the plugin is inactive", async () => {
+      const newestFirst = [...all].sort((a, b) => b - a);
+      const { nextCursor } = await list("order:score", { perPage: 2 });
+      await live.host.deactivate("scores");
+      try {
+        expect(live.core.sortProviders.get("score")).toBeUndefined();
+        expect(await ids("order:score")).toEqual(newestFirst);
+        // An outstanding cursor no longer fits the order it would get.
+        const params = new URLSearchParams({ q: "order:score", per_page: "2", cursor: nextCursor! });
+        expect((await live.request(`/assets?${params}`)).status).toBe(400);
+      } finally {
+        await live.host.activate("scores");
+      }
+      expect(await ids("order:score")).toEqual(highestFirst);
+    });
+  });
+
   it("drops a deleted post's votes and total, keeping everyone else's", async () => {
     await vote(posts[0], 1, alice.token);
     await vote(posts[0], -1, bob.token);

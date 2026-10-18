@@ -10,7 +10,7 @@ import type {
   StorageProvider,
   TagService,
 } from "@bunbooru/core";
-import { createCoreEvents, createIngestGuardRegistry, createSearchProviderRegistry } from "@bunbooru/core";
+import { createCoreEvents, createIngestGuardRegistry, createSearchProviderRegistry, createSortProviderRegistry } from "@bunbooru/core";
 import { definePlugin, pluginRoutePrefix, type BunbooruPlugin } from "@bunbooru/plugin-sdk";
 import { Elysia } from "elysia";
 
@@ -33,6 +33,7 @@ const core: Core = {
   pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
   searchProviders: createSearchProviderRegistry(),
+  sortProviders: createSortProviderRegistry(),
   jobService: {} as Core["jobService"],
   ingestGuards: createIngestGuardRegistry(),
 };

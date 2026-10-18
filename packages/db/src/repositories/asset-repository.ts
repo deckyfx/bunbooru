@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, lt, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gt, inArray, lt, sql, type SQL } from "drizzle-orm";
 
 import { assets, assetTombstones, type Asset, type NewAsset } from "../schema";
 import type { DB } from "../client";
@@ -6,15 +6,32 @@ import type { DB } from "../client";
 /** The asset columns a listing can be sorted by (each paired with `id`). */
 export type AssetSortKey = "id" | "createdAt" | "viewCount" | "sizeBytes" | "tagCount";
 
-/** How a listing is ordered: by a column (ties broken by id), or shuffled. */
+/**
+ * How a listing is ordered: by a column (ties broken by id), by a plugin's
+ * per-post expression (ties broken by id), or shuffled.
+ *
+ * An `expression` order comes from a plugin sort key (`order:score`): `value`
+ * is a numeric, never-null SQL expression already correlated to `assets.id`,
+ * and `key` names it (it identifies the order in a page cursor).
+ */
 export type AssetOrder =
   | { kind: "column"; key: AssetSortKey; direction: "asc" | "desc" }
+  | { kind: "expression"; key: string; value: SQL; direction: "asc" | "desc" }
   | { kind: "random" };
+
+/** An order a keyset can page through (everything but a shuffle). */
+export type KeysetOrder = Exclude<AssetOrder, { kind: "random" }>;
+
+/**
+ * A listed row. `sortValue` is present only under an `expression` order: the
+ * value the row was sorted by, which the caller needs to mint its cursor.
+ */
+export type AssetPageRow = Asset & { sortValue?: number };
 
 /**
  * A keyset position: the sort column's value and the id of a row, the page
  * continues strictly past it. `value` is an ISO timestamp for `createdAt`, a
- * number for every other key.
+ * number for every other key (any finite number for an expression order).
  */
 export interface AssetKeyset {
   value: number | string;
@@ -58,7 +75,7 @@ export interface AssetRepository {
    * One keyset page of assets in `page.order`, filtered by `page.where`. Cost is
    * independent of how deep the page is (no OFFSET scan).
    */
-  findPage(page: AssetPage): Promise<Asset[]>;
+  findPage(page: AssetPage): Promise<AssetPageRow[]>;
   /**
    * How many assets match `where`, counting no further than `cap + 1`: the
    * scan stops there, so the cost is bounded however many rows match. A result
@@ -113,6 +130,47 @@ export type DeletedAsset = Pick<Asset, "id" | "storageKey" | "sha256" | "md5">;
 export type AssetUpdate = Partial<Pick<NewAsset, "rating" | "source">>;
 
 /**
+ * One keyset page ordered by a plugin's per-post expression, `(value, id)`.
+ *
+ * The expression is cast to `double precision` everywhere it appears (select,
+ * keyset, ORDER BY), so the value a cursor carries (a JS number) compares
+ * exactly against what the rows were sorted by.
+ *
+ * Unlike `created_at`, the value is MUTABLE (a score changes as people vote),
+ * so a post whose value moves between two page requests can repeat or be
+ * skipped, the same accepted behavior as `order:views`. Nothing is snapshotted.
+ * No index can cover a plugin expression, so the matches are sorted, like
+ * `views`.
+ */
+async function findExpressionPage(
+  db: DB,
+  {
+    where,
+    order,
+    limit,
+    after,
+    backward,
+  }: Omit<AssetPage, "order"> & { order: Extract<AssetOrder, { kind: "expression" }>; backward: boolean },
+): Promise<AssetPageRow[]> {
+  const value = sql`(${order.value})::double precision`;
+  const ascending = (order.direction === "asc") !== backward;
+  let past: SQL | undefined;
+  if (after) {
+    const bound = sql`${after.value}::double precision`;
+    past = ascending
+      ? sql`(${value}, ${assets.id}) > (${bound}, ${after.id}::bigint)`
+      : sql`(${value}, ${assets.id}) < (${bound}, ${after.id}::bigint)`;
+  }
+  const sortDir = ascending ? asc : desc;
+  return db
+    .select({ ...getTableColumns(assets), sortValue: sql<number>`${value}`.mapWith(Number) })
+    .from(assets)
+    .where(and(where, past))
+    .orderBy(sortDir(value), sortDir(assets.id))
+    .limit(limit);
+}
+
+/**
  * Build an {@link AssetRepository} over a {@link DB} handle. The connection is
  * injected (not imported) so the API wires the real database and tests point at
  * a throwaway one — keeping data access free of environment coupling.
@@ -123,6 +181,9 @@ export function createAssetRepository(db: DB): AssetRepository {
       if (order.kind === "random") {
         // No keyset for a shuffle: one page of random matches.
         return db.select().from(assets).where(where).orderBy(sql`random()`).limit(limit);
+      }
+      if (order.kind === "expression") {
+        return findExpressionPage(db, { where, order, limit, after, backward });
       }
       const { column, cast } = SORT_COLUMNS[order.key];
       // Walking backward flips the direction, both for the comparison and the

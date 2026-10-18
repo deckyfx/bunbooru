@@ -2,10 +2,13 @@ import { beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { sql } from "drizzle-orm";
 
 import {
+  assets,
   createAssetRepository,
   createDb,
   createTagRepository,
+  type AssetKeyset,
   type AssetOrder,
+  type AssetPageRow,
   type AssetRepository,
   type DB,
 } from "../src/index";
@@ -222,6 +225,56 @@ describe.skipIf(!TEST_DATABASE_URL)("AssetRepository (integration)", () => {
     expect(first.map((r) => r.storageKey)).toEqual(["key/d"]);
     const after = { value: first[0]!.id, id: first[0]!.id };
     const rest = await repo.findPage({ where: wide, order: NEWEST, limit: 5, after });
+    expect(rest.map((r) => r.storageKey)).toEqual(["key/c", "key/a"]); // "b" filtered out
+  });
+
+  it("pages by a plugin expression (value, id) both ways, ties by id, and back to the start", async () => {
+    // A correlated per-post value, as a plugin's sort provider returns one:
+    // (width - 20) / 4, so values are fractional, negative, and shared (b/d, a/c).
+    const widths = { a: 30, b: 40, c: 30, d: 40, e: 50, f: 5 } as const;
+    for (const [key, width] of Object.entries(widths)) await repo.create({ ...seed(key), width });
+    const value = sql`(select (a2.width - 20) / 4.0 from assets a2 where a2.id = ${assets.id})`;
+    const expected = {
+      desc: ["key/e", "key/d", "key/b", "key/c", "key/a", "key/f"],
+      asc: ["key/f", "key/a", "key/c", "key/b", "key/d", "key/e"],
+    };
+    const keysetOf = (row: AssetPageRow): AssetKeyset => ({ value: row.sortValue!, id: row.id });
+
+    for (const direction of ["desc", "asc"] as const) {
+      const order: AssetOrder = { kind: "expression", key: "quarter_width", value, direction };
+      const seen: AssetPageRow[] = [];
+      let after: AssetKeyset | undefined;
+      for (let guard = 0; guard < 10; guard++) {
+        const page = await repo.findPage({ order, limit: 2, after });
+        if (page.length === 0) break;
+        seen.push(...page);
+        after = keysetOf(page.at(-1)!);
+      }
+      expect(seen.map((r) => r.storageKey)).toEqual(expected[direction]);
+      // Each row carries the value it was sorted by, as a JS number.
+      expect(seen.find((r) => r.storageKey === "key/f")?.sortValue).toBe(-3.75);
+      expect(seen.find((r) => r.storageKey === "key/e")?.sortValue).toBe(7.5);
+
+      // Back from the far end to the first row, two at a time (nearest first).
+      const back: string[] = [];
+      let before: AssetKeyset | undefined = keysetOf(seen.at(-1)!);
+      for (let guard = 0; guard < 10 && before; guard++) {
+        const page = await repo.findPage({ order, limit: 2, after: before, backward: true });
+        if (page.length === 0) break;
+        back.push(...page.map((r) => r.storageKey));
+        before = keysetOf(page.at(-1)!);
+      }
+      expect(back).toEqual(expected[direction].slice(0, -1).reverse());
+    }
+  });
+
+  it("applies the filter together with an expression keyset", async () => {
+    for (const key of ["a", "b", "c", "d"]) await repo.create({ ...seed(key), width: key === "b" ? 1 : 100 });
+    const order: AssetOrder = { kind: "expression", key: "one", value: sql`1`, direction: "desc" };
+    const wide = sql`${sql.identifier("width")} > 50`;
+    const first = await repo.findPage({ where: wide, order, limit: 1 });
+    expect(first.map((r) => [r.storageKey, r.sortValue])).toEqual([["key/d", 1]]);
+    const rest = await repo.findPage({ where: wide, order, limit: 5, after: { value: 1, id: first[0]!.id } });
     expect(rest.map((r) => r.storageKey)).toEqual(["key/c", "key/a"]); // "b" filtered out
   });
 

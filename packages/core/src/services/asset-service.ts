@@ -1,4 +1,11 @@
-import type { Asset, AssetRepository, AssetUpdate, NewAsset } from "@bunbooru/db";
+import type {
+  Asset,
+  AssetKeyset,
+  AssetPageRow,
+  AssetRepository,
+  AssetUpdate,
+  NewAsset,
+} from "@bunbooru/db";
 import type { StorageProvider, StoredObject } from "@bunbooru/storage";
 
 import { UnsupportedMediaError, ValidationError } from "../errors";
@@ -178,6 +185,11 @@ function toPositiveInt(value: number | undefined, fallback: number): number {
   return floored < 1 ? fallback : floored;
 }
 
+/** A listed row as a plain {@link Asset}, without the value it was sorted by. */
+function withoutSortValue({ sortValue: _sortValue, ...asset }: AssetPageRow): Asset {
+  return asset;
+}
+
 /** Content-addressed key, sharded by hash prefix: `assets/<aa>/<bb>/<sha256>.<ext>`. */
 function contentKey(sha256: string, ext: string): string {
   return `assets/${sha256.slice(0, 2)}/${sha256.slice(2, 4)}/${sha256}.${ext}`;
@@ -346,9 +358,12 @@ export function createAssetService(
 
       // Validate the cursor before any database work: a refused cursor costs no
       // queries. (Random order has no cursors, so one is simply ignored there.)
+      // A cursor minted under another order (including a plugin sort key whose
+      // plugin has since been deactivated, which falls back to the default
+      // order) doesn't match, and is refused the same way.
       const decoded =
-        options.cursor && order.kind === "column" ? decodeCursor(options.cursor, order) : null;
-      if (options.cursor && order.kind === "column" && !decoded) {
+        options.cursor && order.kind !== "random" ? decodeCursor(options.cursor, order) : null;
+      if (options.cursor && order.kind !== "random" && !decoded) {
         throw new ValidationError("Invalid or expired page cursor");
       }
 
@@ -372,16 +387,23 @@ export function createAssetService(
         return { assets: rows, ...(await totals()), perPage, nextCursor: null, prevCursor: null };
       }
 
-      const keysetOf = (row: Asset) => ({
-        value: order.key === "createdAt" ? row.createdAt.toISOString() : row[order.key],
-        id: row.id,
-      });
-      const cursorAt = (row: Asset, direction: "next" | "prev") =>
+      const keysetOf = (row: AssetPageRow): AssetKeyset => {
+        if (order.kind === "expression") {
+          // The repository returns the value each row was sorted by.
+          if (row.sortValue === undefined) throw new Error("expression-ordered row has no sort value");
+          return { value: row.sortValue, id: row.id };
+        }
+        return {
+          value: order.key === "createdAt" ? row.createdAt.toISOString() : row[order.key],
+          id: row.id,
+        };
+      };
+      const cursorAt = (row: AssetPageRow, direction: "next" | "prev") =>
         encodeCursor(order, keysetOf(row), direction);
 
       // Ask for one row more than a page: its presence is how we know another
       // page exists that way, without a count.
-      const forward = async (after?: ReturnType<typeof keysetOf>) => {
+      const forward = async (after?: AssetKeyset) => {
         const rows = await repository.findPage({ where, order, limit: perPage + 1, after });
         const hasMore = rows.length > perPage;
         const page = hasMore ? rows.slice(0, perPage) : rows;
@@ -422,7 +444,9 @@ export function createAssetService(
           }
         }
       }
-      return { ...page, ...(await totals()), perPage };
+      // The sort value only served the cursors; callers get plain assets.
+      const listed = order.kind === "expression" ? page.assets.map(withoutSortValue) : page.assets;
+      return { ...page, assets: listed, ...(await totals()), perPage };
     },
 
     getById(id) {

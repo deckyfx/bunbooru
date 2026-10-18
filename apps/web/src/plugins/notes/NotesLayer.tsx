@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, StickyNote } from "lucide-react";
@@ -6,13 +6,17 @@ import { Plus, StickyNote } from "lucide-react";
 import { unwrap } from "../../lib/api";
 import { useCurrentUser } from "../../lib/auth";
 import type { SlotPropsMap } from "../slots";
+import { AdjustOverlay } from "./AdjustOverlay";
 import { DrawSurface } from "./DrawSurface";
 import { NoteComposer } from "./NoteComposer";
 import { NoteMarker } from "./NoteMarker";
 import { NOTES_KEY, notesApi, type Box } from "./client";
 
-/** What the layer is doing: showing notes, waiting for a drag, or taking a new note's text. */
-type Mode = { kind: "view" } | { kind: "draw" } | { kind: "compose"; box: Box };
+/**
+ * What the layer is doing: showing notes, waiting for a drag, taking a new
+ * note's text, or moving/resizing one note.
+ */
+type Mode = { kind: "view" } | { kind: "draw" } | { kind: "compose"; box: Box } | { kind: "adjust"; noteId: number };
 
 /** Where "Place in the center" puts a note, for keyboard users who can't drag. */
 const CENTER_BOX: Box = { x: 0.35, y: 0.4, w: 0.3, h: 0.2 };
@@ -25,13 +29,19 @@ const CHIP_CLASS =
  * over the image): each note as a box positioned in percentages, a "Notes (N)"
  * chip that hides or shows them all, and for a signed-in viewer an "Add note"
  * button that switches into draw mode (drag a box, type the text, save;
- * Escape cancels).
+ * Escape cancels). A note's "Move / resize" puts it in adjust mode, with the
+ * other notes shown but inert until Done, Cancel or Escape.
  */
 export function NotesLayer({ asset }: SlotPropsMap["post-detail-image"]) {
   const queryClient = useQueryClient();
   const { data: user } = useCurrentUser();
   const [shown, setShown] = useState(true);
   const [mode, setMode] = useState<Mode>({ kind: "view" });
+  const layerRef = useRef<HTMLDivElement>(null);
+  // The note to focus once it's back from adjust mode (its overlay had focus).
+  const [returnFocusTo, setReturnFocusTo] = useState<number | null>(null);
+  // An adjusted note's save is in flight: Escape must not appear to cancel it.
+  const [saving, setSaving] = useState(false);
 
   const notes = useQuery({
     // Keyed by viewer too: each note's `canEdit` depends on who's asking.
@@ -40,24 +50,72 @@ export function NotesLayer({ asset }: SlotPropsMap["post-detail-image"]) {
   });
   const refresh = () => void queryClient.invalidateQueries({ queryKey: NOTES_KEY });
 
-  // Escape leaves draw or compose mode from anywhere on the page.
+  // Escape leaves draw, compose or adjust mode (dropping any draft) from anywhere on the page.
   useEffect(() => {
     if (mode.kind === "view") return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMode({ kind: "view" });
+      if (e.key !== "Escape" || saving) return;
+      if (mode.kind === "adjust") setReturnFocusTo(mode.noteId);
+      setMode({ kind: "view" });
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [mode.kind]);
+  }, [mode, saving]);
+
+  // Runs after the note's marker is back in place of its overlay.
+  useEffect(() => {
+    if (returnFocusTo === null) return;
+    layerRef.current?.querySelector<HTMLElement>(`[data-note-id="${returnFocusTo}"]`)?.focus();
+    setReturnFocusTo(null);
+  }, [returnFocusTo]);
 
   const items = notes.data ?? [];
+  const adjusting = mode.kind === "adjust" ? items.find((note) => note.id === mode.noteId) : undefined;
+
+  // The adjusted note vanished (deleted elsewhere, then refetched): nothing left to adjust.
+  useEffect(() => {
+    if (mode.kind === "adjust" && notes.data && !adjusting) setMode({ kind: "view" });
+  }, [mode.kind, notes.data, adjusting]);
+
   // Signed out with nothing to show: stay out of the way entirely.
   if (!user && items.length === 0) return null;
 
+  /** Leave adjust mode, handing focus back to the note's marker. */
+  const leaveAdjust = (noteId: number) => {
+    setReturnFocusTo(noteId);
+    setMode({ kind: "view" });
+  };
+
   return (
-    <div className="absolute inset-0">
+    <div ref={layerRef} className="absolute inset-0">
       {/* Kept visible while drawing (under the draw surface), so a new note can avoid the old ones. */}
-      {shown ? items.map((note) => <NoteMarker key={note.id} note={note} onChanged={refresh} />) : null}
+      {shown
+        ? items.map((note) =>
+            note.id === adjusting?.id ? null : (
+              <NoteMarker
+                key={note.id}
+                note={note}
+                onChanged={refresh}
+                onAdjust={() => setMode({ kind: "adjust", noteId: note.id })}
+                inactive={mode.kind === "adjust"}
+              />
+            ),
+          )
+        : null}
+
+      {adjusting ? (
+        <AdjustOverlay
+          key={adjusting.id}
+          note={adjusting}
+          assetId={asset.id}
+          onDone={() => {
+            leaveAdjust(adjusting.id);
+            refresh();
+          }}
+          onCancel={() => leaveAdjust(adjusting.id)}
+          onSavingChange={setSaving}
+        />
+      ) : null}
 
       {mode.kind === "draw" ? (
         <>

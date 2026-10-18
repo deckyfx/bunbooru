@@ -13,7 +13,9 @@ import {
 } from "@bunbooru/db";
 import type { StorageProvider } from "@bunbooru/storage";
 
+import { ValidationError } from "../src/errors";
 import { createSearchProviderRegistry, type SearchProvider } from "../src/search/providers";
+import { createSortProviderRegistry } from "../src/search/sort-providers";
 import { createAssetService, type AssetService } from "../src/services/asset-service";
 
 /**
@@ -357,5 +359,65 @@ describe.skipIf(!TEST_DATABASE_URL)("Search with plugin metatags (integration)",
       throw new Error("provider broke");
     });
     await expect(svc.list({ query: "pick:1" })).rejects.toThrow("provider broke");
+  });
+});
+
+describe.skipIf(!TEST_DATABASE_URL)("Search with plugin sort keys (integration)", () => {
+  let db: DB;
+  let repo: AssetRepository;
+
+  beforeAll(() => {
+    db = createDb(TEST_DATABASE_URL as string);
+    repo = createAssetRepository(db);
+  });
+
+  // Five posts; the fake `parity` key sorts odd ids (1) above even ones (0),
+  // so every value is shared and only the id tiebreak orders within it.
+  beforeEach(async () => {
+    await db.execute(sql`TRUNCATE TABLE assets, asset_tags RESTART IDENTITY CASCADE`);
+    for (const key of ["a", "b", "c", "d", "e"]) await repo.create(asset(key, {}));
+  });
+
+  const ids = (p: { assets: Array<{ id: number }> }) => p.assets.map((x) => x.id);
+  function setup() {
+    const sortProviders = createSortProviderRegistry();
+    sortProviders.register("test-plugin", [{ key: "parity", value: (asset) => sql`(${asset.id} % 2)` }]);
+    return { sortProviders, svc: createAssetService(repo, noopStorage, undefined, { sortProviders }) };
+  }
+
+  it("sorts by the plugin's value either way, ties by id, and hands back plain assets", async () => {
+    const { svc } = setup();
+    expect(ids(await svc.list({ query: "order:parity" }))).toEqual([5, 3, 1, 4, 2]);
+    expect(ids(await svc.list({ query: "order:parity_asc" }))).toEqual([2, 4, 1, 3, 5]);
+    expect(ids(await svc.list({ query: "id:>1 order:parity" }))).toEqual([5, 3, 4, 2]);
+    const [first] = (await svc.list({ query: "order:parity" })).assets;
+    expect(first && "sortValue" in first).toBe(false);
+  });
+
+  it("pages through it with cursors, forward and back to the real first page", async () => {
+    const { svc } = setup();
+    const list = (cursor?: string) => svc.list({ query: "order:parity", perPage: 2, cursor });
+    const p1 = await list();
+    const p2 = await list(p1.nextCursor!);
+    const p3 = await list(p2.nextCursor!);
+    expect([ids(p1), ids(p2), ids(p3)]).toEqual([[5, 3], [1, 4], [2]]);
+    expect(p3.nextCursor).toBeNull();
+    expect(ids(await list(p3.prevCursor!))).toEqual([1, 4]);
+    const back = await list(p2.prevCursor!);
+    expect(ids(back)).toEqual([5, 3]);
+    expect(back.prevCursor).toBeNull();
+  });
+
+  it("refuses its cursor under another order, and once the key is gone", async () => {
+    const { svc, sortProviders } = setup();
+    const { nextCursor } = await svc.list({ query: "order:parity", perPage: 2 });
+    await expect(svc.list({ query: "order:views", cursor: nextCursor! })).rejects.toThrow(ValidationError);
+    await expect(svc.list({ query: "order:parity_asc", cursor: nextCursor! })).rejects.toThrow(ValidationError);
+
+    // The plugin is deactivated: its key falls back to the default order, and
+    // the outstanding cursor no longer fits it.
+    sortProviders.unregister("test-plugin");
+    expect(ids(await svc.list({ query: "order:parity" }))).toEqual([5, 4, 3, 2, 1]);
+    await expect(svc.list({ query: "order:parity", cursor: nextCursor! })).rejects.toThrow(ValidationError);
   });
 });

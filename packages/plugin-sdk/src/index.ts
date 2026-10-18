@@ -27,6 +27,7 @@ import type {
   SearchProvider,
   SearchTerm,
   SettingsService,
+  SortProvider,
   StatsService,
   StorageProvider,
   TagService,
@@ -47,7 +48,7 @@ import type {
  * mounts the returned {@link PluginRegistration.routes} under
  * `/api/v1/plugins/<id>`.
  */
-export const PLUGIN_SDK_VERSION = "0.10.0" as const;
+export const PLUGIN_SDK_VERSION = "0.11.0" as const;
 
 /** Storage contract re-exported for plugins that register storage providers. */
 export type { StorageProvider };
@@ -57,6 +58,9 @@ export type { MailProvider, OutgoingMail };
 
 /** Search contract re-exported for plugins that contribute metatags (`fav:`, `pool:`). */
 export type { SearchProvider, SearchTerm };
+
+/** Sort contract re-exported for plugins that contribute order keys (`order:score`). */
+export type { SortProvider };
 
 /** Job contract re-exported for plugins that run background work. */
 export type { EnqueueOptions, JobContext, JobHandler, JsonValue };
@@ -88,7 +92,7 @@ export interface PluginJobs {
  * decoupled from internal package identifiers, so refactors inside
  * `core`/`auth`/`events`/`search` never become breaking SDK changes. Not every
  * capability is wired yet. Wired today: `routes`, `tables`, `events`,
- * `search-providers`, `mail-providers`, `jobs` (a plugin's own worker), and
+ * `search-providers`, `sort-providers`, `mail-providers`, `jobs` (a plugin's own worker), and
  * `ui-slots` / `pages` (the plugin's UI, which lives app-side in
  * `apps/web/src/plugins`, since `plugins → apps` is forbidden).
  */
@@ -97,6 +101,7 @@ export const SDK_CAPABILITIES = [
   "tables",
   "events",
   "search-providers",
+  "sort-providers",
   "ingest-guards",
   "storage-providers",
   "mail-providers",
@@ -219,6 +224,14 @@ export interface PluginRegistration {
    * activation fails if it does.
    */
   searchProviders?: SearchProvider[];
+  /**
+   * Sort keys this plugin contributes (`order:score`, `order:score_asc`).
+   * Registered with Core's search engine while the plugin is active, removed
+   * when it's deactivated (`order:<key>` then falls back to the default order).
+   * A key must not collide with a Core order key (`id`, `date`, `views`, …) or
+   * another plugin's; activation fails if it does.
+   */
+  sortProviders?: SortProvider[];
   /**
    * Background job handlers, keyed by plugin-local name (`thumbnail`), which the
    * host registers as `<pluginId>:<name>` while the plugin is active. Queue them

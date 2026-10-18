@@ -27,10 +27,12 @@ export {
   type AssetKeyset,
   type AssetOrder,
   type AssetPage,
+  type AssetPageRow,
   type AssetRepository,
   type AssetSortKey,
   type AssetUpdate,
   type DeletedAsset,
+  type KeysetOrder,
 } from "./repositories/asset-repository";
 export {
   createUploadSessionRepository,

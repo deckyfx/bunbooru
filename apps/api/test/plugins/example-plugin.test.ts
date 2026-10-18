@@ -10,7 +10,7 @@ import type {
   StorageProvider,
   TagService,
 } from "@bunbooru/core";
-import { createCoreEvents, createIngestGuardRegistry, createSearchProviderRegistry } from "@bunbooru/core";
+import { createCoreEvents, createIngestGuardRegistry, createSearchProviderRegistry, createSortProviderRegistry } from "@bunbooru/core";
 import { buildExampleRoutes } from "@bunbooru/plugin-example";
 import type { PluginContext } from "@bunbooru/plugin-sdk";
 
@@ -32,6 +32,7 @@ const appCore = {
   pluginCatalogService: {} as Core["pluginCatalogService"],
   events: createCoreEvents(),
   searchProviders: createSearchProviderRegistry(),
+  sortProviders: createSortProviderRegistry(),
   jobService: {} as Core["jobService"],
   ingestGuards: createIngestGuardRegistry(),
 } satisfies Core;

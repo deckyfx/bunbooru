@@ -24,16 +24,19 @@ import {
 } from "@bunbooru/search";
 
 import { CORE_METATAG_KEYS, type SearchProviderLookup } from "./providers";
+import type { SortProviderLookup } from "./sort-providers";
 import { dateRange, DEFAULT_ORDER, parseOrder } from "./terms";
 
 /** Looks up aliases for the given tag names: antecedent → consequent name. */
 export type AliasResolver = (names: string[]) => Promise<ReadonlyMap<string, string>>;
 
-/** What the compiler needs from outside the query: aliases and plugin metatags. */
+/** What the compiler needs from outside the query: aliases, plugin metatags and sort keys. */
 export interface SearchContext {
   resolveAliases?: AliasResolver;
   /** Plugin-contributed metatags (`fav:`, `pool:`), consulted for non-Core keys. */
   providers?: SearchProviderLookup;
+  /** Plugin-contributed sort keys (`order:score`), consulted for non-Core `order:` values. */
+  sortProviders?: SortProviderLookup;
 }
 
 /** Plugin conditions, compiled ahead of the (synchronous) SQL build, by term. */
@@ -109,18 +112,20 @@ export interface CompiledSearch {
  * `order:` sorts rather than filters, so it's lifted out before optimizing,
  * while the top of the parsed tree is still the plain AND of the query's terms.
  * Only a positive, top-level one counts, and the last one wins (`order:views
- * order:size` sorts by size); one inside `-…` or a `~` group is ignored.
+ * order:size` sorts by size); one inside `-…` or a `~` group is ignored. A
+ * non-Core `order:` value may name a plugin sort key (`order:score`); an
+ * unknown one keeps the order so far.
  */
 export async function compileAssetSearch(
   query: string,
-  { resolveAliases, providers }: SearchContext = {},
+  { resolveAliases, providers, sortProviders }: SearchContext = {},
 ): Promise<CompiledSearch> {
   const ast = parse(query);
   let order = DEFAULT_ORDER;
   const filters: QueryNode[] = [];
   for (const child of ast.children) {
     if (child.type === "metatag" && child.key === "order") {
-      order = (child.op === "eq" && parseOrder(child.value)) || order;
+      order = (child.op === "eq" && parseOrder(child.value, sortProviders)) || order;
     } else {
       filters.push(child);
     }
